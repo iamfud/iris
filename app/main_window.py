@@ -523,10 +523,15 @@ class MainWindow:
             from win_platform import _extract_via_ps
             app_img = _extract_via_ps(app_icon_path, size=_T)
             if app_img:
+                # Remove transparent padding, scale up 1.25× and center-crop to fill tile
                 bbox = app_img.getbbox()
                 if bbox:
                     app_img = app_img.crop(bbox)
-                app_img = app_img.resize((_T, _T), Image.LANCZOS)
+                factor = 1.25
+                ws, hs = int(_T * factor), int(_T * factor)
+                app_img = app_img.resize((ws, hs), Image.LANCZOS)
+                ox, oy = (ws - _T) // 2, (hs - _T) // 2
+                app_img = app_img.crop((ox, oy, ox + _T, oy + _T))
                 tile = Image.new("RGBA", (_T, _T), (*brgb, 255))
                 icon_layer = Image.new("RGBA", (_T, _T), (0, 0, 0, 0))
                 icon_layer.paste(app_img, (0, 0), app_img)
