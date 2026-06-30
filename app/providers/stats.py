@@ -178,9 +178,8 @@ class StatsProvider:
             self.serial.queue_on_connect("cpu_temp_lim", str(self.cfg.get("cpu_temp_lim", 90)))
             self.serial.queue_on_connect("gpu_temp_lim", str(self.cfg.get("gpu_temp_lim", 90)))
             self.serial.queue_on_connect("temp_alert", "1")
-            if not self.cfg.get("pc_stats_enabled", False):
-                self.serial.set_live("pc_disp", "0")
-                self.serial.queue_on_connect("pc_disp", "0")
+            self.serial.set_live("pc_disp", "0")
+            self.serial.queue_on_connect("pc_disp", "0")
         threading.Thread(target=self._loop, daemon=True, name="stats-provider").start()
 
 
