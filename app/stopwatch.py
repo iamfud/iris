@@ -349,13 +349,9 @@ class StopwatchOverlay:
         return f"{mins:02d}:{secs:02d}.{tenths}"
 
     def _tick(self):
-        if not self._visible:
+        if not self._running and not self._visible:
             return
-        try:
-            if not self._win or not self._win.winfo_exists():
-                return
-        except Exception:
-            return
+        alive = self._win and self._win.winfo_exists() if self._win else False
 
         elapsed = self._elapsed + (time.time() - self._start_t if self._running else 0.0)
 
@@ -375,6 +371,7 @@ class StopwatchOverlay:
                 self._last_beep_sec   = -1
                 self._countdown_done  = True
                 serial_sender.set_live("stopwatch", "done")
+                self._remove_tray_icon()
                 if self._start_lbl:
                     self._start_lbl.configure(text="START", fg=NEON, bg=_START_BG)
                 self._switch_display()
@@ -382,14 +379,20 @@ class StopwatchOverlay:
         else:
             total = elapsed
 
-        if not (self._countdown and not self._running):
+        if alive and not (self._countdown and not self._running):
             self._time_var.set(self._format(total))
 
-        if not self._countdown_done:
+        if self._running and not self._countdown_done:
             prefix = "c:" if self._countdown else "s:"
             serial_sender.set_live("stopwatch", prefix + self._format(total))
 
-        self._win.after(100, self._tick)
+        ms = 100
+        if self._running and not self._visible:
+            ms = 1000
+        if alive:
+            self._win.after(ms, self._tick)
+        elif self._running:
+            threading.Timer(ms / 1000.0, self._tick).start()
 
     # ── Tray icon ─────────────────────────────────────────────
 
