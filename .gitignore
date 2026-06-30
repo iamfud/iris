@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.spec
+
+# Config
+app/iris_config.json
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+.claude/
+
+# Windows
+Thumbs.db
+Desktop.ini

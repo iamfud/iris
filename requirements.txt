@@ -1,0 +1,24 @@
+# Iris — Python dependencies
+# Install: pip install -r requirements.txt
+
+# Core
+pystray>=0.19.0
+Pillow>=10.0.0
+pyserial>=3.5
+requests>=2.31.0
+psutil>=5.9.0
+
+# Windows audio (mic mute, endpoint switching)
+comtypes>=1.1.14
+pycaw>=20181226
+
+# Windows SMTC (System Media Transport Controls) for now-playing
+winrt>=2.0.0
+
+# Audio visualizer (WASAPI loopback via pyaudiowpatch, FFT)
+pyaudio>=0.2.14
+pyaudiowpatch  # patched PortAudio with WASAPI loopback support
+numpy>=1.24.0
+
+# Build / packaging
+pyinstaller>=6.0
