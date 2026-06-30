@@ -453,21 +453,13 @@ class MainWindow:
 
         try:
             if hwnd and user32.IsWindow(hwnd):
-                tid = user32.GetWindowThreadProcessId(hwnd, None)
-                our_tid = user32.GetWindowThreadProcessId(self._hwnd, None)
-                if tid and our_tid:
-                    user32.AttachThreadInput(our_tid, tid, 1)
-                user32.SetForegroundWindow(hwnd)
-                _time.sleep(0.05)
-                if tid and our_tid:
-                    user32.AttachThreadInput(our_tid, tid, 0)
-                user32.SendMessageW(hwnd, 0x0007, 0, 0)  # WM_SETFOCUS
-
+                # Use SwitchToThisWindow (shell32) — bypasses UIPI restrictions
+                ctypes.windll.user32.SwitchToThisWindow(hwnd, True)
             _time.sleep(0.05)
             _send_keys_sendinput(keys)
             _time.sleep(0.015)
             _send_keys_sendinput(keys, key_up=True)
-            log.info("  Hotkey sent to hwnd=%s", hwnd)
+            log.info("  Hotkey sent")
         except Exception as ex:
             log.error("Hotkey error: %s", ex)
         finally:
