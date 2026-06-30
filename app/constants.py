@@ -17,6 +17,7 @@ DEFAULT_CONFIG = {
     "night_mode_enabled": False,
     "temp_alert": True,
     "pc_stats_enabled": True,
+    "pc_stats_manual": False,
     "cpu_temp_lim": 90,
     "gpu_temp_lim": 90,
     "ha_url": "",

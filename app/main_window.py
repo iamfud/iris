@@ -663,7 +663,7 @@ class MainWindow:
         _tile_frame.place(x=_X, y=_BY)
         _tile_frame.pack_propagate(False)
 
-        self._pc_display_on = self.app.cfg.get("pc_stats_enabled", True)
+        self._pc_display_on = self.app.cfg.get("pc_stats_manual", False)
         self._overlay_on = False
 
         # ── Tile 0: PC stats display toggle ──

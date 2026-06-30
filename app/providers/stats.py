@@ -168,7 +168,7 @@ class StatsProvider:
         self._rtss = _RtssReader()
         self._mahm = _MahmReader()
         self._running = False
-
+        self._manual_override = False
         self._snapshot = Snapshot(None, None, None, "", 0.0)
         self._lock = threading.Lock()
 
@@ -183,6 +183,9 @@ class StatsProvider:
                 self.serial.queue_on_connect("pc_disp", "0")
         threading.Thread(target=self._loop, daemon=True, name="stats-provider").start()
 
+
+    def set_manual_override(self, enabled: bool):
+        self._manual_override = enabled
 
     def stop(self):
         self._running = False
@@ -265,7 +268,7 @@ class StatsProvider:
             elif temp_alert_active and now >= cooldown_until:
                 temp_alert_active = False
 
-            should_show = self.cfg.get("pc_stats_enabled", False) and (game_active or temp_alert_active)
+            should_show = self._manual_override or (self.cfg.get("pc_stats_enabled", False) and (game_active or temp_alert_active))
 
             if should_show and now - last_push >= push_interval:
                 last_push = now
