@@ -26,6 +26,7 @@ from settings_dialog import SettingsDialog
 from tray import make_icon_image, build_tray_menu
 from main_window import MainWindow
 from overlay_window import OverlayWindow
+from stopwatch import StopwatchOverlay
 
 _LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "iris.log")
 logging.basicConfig(
@@ -48,6 +49,7 @@ class DerekD1:
         self._root = None
         self._main_win = None
         self._overlay = None
+        self._stopwatch = None
         self._alarm_active = False
 
     def _setup_providers(self):
@@ -115,6 +117,18 @@ class DerekD1:
                 self._overlay = None
                 ov.close()
                 self._sync_overlay_tile(False)
+
+    def _toggle_stopwatch(self):
+        if self._stopwatch is None:
+            self._stopwatch = StopwatchOverlay(self._root)
+        self._stopwatch.toggle()
+
+    def _toggle_countdown(self):
+        if self._stopwatch is None:
+            self._stopwatch = StopwatchOverlay(self._root)
+        if not self._stopwatch._countdown:
+            self._stopwatch._toggle_mode()
+        self._stopwatch.toggle()
 
     def _on_overlay_close(self):
         self._overlay = None

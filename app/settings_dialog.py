@@ -908,7 +908,7 @@ class SettingsDialog:
                                 bg=BG_CARD, fg=FG, anchor="w")
             name_lbl.pack(fill="x")
             btype = slot.get("type", "")
-            type_color = {"SHORTCUT": NEON, "REST": NEON_GRN, "HOTKEY": NEON_DIM, "OPENRGB": NEON_RED, "GROUP": NEON}
+            type_color = {"SHORTCUT": NEON, "REST": NEON_GRN, "HOTKEY": NEON_DIM, "OPENRGB": NEON_RED, "GROUP": NEON, "STOPWATCH": NEON_GRN}
             type_lbl = tk.Label(info, text=btype, font=("Segoe UI", 7),
                                 bg=BG_CARD, fg=type_color.get(btype, FG_DIM), anchor="w")
             type_lbl.pack(fill="x")
@@ -1019,7 +1019,7 @@ class SettingsDialog:
         # Type
         tk.Label(inner, text="Type", bg=BG_CARD, fg=FG_DIM, font=FONT_SM).pack(anchor="w", pady=(8, 0))
         type_var = tk.StringVar(value=data.get("type", "SHORTCUT"))
-        type_choices = ["SHORTCUT", "REST", "HOTKEY", "OPENRGB", "GROUP"]
+        type_choices = ["SHORTCUT", "REST", "HOTKEY", "OPENRGB", "GROUP", "STOPWATCH"]
         type_frame = tk.Frame(inner, bg=BG_CARD)
         type_frame.pack(fill=tk.X, pady=(2, 0))
         type_labels = []

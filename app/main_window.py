@@ -393,6 +393,8 @@ class MainWindow:
             self._do_openrgb_action(slot)
         elif btype == "HOTKEY":
             self._do_hotkey_action(slot)
+        elif btype == "STOPWATCH":
+            self.app._toggle_stopwatch()
 
     def _do_rest_action(self, slot):
         entity = slot.get("entity_id", "").strip()

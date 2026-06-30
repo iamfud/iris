@@ -42,6 +42,16 @@ def build_tray_menu(app):
             lambda *a: app._on_tray_click(),
             default=True,
         ),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem(
+            "Stopwatch",
+            lambda *a: app._toggle_stopwatch(),
+        ),
+        pystray.MenuItem(
+            "Countdown Timer",
+            lambda *a: app._toggle_countdown(),
+        ),
+        pystray.Menu.SEPARATOR,
         pystray.MenuItem(
             "Quit Iris",
             lambda *a: app._quit(),
