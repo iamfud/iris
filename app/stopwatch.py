@@ -243,6 +243,7 @@ class StopwatchOverlay:
         if not self._running:
             serial_sender.set_live("stopwatch", "")
 
+    @property
     def _countdown_target(self):
         return self._cd_mins * 60 + self._cd_secs
 
