@@ -130,11 +130,13 @@ class SettingsDialog:
         self._suppress_apply = False
         self._apply()
 
-        # Bottom bar with OK / Cancel (right-aligned, uniform across all tabs)
+        # Bottom bar with + ADD ALARM / OK (right-aligned)
         btn_bar = tk.Frame(outer, bg=BG)
         btn_bar.pack(fill=tk.X, padx=16, pady=(0, 12))
-        btn_bar.columnconfigure(0, weight=1)
-        RoundedButton(btn_bar, text="CANCEL", command=self._win.destroy).grid(row=0, column=1, padx=(0, 6))
+        btn_bar.columnconfigure(1, weight=1)
+        self._add_alarm_btn = RoundedButton(btn_bar, text="+ ADD ALARM", style="sec",
+                                            command=self._alarm_add_click)
+        self._add_alarm_btn.grid(row=0, column=0, sticky="w")
         RoundedButton(btn_bar, text="OK", command=self._ok).grid(row=0, column=2)
 
         if initial_tab:
@@ -349,6 +351,8 @@ class SettingsDialog:
         self._alarm_editing_id = None
         outer = tk.Frame(f, bg=BG)
         outer.pack(fill="both", expand=True, padx=16, pady=16)
+
+        # Main scrollable area
         self._alarm_canvas = tk.Canvas(outer, bg=BG, highlightthickness=0, bd=0)
         self._alarm_canvas.pack(fill="both", expand=True)
 
@@ -422,9 +426,6 @@ class SettingsDialog:
 
         for alarm in alarms:
             self._build_alarm_card(self._alarm_frame, alarm)
-
-        RoundedButton(self._alarm_frame, text="+ ADD ALARM", style="sec",
-                      command=self._alarm_add_click).pack(anchor="w", pady=(8, 0))
 
         if hasattr(self, '_alarm_install_wheel'):
             self._alarm_install_wheel(self._alarm_frame)
@@ -649,6 +650,7 @@ class SettingsDialog:
                 "enabled": True, "message": "", "show_eyes": True}
 
     def _alarm_add_click(self):
+        self._tabs.select(self._tab_alarm_index)
         self._alarm_editing_id = "new"
         self._rebuild_alarm_view()
 

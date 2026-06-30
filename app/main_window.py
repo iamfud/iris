@@ -808,7 +808,7 @@ class MainWindow:
         self._visible = False
 
     def _on_focusout(self, e):
-        if not self._sending_hotkey:
+        if not self._sending_hotkey and not self._pin_pinned:
             self.hide()
 
     def set_alarm_indicator(self, active):
