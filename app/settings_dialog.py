@@ -1037,12 +1037,13 @@ class SettingsDialog:
             "HOTKEY": "Send a keyboard shortcut to the app underneath",
             "OPENRGB": "Apply an OpenRGB lighting profile",
             "GROUP": "Create a sub-panel with nested buttons (optionally also launch a shortcut)",
+            "STOPWATCH": "Start a floating stopwatch / countdown timer",
         }
-        for t in type_choices:
+        for i, t in enumerate(type_choices):
             pill = tk.Label(type_frame, text=t, bg=BUTTON, fg=FG,
                             font=("Segoe UI", 8, "bold"), padx=8, pady=5,
                             cursor="hand2")
-            pill.pack(side=tk.LEFT, padx=(0, 6))
+            pill.grid(row=i // 3, column=i % 3, padx=(0, 6), pady=(0, 4), sticky="w")
             pill.bind("<Button-1>", lambda e, val=t: type_var.set(val))
             type_labels.append((t, pill))
             tip = TYPE_TIPS.get(t)
