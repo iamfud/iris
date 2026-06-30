@@ -1,8 +1,12 @@
 """Floating stopwatch / countdown overlay — dismissable, reappears on timer end."""
 
 import ctypes
+import threading
 import time
 import tkinter as tk
+
+import pystray
+from PIL import Image, ImageDraw
 
 from constants import BG, BG_CARD, NEON, FG_DIM, FONT_SM
 from serial_comm import serial_sender
@@ -14,6 +18,22 @@ _STOP_BG       = "#3a1e1e"
 _WARN_SECS     = 10
 _TONE_HZ_LOW   = 500
 _TONE_HZ_HIGH  = 2000
+
+
+def _make_tray_image(size=32):
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle([2, 2, size - 2, size - 2], radius=6,
+                        fill=(72, 178, 233, 255))
+    cx = cy = size // 2
+    r = size // 2 - 6
+    d.arc([cx - r, cy - r, cx + r, cy + r], -90, 270,
+          fill=(255, 255, 255, 255), width=3)
+    d.line([cx, cy - r + 2, cx, cy + r - 3],
+           fill=(255, 255, 255, 255), width=2)
+    d.line([cx, cy, cx + r - 3, cy],
+           fill=(255, 255, 255, 255), width=2)
+    return img
 
 
 class StopwatchOverlay:
@@ -39,6 +59,7 @@ class StopwatchOverlay:
         self._last_beep_sec   = -1
         self._countdown_done  = False
         self._drag_x = self._drag_y = self._drag_ox = self._drag_oy = None
+        self._tray_icon = None
 
     def toggle(self):
         if self._visible:
@@ -199,6 +220,7 @@ class StopwatchOverlay:
             self._run_frame.pack(fill="x")
 
     def _show(self):
+        self._remove_tray_icon()
         if self._win is None:
             self._build()
         else:
@@ -212,6 +234,7 @@ class StopwatchOverlay:
         self._topmost_tick()
 
     def _ensure_visible(self):
+        self._remove_tray_icon()
         self._visible = True
         if self._win:
             try:
@@ -240,7 +263,10 @@ class StopwatchOverlay:
                 self._win.withdraw()
             except Exception:
                 pass
-        if not self._running:
+        if self._running:
+            self._ensure_tray_icon()
+        else:
+            self._remove_tray_icon()
             serial_sender.set_live("stopwatch", "")
 
     @property
@@ -266,6 +292,9 @@ class StopwatchOverlay:
             self._elapsed      += time.time() - self._start_t
             self._running       = False
             self._last_beep_sec = -1
+            if not self._visible:
+                self._remove_tray_icon()
+                serial_sender.set_live("stopwatch", "")
             if self._start_lbl:
                 self._start_lbl.configure(text="START", fg=NEON, bg=_START_BG)
             self._switch_display()
@@ -286,6 +315,9 @@ class StopwatchOverlay:
         self._start_t         = 0.0
         self._last_beep_sec   = -1
         self._countdown_done  = False
+        if not self._visible:
+            self._remove_tray_icon()
+            serial_sender.set_live("stopwatch", "")
         if self._start_lbl:
             self._start_lbl.configure(text="START", fg=NEON, bg=_START_BG)
         self._update_time_var()
@@ -358,6 +390,32 @@ class StopwatchOverlay:
             serial_sender.set_live("stopwatch", prefix + self._format(total))
 
         self._win.after(100, self._tick)
+
+    # ── Tray icon ─────────────────────────────────────────────
+
+    def _ensure_tray_icon(self):
+        if self._tray_icon is not None:
+            return
+        def _on_click(*_):
+            self._show()
+        self._tray_icon = pystray.Icon(
+            "Iris-Timer",
+            _make_tray_image(32),
+            self._time_var.get() if self._time_var else "Timer",
+            menu=pystray.Menu(
+                pystray.MenuItem("Show", _on_click, default=True),
+                pystray.MenuItem("Reset", lambda *_: self._reset()),
+            ),
+        )
+        threading.Thread(target=self._tray_icon.run, daemon=True).start()
+
+    def _remove_tray_icon(self):
+        if self._tray_icon is not None:
+            try:
+                self._tray_icon.stop()
+            except Exception:
+                pass
+            self._tray_icon = None
 
     def _drag_start(self, e):
         self._drag_x  = e.x_root
