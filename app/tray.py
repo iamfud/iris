@@ -42,4 +42,8 @@ def build_tray_menu(app):
             lambda *a: app._on_tray_click(),
             default=True,
         ),
+        pystray.MenuItem(
+            "Quit Iris",
+            lambda *a: app._quit(),
+        ),
     )

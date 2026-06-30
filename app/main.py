@@ -91,14 +91,11 @@ class DerekD1:
             serial_sender.set_live("brightness", str(value))
 
     def _toggle_pc_stats(self, enabled: bool):
-        self.cfg["pc_stats_manual"] = enabled
+        self.cfg["pc_stats_enabled"] = enabled
         save_config(self.cfg)
-        for p in self._providers:
-            if hasattr(p, "set_manual_override"):
-                p.set_manual_override(enabled)
-                break
-        serial_sender.set_live("pc_disp", "7" if enabled else "0")
-        log.info("PC stats manual override %s", "ON" if enabled else "OFF")
+        if not enabled:
+            serial_sender.set_live("pc_disp", "0")
+        log.info("PC stats %s", "ON" if enabled else "OFF")
 
     def _toggle_overlay(self, enabled: bool):
         if enabled:

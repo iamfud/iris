@@ -30,7 +30,7 @@ DEFAULT_CONFIG = {
     "media_player_path": "",
     "alarms": [],
     "ha_board": [],
-    "pc_stats_manual": False,
+
 }
 
 # Device-side defaults (pushed to ESP8266 on connect / factory reset)
