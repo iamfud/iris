@@ -82,7 +82,7 @@ class StopwatchOverlay:
         self._run_frame = tk.Frame(win, bg=BG_CARD)
         time_lbl = tk.Label(self._run_frame, textvariable=self._time_var,
                             bg=BG_CARD, fg=NEON,
-                            font=("Segoe UI", 34, "bold"), padx=16, pady=10,
+                            font=("Segoe UI", 34, "bold"), padx=16, pady=4,
                             cursor="fleur")
         time_lbl.pack(fill="x")
         self._bind_drag(self._run_frame)
@@ -91,7 +91,7 @@ class StopwatchOverlay:
         self._edit_frame = tk.Frame(win, bg=BG_CARD)
         self._build_edit_frame()
 
-        bar = tk.Frame(win, bg=BG, padx=10, pady=6)
+        bar = tk.Frame(win, bg=BG, padx=10, pady=3)
         bar.pack(side="bottom", fill="x")
 
         self._start_lbl = tk.Label(
@@ -129,13 +129,13 @@ class StopwatchOverlay:
     def _build_edit_frame(self):
         ef = self._edit_frame
 
-        row = tk.Frame(ef, bg=BG_CARD, padx=16, pady=10)
+        row = tk.Frame(ef, bg=BG_CARD, padx=16, pady=4)
         row.pack()
         self._bind_drag(row)
 
         def _spin_btn(parent, text, cmd):
             lbl = tk.Label(parent, text=text, bg=BG_CARD, fg=NEON,
-                           font=("Segoe UI", 10), cursor="hand2", pady=1)
+                           font=("Segoe UI", 10), cursor="hand2", pady=0)
             lbl.pack()
             def _handler(e, c=cmd):
                 c()
@@ -147,7 +147,7 @@ class StopwatchOverlay:
         _spin_btn(mf, "\u25b2", lambda: self._adj_mins(1))
         m_disp = tk.Label(mf, textvariable=self._cd_mins_var, bg=BG_CARD, fg=NEON,
                           font=("Segoe UI", 34, "bold"), width=2, cursor="fleur")
-        m_disp.pack(pady=2)
+        m_disp.pack(pady=0)
         m_disp.bind("<MouseWheel>",
                     lambda e: self._adj_mins(1 if e.delta > 0 else -1))
         self._bind_drag(m_disp)
@@ -161,7 +161,7 @@ class StopwatchOverlay:
         _spin_btn(sf, "\u25b2", lambda: self._adj_secs(1))
         s_disp = tk.Label(sf, textvariable=self._cd_secs_var, bg=BG_CARD, fg=NEON,
                           font=("Segoe UI", 34, "bold"), width=2, cursor="fleur")
-        s_disp.pack(pady=2)
+        s_disp.pack(pady=0)
         s_disp.bind("<MouseWheel>",
                     lambda e: self._adj_secs(1 if e.delta > 0 else -1))
         self._bind_drag(s_disp)
