@@ -111,9 +111,10 @@ class MainWindow:
     RADIUS = 24
     ALPHA = 0.9
 
-    def __init__(self, root, app):
+    def __init__(self, root, app, cfg=None):
         self.app = app
         self._root = root
+        self._cfg = cfg or {}
         self._visible = False
         self._status_icons = {}
         self._drag_x = self._drag_y = self._drag_ox = self._drag_oy = None
@@ -127,8 +128,8 @@ class MainWindow:
 
         sw = self._win.winfo_screenwidth()
         sh = self._win.winfo_screenheight()
-        x = sw - self.W - 100
-        y = sh - self.H - 100
+        x = self._cfg.get("panel_x") or sw - self.W - 100
+        y = self._cfg.get("panel_y") or sh - self.H - 100
         self._win.geometry(f"{self.W}x{self.H}+{x}+{y}")
 
         hwnd = int(self._win.winfo_id())
@@ -140,6 +141,13 @@ class MainWindow:
         self._win.bind("<FocusOut>", self._on_focusout)
 
         self._build_ui()
+        if self._cfg.get("panel_pin"):
+            self._win.attributes("-topmost", True)
+            self._pin_pinned = True
+            icon = mdi_icons.render("pin", 16, (72, 178, 233))
+            photo = ImageTk.PhotoImage(icon)
+            self._pin_btn.config(image=photo)
+            self._pin_btn.image = photo
         self._win.withdraw()
 
     def _on_map(self, event):
@@ -162,6 +170,18 @@ class MainWindow:
             font=("Consolas", 9), fg=FG, bg=BG_CARD,
         )
         self._lbl_port.pack(side=tk.LEFT, padx=(10, 0))
+
+        # Pin button (center)
+        pin_icon = ImageTk.PhotoImage(mdi_icons.render("pin-outline", 16, (180, 180, 180)))
+        self._pin_btn = tk.Label(
+            self._sb, image=pin_icon, bg=BG_CARD, cursor="hand2",
+            padx=4, pady=0,
+        )
+        self._pin_btn.image = pin_icon
+        self._pin_btn.pack(side=tk.LEFT, expand=True)
+        self._pin_pinned = False
+        self._pin_btn.bind("<Button-1>", self._toggle_pin)
+        self._pin_btn.bind("<ButtonRelease-1>", lambda e: None)  # prevent drag
 
         right_frame = tk.Frame(self._sb, bg=BG_CARD)
         right_frame.pack(side=tk.RIGHT, padx=(0, 10))
@@ -212,6 +232,18 @@ class MainWindow:
 
     # ── Status bar drag (move window) ──────────────────────────────────
 
+    def _toggle_pin(self, e=None):
+        self._pin_pinned = not self._pin_pinned
+        self._win.attributes("-topmost", self._pin_pinned)
+        icon = mdi_icons.render("pin" if self._pin_pinned else "pin-outline", 16,
+                                (72, 178, 233) if self._pin_pinned else (180, 180, 180))
+        photo = ImageTk.PhotoImage(icon)
+        self._pin_btn.config(image=photo)
+        self._pin_btn.image = photo
+        self._cfg["panel_pin"] = self._pin_pinned
+        from config import save_config
+        save_config(self._cfg)
+
     def _sb_drag_start(self, e):
         self._drag_x = e.x_root
         self._drag_y = e.y_root
@@ -227,6 +259,10 @@ class MainWindow:
 
     def _sb_drag_end(self, e):
         self._drag_x = self._drag_y = self._drag_ox = self._drag_oy = None
+        self._cfg["panel_x"] = self._win.winfo_x()
+        self._cfg["panel_y"] = self._win.winfo_y()
+        from config import save_config
+        save_config(self._cfg)
 
     # ── Context menu ────────────────────────────────────────────────
 

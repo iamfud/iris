@@ -279,7 +279,7 @@ class DerekD1:
         self._root = __import__("tkinter").Tk()
         self._root.withdraw()
 
-        self._main_win = MainWindow(self._root, self)
+        self._main_win = MainWindow(self._root, self, cfg=self.cfg)
         self._alarm_popup = AlarmPopup(
             self._root, self._alarm_dismiss, self._alarm_snooze)
         self.sync_alarm_indicator()
