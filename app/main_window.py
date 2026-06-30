@@ -132,6 +132,7 @@ class MainWindow:
         self._win.geometry(f"{self.W}x{self.H}+{x}+{y}")
 
         hwnd = int(self._win.winfo_id())
+        self._hwnd = hwnd
         _apply_window_style(hwnd, self.ALPHA)
 
         self._win.bind("<Map>", self._on_map)
@@ -447,20 +448,26 @@ class MainWindow:
             return
 
         self._sending_hotkey = True
-        try:
-            # Switch to the saved foreground window directly (no Alt+Tab flash)
-            hwnd = getattr(self, '_saved_foreground_hwnd', None)
-            if hwnd and user32.IsWindow(hwnd):
-                user32.SetForegroundWindow(hwnd)
-                _time.sleep(0.1)
+        hwnd = getattr(self, '_saved_foreground_hwnd', None)
+        self.hide()
 
-            for vk in keys:
-                user32.keybd_event(vk, 0, 0, 0)
-                _time.sleep(0.015)
-            for vk in reversed(keys):
-                user32.keybd_event(vk, 0, 2, 0)
-                _time.sleep(0.015)
-            log.info("  Foreground switch + keys sent")
+        try:
+            if hwnd and user32.IsWindow(hwnd):
+                tid = user32.GetWindowThreadProcessId(hwnd, None)
+                our_tid = user32.GetWindowThreadProcessId(self._hwnd, None)
+                if tid and our_tid:
+                    user32.AttachThreadInput(our_tid, tid, 1)
+                user32.SetForegroundWindow(hwnd)
+                _time.sleep(0.05)
+                if tid and our_tid:
+                    user32.AttachThreadInput(our_tid, tid, 0)
+                user32.SendMessageW(hwnd, 0x0007, 0, 0)  # WM_SETFOCUS
+
+            _time.sleep(0.05)
+            _send_keys_sendinput(keys)
+            _time.sleep(0.015)
+            _send_keys_sendinput(keys, key_up=True)
+            log.info("  Hotkey sent to hwnd=%s", hwnd)
         except Exception as ex:
             log.error("Hotkey error: %s", ex)
         finally:
