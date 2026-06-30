@@ -416,7 +416,6 @@ class DarkCombobox:
         self._arrow.pack(side="right")
 
         self._entry.bind("<Button-1>", lambda e: self.toggle())
-        self._entry.bind("<FocusOut>", lambda e: self._hide(), add=True)
         self._arrow.bind("<Button-1>", lambda e: self.toggle())
 
         if textvariable is None:
