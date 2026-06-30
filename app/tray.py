@@ -38,9 +38,13 @@ def make_icon_image(size=64, online=False):
 def build_tray_menu(app):
     return pystray.Menu(
         pystray.MenuItem(
+            "Show/Hide Panel",
+            lambda *a: app._on_tray_click(),
+            default=True,
+        ),
+        pystray.MenuItem(
             "Iris Settings",
             lambda *a: app._open_settings(),
-            default=True,
         ),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem(

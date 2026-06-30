@@ -340,7 +340,7 @@ class MainWindow:
             icon_name = slot.get("icon") or "help-circle"
             fill = slot.get("color") or BG_CARD
             name = slot.get("name") or ""
-            app_icon = slot.get("app_icon_path") or (slot.get("shortcut_path") if slot.get("type") == "SHORTCUT" else None)
+            app_icon = slot.get("app_icon_path") or (slot.get("shortcut_path") if slot.get("type") in ("SHORTCUT", "GROUP") else None)
 
             img = self._make_tile_photo(icon_name, fill, app_icon_path=app_icon)
             self._btn_tile_refs.append(img)
@@ -521,15 +521,23 @@ class MainWindow:
         icon_drawn = False
         if app_icon_path:
             from win_platform import _extract_via_ps
-            app_img = _extract_via_ps(app_icon_path, size=S)
+            app_img = _extract_via_ps(app_icon_path, size=_T)
             if app_img:
-
-                ox = (S - app_img.width) // 2
-                oy = (S - app_img.height) // 2
-                layer = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-                layer.paste(app_img, (ox, oy), app_img)
-                img = Image.alpha_composite(img, layer)
-                icon_drawn = True
+                bbox = app_img.getbbox()
+                if bbox:
+                    app_img = app_img.crop(bbox)
+                app_img = app_img.resize((_T, _T), Image.LANCZOS)
+                tile = Image.new("RGBA", (_T, _T), (*brgb, 255))
+                icon_layer = Image.new("RGBA", (_T, _T), (0, 0, 0, 0))
+                icon_layer.paste(app_img, (0, 0), app_img)
+                mask = Image.new("L", (_T, _T), 0)
+                ImageDraw.Draw(mask).rounded_rectangle((0, 0, _T-1, _T-1), _CR, fill=255)
+                img = Image.composite(icon_layer, tile, mask)
+                base = Image.new("RGB", (_T, _T), brgb)
+                base.paste(img, mask=img.split()[3])
+                photo = ImageTk.PhotoImage(base)
+                self._tile_cache[cache_key] = photo
+                return photo
         if not icon_drawn:
             try:
                 icon = mdi_icons.render(mdi_name, int(S * icon_scale), ic_rgb)

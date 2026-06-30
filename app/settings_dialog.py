@@ -807,33 +807,41 @@ class SettingsDialog:
         clipped.paste(gloss, mask=mask)
         img = Image.alpha_composite(img, clipped)
 
-        icon_drawn = False
         if app_icon_path:
             from win_platform import _extract_via_ps
-            app_img = _extract_via_ps(app_icon_path, size=S)
+            app_img = _extract_via_ps(app_icon_path, size=_T)
             if app_img:
-                ox = (S - app_img.width) // 2
-                oy = (S - app_img.height) // 2
+                bbox = app_img.getbbox()
+                if bbox:
+                    app_img = app_img.crop(bbox)
+                app_img = app_img.resize((_T, _T), Image.LANCZOS)
+                tile = Image.new("RGBA", (_T, _T), (*brgb, 255))
+                icon_layer = Image.new("RGBA", (_T, _T), (0, 0, 0, 0))
+                icon_layer.paste(app_img, (0, 0), app_img)
+                mask = Image.new("L", (_T, _T), 0)
+                ImageDraw.Draw(mask).rounded_rectangle((0, 0, _T-1, _T-1), _CR, fill=255)
+                img = Image.composite(icon_layer, tile, mask)
+                base = Image.new("RGB", (_T, _T), brgb)
+                base.paste(img, mask=img.split()[3])
+                photo = ImageTk.PhotoImage(base)
+                self._tile_cache[cache_key] = photo
+                return photo
+        # MDI fallback
+        try:
+            icon = mdi_icons.render(mdi_name, int(S * icon_scale), ic_rgb)
+            if icon:
+                ox = (S - icon.width) // 2
+                oy = (S - icon.height) // 2
                 layer = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-                layer.paste(app_img, (ox, oy), app_img)
+                layer.paste(icon, (ox, oy), icon)
                 img = Image.alpha_composite(img, layer)
-                icon_drawn = True
-        if not icon_drawn:
-            try:
-                icon = mdi_icons.render(mdi_name, int(S * icon_scale), ic_rgb)
-                if icon:
-                    ox = (S - icon.width) // 2
-                    oy = (S - icon.height) // 2
-                    layer = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-                    layer.paste(icon, (ox, oy), icon)
-                    img = Image.alpha_composite(img, layer)
-            except Exception as e:
-                log.warning("Icon render(%s) failed: %s", mdi_name, e)
+        except Exception as e:
+            log.warning("Icon render(%s) failed: %s", mdi_name, e)
 
         img = img.resize((_T, _T), Image.LANCZOS)
         base = Image.new("RGB", (_T, _T), brgb)
         base.paste(img, mask=img.split()[3])
-        photo = ITK.PhotoImage(base)
+        photo = ImageTk.PhotoImage(base)
         self._tile_cache[cache_key] = photo
         return photo
 
@@ -896,7 +904,7 @@ class SettingsDialog:
 
             icon_mdi = slot.get("icon") or "help-circle"
             fill = slot.get("color") or BG_CARD
-            app_icon = slot.get("app_icon_path") or (slot.get("shortcut_path") if slot.get("type") == "SHORTCUT" else None)
+            app_icon = slot.get("app_icon_path") or (slot.get("shortcut_path") if slot.get("type") in ("SHORTCUT", "GROUP") else None)
             img = self._make_tile_photo(icon_mdi, fill, app_icon_path=app_icon, bg_hex=BG_CARD)
             self._btn_card_photos.append(img)
             tk.Label(row, image=img, bg=BG_CARD, padx=0, pady=0).pack(side="left", padx=(0, 8))
@@ -1068,7 +1076,7 @@ class SettingsDialog:
         def _update_preview_tile(*_):
             c = color_var.get() or BG_CARD
             i = icon_var.get() or "help-circle"
-            ap = data.get("app_icon_path", "") or ""
+            ap = data.get("app_icon_path") or (data.get("shortcut_path") if data.get("type") in ("SHORTCUT", "GROUP") else "") or ""
             try:
                 photo = self._make_tile_photo(i, c, app_icon_path=ap, bg_hex=BG_CARD)
                 preview_photo[0] = photo
@@ -1090,10 +1098,13 @@ class SettingsDialog:
                 "type": type_var.get(),
                 "icon": icon_var.get(),
                 "color": color_var.get(),
-                "app_icon_path": data.get("app_icon_path", ""),
+                "app_icon_path": data.get("app_icon_path") or (data.get("shortcut_path") if data.get("type") in ("SHORTCUT", "GROUP") else "") or "",
             }
             for k, v in self._btn_field_vars.items():
-                d[k] = v.get()
+                if hasattr(v, "get"):
+                    d[k] = v.get()
+                else:
+                    d[k] = v
             return d
 
         def _rebuild_form(data_dict):
@@ -1206,13 +1217,19 @@ class SettingsDialog:
                     icon_drawn = False
                     if ap:
                         from win_platform import _extract_via_ps
-                        app_img = _extract_via_ps(ap, size=S)
+                        app_img = _extract_via_ps(ap, size=tw)
                         if app_img:
-                            ox = (S - app_img.width) // 2
-                            oy = (S - app_img.height) // 2
-                            layer = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-                            layer.paste(app_img, (ox, oy), app_img)
-                            tile = Image.alpha_composite(tile, layer)
+                            bbox = app_img.getbbox()
+                            if bbox:
+                                app_img = app_img.crop(bbox)
+                            app_img = app_img.resize((tw, th), Image.LANCZOS)
+                            bg_rgb = tuple(int((BG)[i:i+2], 16) for i in (1, 3, 5))
+                            tile = Image.new("RGBA", (tw, th), (*bg_rgb, 255))
+                            icon_layer = Image.new("RGBA", (tw, th), (0, 0, 0, 0))
+                            icon_layer.paste(app_img, (0, 0), app_img)
+                            mask = Image.new("L", (tw, th), 0)
+                            ImageDraw.Draw(mask).rounded_rectangle((0, 0, tw-1, th-1), 4, fill=255)
+                            tile = Image.composite(icon_layer, tile, mask)
                             icon_drawn = True
                     if not icon_drawn:
                         r = mdi_icons.render(i, int(S * 0.7), (255, 255, 255))
