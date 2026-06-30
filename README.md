@@ -5,10 +5,22 @@ A Windows desktop companion that displays PC stats (CPU/GPU temps, clock, notifi
 ## Hardware Required
 
 - **ESP8266 (Wemos D1 Mini) or ESP32** running the firmware in `firmware/d1mini/`
-- **IPS LCD display** (128×128 or similar, ST7735/ST7789) connected to the ESP over SPI
+- **MAX7219 LED matrix display** (or daisy-chained modules) driven by the ESP over SPI
 - **USB cable** to connect the ESP to your PC
 
-The ESP connects over USB serial, receives stats/commands from the PC, and drives the secondary display. Optional: relays/IR LEDs for physical button backlight control.
+The ESP connects over USB serial, receives stats/commands from the PC, and drives the MAX7219 display.
+
+### Wiring (ESP8266 D1 Mini → MAX7219)
+
+| MAX7219 | D1 Mini |
+|---------|---------|
+| VCC     | 5V      |
+| GND     | GND     |
+| DIN     | D7 (GPIO13) |
+| CLK     | D5 (GPIO14) |
+| CS      | D2 (GPIO4)  |
+
+Display type: `FC16_HW` — 4 daisy-chained 8×8 LED matrix modules.
 
 ## Features
 
