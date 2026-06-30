@@ -290,6 +290,10 @@ class RoundedButton(tk.Canvas):
             self._bg    = bg    or NEON
             self._fg    = fg    or BG
             self._hover = hover or "#5cc8f8"
+        elif style == "danger":
+            self._bg    = bg    or DANGER
+            self._fg    = fg    or "#ffffff"
+            self._hover = hover or DANGER_HOVER
         else:
             self._bg    = bg    or BUTTON_HOVER
             self._fg    = fg    or FG

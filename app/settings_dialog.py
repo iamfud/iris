@@ -130,14 +130,10 @@ class SettingsDialog:
         self._suppress_apply = False
         self._apply()
 
-        # Bottom bar with + ADD ALARM / OK (right-aligned)
-        btn_bar = tk.Frame(outer, bg=BG)
-        btn_bar.pack(fill=tk.X, padx=16, pady=(0, 12))
-        btn_bar.columnconfigure(1, weight=1)
-        self._add_alarm_btn = RoundedButton(btn_bar, text="+ ADD ALARM", style="sec",
-                                            command=self._alarm_add_click)
-        self._add_alarm_btn.grid(row=0, column=0, sticky="w")
-        RoundedButton(btn_bar, text="OK", command=self._ok).grid(row=0, column=2)
+        # Bottom bar — content swaps per tab
+        self._btn_bar = tk.Frame(outer, bg=BG)
+        self._btn_bar.pack(fill=tk.X, padx=16, pady=(0, 12))
+        self._rebuild_bottom_bar(initial_tab or 0)
 
         if initial_tab:
             self._tabs.select(initial_tab)
@@ -396,7 +392,30 @@ class SettingsDialog:
         self._alarm_install_wheel = _install_wheel_tag
         _install_wheel_tag(self._alarm_frame)
 
+    def _rebuild_bottom_bar(self, idx):
+        for w in self._btn_bar.winfo_children():
+            w.destroy()
+        self._btn_bar.columnconfigure(0, weight=0)
+        self._btn_bar.columnconfigure(2, weight=0)
+        self._btn_bar.columnconfigure(1, weight=1)
+
+        if idx == self._tab_alarm_index:
+            RoundedButton(self._btn_bar, text="+ ADD ALARM", style="sec",
+                          command=self._alarm_add_click).grid(row=0, column=0, sticky="w")
+            RoundedButton(self._btn_bar, text="OK", command=self._ok).grid(row=0, column=2)
+        elif idx == self._tab_buttons_index:
+            RoundedButton(self._btn_bar, text="+ ADD BUTTON", style="sec",
+                          command=lambda: self._start_add(None)).grid(row=0, column=0, sticky="w")
+            RoundedButton(self._btn_bar, text="OK", command=self._ok).grid(row=0, column=2)
+        elif idx == 3:  # About
+            from constants import DANGER
+            RoundedButton(self._btn_bar, text="FACTORY RESET", style="danger",
+                          command=self._factory_reset).grid(row=0, column=0, sticky="w")
+        else:  # Features
+            RoundedButton(self._btn_bar, text="OK", command=self._ok).grid(row=0, column=2)
+
     def _on_tab_selected(self, idx):
+        self._rebuild_bottom_bar(idx)
         if idx == self._tab_alarm_index and not self._alarm_built:
             self._alarm_built = True
             self._rebuild_alarm_view()
@@ -878,9 +897,6 @@ class SettingsDialog:
         self._btn_card_photos = []
         board = self._cfg.get("ha_board") or []
         self._render_tree(cards_frame, board)
-
-        RoundedButton(self._buttons_frame, text="+ ADD BUTTON", style="sec",
-                      command=lambda: self._start_add(None)).pack(anchor="w", pady=(8, 0))
 
         # Force canvas layout so content isn't clipped
         self._buttons_frame.update_idletasks()
@@ -1596,9 +1612,6 @@ class SettingsDialog:
                  font=FONT_UI, bg=BG, fg=FG, justify="left").pack(anchor="w", pady=(0, 24))
 
         tk.Frame(main, bg=NEON_DIM, height=1).pack(fill=tk.X, pady=(0, 12))
-
-        RoundedButton(main, text="Factory Reset", command=self._factory_reset,
-                      padx=14, pady=6, fg=NEON_RED).pack(anchor="w")
 
         tk.Frame(main, bg=BG, height=16).pack()
 
