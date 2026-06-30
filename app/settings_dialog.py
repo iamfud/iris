@@ -91,7 +91,7 @@ class SettingsDialog:
         self._win.update_idletasks()
         sw = self._win.winfo_screenwidth()
         sh = self._win.winfo_screenheight()
-        ww, wh = 420, 560
+        ww, wh = 420, 660
         self._win.geometry(f"{ww}x{wh}+{sw - ww - 40}+{sh - wh - 130}")
         self._win.minsize(380, 480)
         self._win.resizable(True, True)
@@ -400,11 +400,11 @@ class SettingsDialog:
         self._btn_bar.columnconfigure(1, weight=1)
 
         if idx == self._tab_alarm_index:
-            RoundedButton(self._btn_bar, text="+ ADD ALARM", style="sec",
+            RoundedButton(self._btn_bar, text="+ ADD ALARM", style="prim",
                           command=self._alarm_add_click).grid(row=0, column=0, sticky="w")
             RoundedButton(self._btn_bar, text="OK", command=self._ok).grid(row=0, column=2)
         elif idx == self._tab_buttons_index:
-            RoundedButton(self._btn_bar, text="+ ADD BUTTON", style="sec",
+            RoundedButton(self._btn_bar, text="+ ADD BUTTON", style="prim",
                           command=lambda: self._start_add(None)).grid(row=0, column=0, sticky="w")
             RoundedButton(self._btn_bar, text="OK", command=self._ok).grid(row=0, column=2)
         elif idx == 3:  # About
