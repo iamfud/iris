@@ -448,15 +448,11 @@ class MainWindow:
 
         self._sending_hotkey = True
         try:
-            # Alt+Tab to return to the previous window, then send keys
-            user32.keybd_event(18, 0, 0, 0)   # VK_MENU down
-            _time.sleep(0.06)
-            user32.keybd_event(9, 0, 0, 0)    # VK_TAB down
-            _time.sleep(0.02)
-            user32.keybd_event(9, 0, 2, 0)    # VK_TAB up
-            _time.sleep(0.06)
-            user32.keybd_event(18, 0, 2, 0)   # VK_MENU up
-            _time.sleep(0.1)
+            # Switch to the saved foreground window directly (no Alt+Tab flash)
+            hwnd = getattr(self, '_saved_foreground_hwnd', None)
+            if hwnd and user32.IsWindow(hwnd):
+                user32.SetForegroundWindow(hwnd)
+                _time.sleep(0.1)
 
             for vk in keys:
                 user32.keybd_event(vk, 0, 0, 0)
@@ -464,7 +460,7 @@ class MainWindow:
             for vk in reversed(keys):
                 user32.keybd_event(vk, 0, 2, 0)
                 _time.sleep(0.015)
-            log.info("  Alt+Tab then keys sent")
+            log.info("  Foreground switch + keys sent")
         except Exception as ex:
             log.error("Hotkey error: %s", ex)
         finally:
@@ -523,15 +519,11 @@ class MainWindow:
             from win_platform import _extract_via_ps
             app_img = _extract_via_ps(app_icon_path, size=_T)
             if app_img:
-                # Remove transparent padding, scale up 1.25× and center-crop to fill tile
+                # Trim transparent padding, then fill the tile
                 bbox = app_img.getbbox()
                 if bbox:
                     app_img = app_img.crop(bbox)
-                factor = 1.25
-                ws, hs = int(_T * factor), int(_T * factor)
-                app_img = app_img.resize((ws, hs), Image.LANCZOS)
-                ox, oy = (ws - _T) // 2, (hs - _T) // 2
-                app_img = app_img.crop((ox, oy, ox + _T, oy + _T))
+                app_img = app_img.resize((_T, _T), Image.LANCZOS)
                 tile = Image.new("RGBA", (_T, _T), (*brgb, 255))
                 icon_layer = Image.new("RGBA", (_T, _T), (0, 0, 0, 0))
                 icon_layer.paste(app_img, (0, 0), app_img)
@@ -768,6 +760,7 @@ class MainWindow:
             self.show()
 
     def show(self):
+        self._saved_foreground_hwnd = user32.GetForegroundWindow()
         self._win.deiconify()
         self._win.update_idletasks()
         self._apply_region()
