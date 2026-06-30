@@ -823,7 +823,7 @@ class SettingsDialog:
                 img = Image.composite(icon_layer, tile, mask)
                 base = Image.new("RGB", (_T, _T), brgb)
                 base.paste(img, mask=img.split()[3])
-                photo = ImageTk.PhotoImage(base)
+                photo = ITK.PhotoImage(base)
                 self._tile_cache[cache_key] = photo
                 return photo
         # MDI fallback
@@ -841,7 +841,7 @@ class SettingsDialog:
         img = img.resize((_T, _T), Image.LANCZOS)
         base = Image.new("RGB", (_T, _T), brgb)
         base.paste(img, mask=img.split()[3])
-        photo = ImageTk.PhotoImage(base)
+        photo = ITK.PhotoImage(base)
         self._tile_cache[cache_key] = photo
         return photo
 
