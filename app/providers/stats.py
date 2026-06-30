@@ -202,6 +202,17 @@ class StatsProvider:
         f = f"{min(fps, 999):.0f}" if fps is not None else "-"
         self.serial.send_stats(cpu, cpu_temp, gpu_temp, fps)
 
+    @staticmethod
+    def _foreground_exe():
+        try:
+            hwnd = ctypes.windll.user32.GetForegroundWindow()
+            pid = ctypes.c_ulong()
+            ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            import psutil
+            return psutil.Process(pid.value).exe()
+        except Exception:
+            return ""
+
     def _loop(self):
         last_temp_poll = 0.0
         last_push = 0.0
@@ -226,7 +237,10 @@ class StatsProvider:
             if fps_data is None and int(now) % 30 == 0:
                 log.info("RTSS poll: no FPS data (RTSS not hooked or not running?)")
             elif fps_data is not None and int(now) % 30 == 0:
-                log.info("RTSS poll: FPS=%.0f app=%s", fps_data[0], fps_data[1])
+                fg = self._foreground_exe()
+                log.info("RTSS poll: FPS=%.0f app=%s  foreground=%s  match=%s",
+                         fps_data[0], fps_data[1], fg,
+                         fg.lower() == fps_data[1].lower())
 
             with self._lock:
                 if fps_data:
@@ -257,7 +271,7 @@ class StatsProvider:
             with self._lock:
                 self._snapshot = Snapshot(cpu_temp, gpu_temp, fps, exe, cpu_pct)
 
-            game_active = fps is not None
+            game_active = fps is not None and exe and self._foreground_exe().lower() == exe.lower()
             over_limit = (cpu_temp is not None and cpu_temp >= cpu_lim) or \
                          (gpu_temp is not None and gpu_temp >= gpu_lim)
 
