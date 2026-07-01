@@ -21,3 +21,4 @@ app/iris_config.json
 # Windows
 Thumbs.db
 Desktop.ini
+.aider*

@@ -273,6 +273,9 @@ class DerekD1:
         serial_sender.set_port(self.cfg.get("serial_port", "auto"))
         serial_sender.add_line_callback(self._on_serial_line)
         self._queue_defaults()
+        saved_name = self.cfg.get("user_name", "").strip()
+        if saved_name:
+            serial_sender.queue_on_connect("user_name", saved_name)
         threading.Thread(target=ws_bridge.start, daemon=True, name="ws-bridge").start()
         self._setup_providers()
 

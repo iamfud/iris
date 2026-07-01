@@ -31,7 +31,7 @@ DEFAULT_CONFIG = {
     "media_player_path": "",
     "alarms": [],
     "ha_board": [],
-
+    "user_name": "",
 }
 
 # Device-side defaults (pushed to ESP8266 on connect / factory reset)
@@ -52,6 +52,7 @@ DEVICE_DEFAULTS = {
     "temp_alert": "0",
     "cpu_temp_lim": "90",
     "gpu_temp_lim": "90",
+    "user_name": "",
 }
 
 BG = "#202020"

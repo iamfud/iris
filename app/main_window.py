@@ -489,13 +489,38 @@ class MainWindow:
 
         try:
             if hwnd and user32.IsWindow(hwnd):
-                # Use SwitchToThisWindow (shell32) — bypasses UIPI restrictions
                 ctypes.windll.user32.SwitchToThisWindow(hwnd, True)
-            _time.sleep(0.05)
-            _send_keys_sendinput(keys)
-            _time.sleep(0.015)
-            _send_keys_sendinput(keys, key_up=True)
-            log.info("  Hotkey sent")
+            _time.sleep(0.2)
+
+            def _vk_str(vk):
+                if 48 <= vk <= 57:
+                    return chr(vk)
+                if 65 <= vk <= 90:
+                    return chr(vk).lower()
+                return {
+                    8: "backspace", 9: "tab", 13: "enter", 16: "shift",
+                    17: "ctrl", 18: "alt", 27: "esc", 32: "space",
+                    33: "page up", 34: "page down", 35: "end", 36: "home",
+                    37: "left", 38: "up", 39: "right", 40: "down",
+                    45: "insert", 46: "delete", 91: "windows", 92: "windows",
+                    112: "f1", 113: "f2", 114: "f3", 115: "f4",
+                    116: "f5", 117: "f6", 118: "f7", 119: "f8",
+                    120: "f9", 121: "f10", 122: "f11", 123: "f12",
+                    144: "num lock", 186: ";", 187: "=", 188: ",",
+                    189: "-", 190: ".", 191: "/", 192: "`",
+                    219: "[", 220: "\\", 221: "]", 222: "'",
+                }.get(vk)
+
+            parts = [_vk_str(vk) for vk in keys if _vk_str(vk) is not None]
+            if parts:
+                import keyboard as _kb
+                hotkey = "+".join(parts)
+                _kb.press(hotkey)
+                _time.sleep(0.15)
+                _kb.release(hotkey)
+                log.info("  Hotkey sent: %s", hotkey)
+            else:
+                log.warning("  No mapped keys for vk=%s", keys)
         except Exception as ex:
             log.error("Hotkey error: %s", ex)
         finally:

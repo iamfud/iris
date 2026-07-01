@@ -20,5 +20,8 @@ pyaudio>=0.2.14
 pyaudiowpatch  # patched PortAudio with WASAPI loopback support
 numpy>=1.24.0
 
+# Hotkey injection (overlay HOTKEY tiles)
+keyboard>=0.13.5
+
 # Build / packaging
 pyinstaller>=6.0

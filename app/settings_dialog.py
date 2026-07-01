@@ -91,7 +91,7 @@ class SettingsDialog:
         self._win.update_idletasks()
         sw = self._win.winfo_screenwidth()
         sh = self._win.winfo_screenheight()
-        ww, wh = 420, 660
+        ww, wh = 420, 610
         self._win.geometry(f"{ww}x{wh}+{sw - ww - 40}+{sh - wh - 130}")
         self._win.minsize(380, 480)
         self._win.resizable(True, True)
@@ -224,6 +224,38 @@ class SettingsDialog:
         left.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
         tk.Label(left, text="Clock Display", font=("Segoe UI", 10, "bold"),
                  bg=BG, fg=NEON).pack(anchor="w", pady=(0, 8))
+
+        saved_name = self._cfg.get("user_name", "")
+        self._user_name_var = tk.StringVar(value=saved_name if saved_name else "Your Name")
+        self._user_name_suppress = False
+
+        def _ph_focus_in(e):
+            if self._user_name_var.get() == "Your Name":
+                self._user_name_suppress = True
+                e.widget.delete(0, "end")
+                e.widget.config(fg=FG)
+                self._user_name_suppress = False
+
+        def _ph_focus_out(e):
+            if not self._user_name_var.get().strip():
+                self._user_name_suppress = True
+                e.widget.delete(0, "end")
+                e.widget.insert(0, "Your Name")
+                e.widget.config(fg=FG)
+                self._user_name_suppress = False
+
+        name_row = tk.Frame(left, bg=BG_CARD)
+        name_row.pack(fill="x", padx=2, pady=2)
+        name_entry = tk.Entry(name_row, textvariable=self._user_name_var,
+                              bg=BG_CARD, fg=FG,
+                              insertbackground=FG,
+                              relief="flat", bd=0, font=FONT_SM)
+        name_entry.pack(fill="x", padx=8, pady=6)
+        name_entry.bind("<FocusIn>", _ph_focus_in)
+        name_entry.bind("<FocusOut>", _ph_focus_out)
+        self._user_name_var.trace_add("write", lambda *_: self._apply_user_name())
+        ToolTip(name_row, "Your name, shown in the startup greeting (e.g. Good afternoon Robert)")
+
         for key, label in [("feature_time", "Time display"),
                            ("feature_date", "Date reminder"),
                            ("feature_minute_bar", "Minute bar")]:
@@ -1138,23 +1170,56 @@ class SettingsDialog:
                 w.destroy()
 
             outer_border = tk.Frame(parent, bg=BORDER, bd=0)
-            outer_border.pack(fill=tk.X)
+            outer_border.pack(fill=tk.BOTH, expand=True)
             outer = tk.Frame(outer_border, bg=BG_CARD, padx=16, pady=16)
-            outer.pack(fill=tk.X)
+            outer.pack(fill=tk.BOTH, expand=True)
 
             icon_var = tk.StringVar(value=state["icon"])
             color_var = tk.StringVar(value=state["color"])
             app_icon_path_var = tk.StringVar(value=state.get("app_icon_path", ""))
 
-            # Icon grid (6 × 6 = 36 icons, no search)
-            icon_grid = tk.Frame(outer, bg=BG_CARD)
-            icon_grid.pack(fill=tk.X, pady=(0, 10))
+            # Bottom section — colour picker + hex + buttons (fixed, never scrolls)
+            bottom_section = tk.Frame(outer, bg=BG_CARD)
+            bottom_section.pack(side=tk.BOTTOM, fill=tk.X)
+
+            # Icon grid — scrollable, fills remaining space above bottom_section
+            icon_container = tk.Frame(outer, bg=BG_CARD)
+            icon_container.pack(side=tk.TOP, fill=tk.BOTH, expand=True, pady=(0, 10))
+            icon_canvas = tk.Canvas(icon_container, bg=BG_CARD, highlightthickness=0, bd=0)
+            icon_canvas.pack(side="left", fill="both", expand=True)
+            scrollbar = tk.Scrollbar(icon_container, orient="vertical",
+                                     command=icon_canvas.yview, bg=BG_CARD)
+            scrollbar.pack(side="right", fill="y")
+            icon_canvas.configure(yscrollcommand=scrollbar.set)
+
+            icon_grid = tk.Frame(icon_canvas, bg=BG_CARD)
+            icon_canvas_win = icon_canvas.create_window((0, 0), window=icon_grid, anchor="nw")
+
+            # Reflow grid columns when canvas resizes
+            def _reflow_grid():
+                cw = icon_canvas.winfo_width()
+                cols = max(4, (cw - 20) // 56) if cw > 40 else 6
+                for i, cell in enumerate(icon_grid.winfo_children()):
+                    cell.grid(row=i // cols, column=i % cols, padx=2, pady=2)
+                _sync_icon_scrollregion()
+
+            def _sync_icon_scrollregion():
+                icon_canvas.configure(scrollregion=icon_canvas.bbox("all"))
+            icon_grid.bind("<Configure>", lambda _: _sync_icon_scrollregion())
+
+            def _icon_wheel(e):
+                icon_canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+                return "break"
+            icon_canvas.bind("<MouseWheel>", _icon_wheel)
+            icon_grid.bind("<MouseWheel>", _icon_wheel)
+
             self._icon_picker_photos = []
-            icon_names = mdi_icons.COMMON_ICONS[:30]
+            icon_names = mdi_icons.COMMON_ICONS
+            icon_grid_cols = 6
 
             for i, name in enumerate(icon_names):
                 cell = tk.Frame(icon_grid, bg=BG_CARD, cursor="hand2")
-                cell.grid(row=i // 6, column=i % 6, padx=2, pady=2)
+                cell.grid(row=i // icon_grid_cols, column=i % icon_grid_cols, padx=2, pady=2)
                 img = None
                 try:
                     r = mdi_icons.render(name, 24, (224, 224, 224))
@@ -1169,10 +1234,17 @@ class SettingsDialog:
                 icon_lbl = tk.Label(cell, image=img, bg=BG_CARD, width=48, height=32, cursor="hand2")
                 icon_lbl.pack(padx=2, pady=(4, 4))
                 icon_lbl.bind("<Button-1>", lambda e, n=name: icon_var.set(n))
+                for w in (cell, icon_lbl):
+                    w.bind("<MouseWheel>", _icon_wheel)
 
-            # Colour picker (manual grid with preview gap bottom-right)
-            color_grid = tk.Frame(outer, bg=BG_CARD)
-            color_grid.pack(fill=tk.X, pady=(0, 8))
+            # Reflow when canvas width changes
+            icon_canvas.bind("<Configure>", lambda _: _reflow_grid())
+
+            # Colour picker — centred
+            color_grid = tk.Frame(bottom_section, bg=BG_CARD)
+            color_grid.pack(fill=tk.X)
+            swatch_frame = tk.Frame(color_grid, bg=BG_CARD)
+            swatch_frame.pack(anchor="center")
             sw = 28
             sh = 28
             gap = 4
@@ -1181,14 +1253,14 @@ class SettingsDialog:
                 color_var.set(c)
 
             for idx, color in enumerate(HA_PALETTE):
-                cell = tk.Frame(color_grid, bg=color, width=sw, height=sh,
+                cell = tk.Frame(swatch_frame, bg=color, width=sw, height=sh,
                                 cursor="hand2", highlightbackground=BORDER, highlightthickness=1)
                 cell.grid(row=idx // 10, column=idx % 10, padx=gap // 2, pady=gap // 2)
                 cell.pack_propagate(False)
                 cell.bind("<Button-1>", lambda e, c=color: _pick_color(c))
 
             # Replace first swatch with no-colour (clears fill)
-            nocell = tk.Frame(color_grid, bg=BG_CARD, width=sw, height=sh,
+            nocell = tk.Frame(swatch_frame, bg=BG_CARD, width=sw, height=sh,
                               cursor="hand2", highlightbackground=BORDER, highlightthickness=1)
             nocell.grid(row=0, column=0, padx=gap // 2, pady=gap // 2)
             nocell.pack_propagate(False)
@@ -1200,7 +1272,7 @@ class SettingsDialog:
             ToolTip(nocell, "Clear the tile background colour")
 
             # Preview tile in bottom-right 2×2 gap
-            preview_frame = tk.Frame(color_grid, bg=BG_CARD,
+            preview_frame = tk.Frame(swatch_frame, bg=BG_CARD,
                                      width=sw * 2 + gap, height=sh * 2 + gap,
                                      highlightbackground=BORDER, highlightthickness=1)
             preview_frame.grid(row=2, column=8, rowspan=2, columnspan=2,
@@ -1277,9 +1349,12 @@ class SettingsDialog:
             app_icon_path_var.trace_add("write", _update_preview)
             _update_preview()
 
-            # Hex entry + browse EXE
-            hex_f = tk.Frame(outer, bg=BG_CARD)
-            hex_f.pack(fill=tk.X)
+            # Bottom row — hex entry left, OK/Cancel right
+            btn_row = tk.Frame(bottom_section, bg=BG_CARD)
+            btn_row.pack(fill=tk.X, pady=(12, 0))
+
+            hex_f = tk.Frame(btn_row, bg=BG_CARD)
+            hex_f.pack(side=tk.LEFT)
             tk.Label(hex_f, text="Hex:", bg=BG_CARD, fg=FG_DIM, font=FONT_SM).pack(side="left")
             hex_entry = tk.Entry(hex_f, textvariable=color_var,
                                  bg=BG, fg=FG, insertbackground=FG,
@@ -1305,14 +1380,11 @@ class SettingsDialog:
                 if path:
                     app_icon_path_var.set(path)
 
-            # OK / Cancel
-            btn_row = tk.Frame(outer, bg=BG_CARD)
-            btn_row.pack(fill=tk.X, pady=(12, 0))
             picker_cancel = RoundedButton(btn_row, text="CANCEL", style="sec",
                                           command=lambda: _rebuild_form(state))
             picker_cancel.pack(side="right", padx=(4, 0))
             ToolTip(picker_cancel, "Discard changes and go back")
-            picker_ok = RoundedButton(btn_row, text="OK", style="prim",
+            picker_ok = RoundedButton(btn_row, text="SAVE", style="prim",
                                       command=lambda: (
                                           state.update({"icon": icon_var.get(), "color": color_var.get(),
                                                         "app_icon_path": app_icon_path_var.get()}),
@@ -1654,6 +1726,10 @@ class SettingsDialog:
         else:
             self._clock_mode_var.set("Small Clock")
 
+        if hasattr(self, '_user_name_var'):
+            val = cfg.get("user_name", "")
+            self._user_name_var.set(val if val else "Your Name")
+
         if hasattr(self, '_update_minute_bar_state'):
             self._update_minute_bar_state()
 
@@ -1690,6 +1766,12 @@ class SettingsDialog:
         self._cfg["feature_large_clock"] = (mode == "Large Clock")
         self._cfg["feature_day_clock"] = (mode == "Day Clock")
 
+        # Save user name (strip placeholder text)
+        raw_name = self._user_name_var.get().strip()
+        if raw_name == "Your Name":
+            raw_name = ""
+        self._cfg["user_name"] = raw_name
+
         # Send minute bar immediately so the device removes/hides it right away
         mb_val = "1" if self._vars["feature_minute_bar"].get() else "0"
         if mode == "Large Clock":
@@ -1713,10 +1795,26 @@ class SettingsDialog:
             time.sleep(0.02)
             self._serial.set_live("feature_day_clock", "1" if mode == "Day Clock" else "0")
             time.sleep(0.02)
+            name = raw_name if raw_name else ""
+            self._serial.set_live("user_name", name)
+            self._serial.queue_on_connect("user_name", name)
+            time.sleep(0.02)
             self._sync_next_alarm()
             log.info("[settings] applied")
 
         threading.Thread(target=send_changes, daemon=True).start()
+
+    def _apply_user_name(self):
+        if self._suppress_apply or self._user_name_suppress:
+            return
+        raw = self._user_name_var.get().strip()
+        if raw == "Your Name":
+            raw = ""
+        self._cfg["user_name"] = raw
+        if self._serial:
+            self._serial.set_live("user_name", raw)
+            self._serial.queue_on_connect("user_name", raw)
+        save_config(self._cfg)
 
     def _factory_reset(self):
         defaults = dict(DEFAULT_CONFIG)

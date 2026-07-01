@@ -85,66 +85,55 @@ _BUILTIN = {
     "timer-sand":         0xF0531,
 }
 
-# Icons shown in the picker grid (ordered by HA relevance)
+# Icons shown in the picker grid — user-selected set
 COMMON_ICONS = [
-    # Lighting
-    "lightbulb", "lightbulb-on", "lightbulb-off", "lightbulb-outline",
-    "lamp", "ceiling-light", "floor-lamp", "desk-lamp",
-    "flash", "led-strip", "led-strip-variant", "string-lights",
-    "candle", "fire", "brightness-5", "brightness-7",
-    # Power / energy
-    "power", "power-plug", "power-standby", "power-socket-uk",
-    "lightning-bolt", "battery", "battery-charging", "solar-power",
-    "transmission-tower", "meter-electric",
-    # Climate / HVAC
-    "thermometer", "thermometer-low", "thermometer-high", "thermometer-lines",
-    "fan", "fan-off", "air-conditioner", "air-filter",
-    "radiator", "radiator-off", "snowflake", "water-boiler",
-    "heat-wave", "hvac",
-    # Home areas / access
-    "home", "home-outline", "home-assistant",
-    "door", "door-open", "door-closed",
-    "garage", "garage-open", "window-open", "window-closed",
-    "sofa", "bed", "kitchen-set", "table-furniture",
-    # Security
-    "lock", "lock-open", "lock-outline",
-    "shield", "shield-home", "shield-check", "shield-alert",
-    "cctv", "motion-sensor", "doorbell",
-    "alarm", "alarm-light", "bell", "bell-off",
-    # Entertainment
-    "television", "television-play", "television-off",
-    "speaker", "speaker-off", "speaker-multiple",
-    "music", "music-note", "movie",
-    "radio", "headphones", "microphone",
-    "play", "pause", "stop",
+    "access-point", "alert", "alert-circle",
+    "arrow-collapse-all", "arrow-down", "arrow-down-bold",
+    "arrow-expand-all", "arrow-left", "arrow-left-bold",
+    "arrow-right", "arrow-right-bold", "arrow-up", "arrow-up-bold",
+    "battery", "battery-charging", "battery-high", "battery-low",
+    "battery-medium", "battery-outline",
+    "bell", "bell-off", "bell-ring",
+    "bluetooth", "bluetooth-off",
+    "bookmark", "bookmark-plus", "bookmark-remove",
+    "border-all", "brightness-7",
+    "cast", "ceiling-light", "cellphone",
+    "chart-areaspline", "chart-bar", "chart-donut",
+    "chevron-double-down", "chevron-double-left", "chevron-double-right",
+    "chevron-double-up", "chevron-down", "chevron-left", "chevron-right", "chevron-up",
+    "clock", "clock-digital",
+    "cog", "cog-box",
+    "content-copy", "content-cut", "content-paste", "content-save",
+    "cursor-default", "cursor-move", "cursor-pointer", "cursor-text",
+    "delete-empty", "delete-outline", "desk-lamp", "desk-lamp-on",
+    "desktop-tower-monitor",
+    "email-open", "email-outline", "ethernet", "expansion-card",
+    "file", "file-outline", "flash", "floor-lamp",
+    "folder", "folder-multiple", "folder-open",
+    "fullscreen", "fullscreen-exit",
+    "gauge-empty", "gauge-full",
+    "harddisk", "headphones", "heart", "help", "help-circle",
+    "home", "home-outline",
+    "keyboard",
+    "lamp", "led-off", "led-strip", "led-strip-variant",
+    "lightbulb", "lightbulb-multiple", "lightbulb-on",
+    "message", "message-outline", "message-text", "microphone",
+    "monitor", "monitor-cellphone", "monitor-dashboard",
+    "monitor-multiple", "monitor-screenshot", "mouse", "music", "music-note",
+    "network-outline", "network-strength-1", "network-strength-2",
+    "network-strength-3", "network-strength-4",
+    "palette", "palette-outline", "palette-swatch",
+    "pause", "pin", "pin-outline", "play", "play-pause",
+    "power-sleep", "power-socket-uk",
+    "radio", "router-wireless",
+    "select-inverse", "server",
+    "skip-backward", "skip-forward", "skip-next", "skip-previous",
+    "speaker", "speedometer", "speedometer-medium", "star", "stop",
+    "television-classic", "thermometer", "timer-outline",
+    "tooltip-text", "tune", "tune-vertical",
+    "usb-flash-drive",
     "volume-high", "volume-medium", "volume-off",
-    # Appliances
-    "robot-vacuum", "robot-vacuum-variant",
-    "washing-machine", "tumble-dryer", "dishwasher",
-    "fridge", "fridge-outline", "microwave",
-    "coffee", "coffee-maker", "blender-outline",
-    # Presence / people
-    "account", "account-group", "human", "human-male-female",
-    "sleep", "run", "walk",
-    # Transport
-    "car", "car-electric", "bike", "bus",
-    # Weather
-    "weather-sunny", "weather-night", "weather-cloudy",
-    "weather-rainy", "weather-snowy", "weather-lightning",
-    "weather-windy", "weather-fog",
-    # Network / tech
-    "wifi", "wifi-off", "bluetooth", "router-wireless",
-    "cellphone", "phone", "tablet",
-    # Scenes / automation
-    "star", "star-outline", "heart", "check-circle",
-    "cog", "cog-outline", "tune", "puzzle",
-    "script-text", "robot", "timer", "clock",
-    # Water / garden
-    "water", "water-off", "water-pump",
-    "sprinkler", "sprinkler-variant", "grass", "flower", "tree",
-    # Misc
-    "cat", "dog", "paw",
-    "broom", "trash-can", "package-variant",
+    "wifi", "wifi-off", "window-closed", "wrench",
 ]
 
 
