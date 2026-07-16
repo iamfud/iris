@@ -8,13 +8,14 @@ import time as _time
 import winsound
 import ctypes
 import ctypes.wintypes
-import ctypes
+
+import tkinter as tk
 
 import pystray
 
 import ws_bridge
 from config import load_config, save_config
-from constants import APP_NAME, DEVICE_DEFAULTS
+from constants import APP_NAME, DEFAULT_BRIGHTNESS, DEVICE_DEFAULTS, HOTKEY_SLEEP_MS, PC_DISP_STATS, TRAY_ICON_SIZE
 from alarm_popup import AlarmPopup
 from serial_comm import serial_sender
 from providers.stats import StatsProvider
@@ -28,7 +29,12 @@ from main_window import MainWindow
 from overlay_window import OverlayWindow
 from stopwatch import StopwatchOverlay
 
-_LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "iris.log")
+if getattr(sys, "frozen", False):
+    _LOG_DIR = os.path.join(os.environ["APPDATA"], "Iris")
+    os.makedirs(_LOG_DIR, exist_ok=True)
+else:
+    _LOG_DIR = os.path.dirname(os.path.abspath(__file__))
+_LOG_FILE = os.path.join(_LOG_DIR, "iris.log")
 logging.basicConfig(
     filename=_LOG_FILE,
     level=logging.INFO,
@@ -38,7 +44,7 @@ logging.basicConfig(
 log = logging.getLogger("iris")
 
 
-class DerekD1:
+class IrisApp:
     def __init__(self):
         self.cfg = load_config()
         self.icon = None
@@ -52,16 +58,20 @@ class DerekD1:
         self._stopwatch = None
         self._alarm_active = False
 
+    def set_config(self, key, value):
+        self.cfg[key] = value
+        save_config(self.cfg)
+
     def _setup_providers(self):
-        self._media_provider = MediaProvider(self.cfg, serial_sender)
         providers = [
             StatsProvider(self.cfg, serial_sender),
             HAProvider(self.cfg),
-            self._media_provider,
+            MediaProvider(self.cfg, serial_sender),
             NotificationMirrorProvider(self.cfg, serial_sender),
             OpenRGBProvider(self.cfg),
         ]
         self._providers = providers
+        self._stats_provider = providers[0]
         for p in self._providers:
             try:
                 p.start()
@@ -80,11 +90,11 @@ class DerekD1:
 
     def _update_icon(self):
         if self.icon:
-            self.icon.icon = make_icon_image(64, online=self._online)
+            self.icon.icon = make_icon_image(TRAY_ICON_SIZE, online=self._online)
 
     def _set_brightness(self, value: int):
-        prev = self.cfg.get("brightness", 3)
-        self.cfg["brightness"] = value
+        prev = self.cfg.get("brightness", DEFAULT_BRIGHTNESS)
+        self.set_config("brightness", value)
         if value == 0 and prev != 0:
             serial_sender.set_live("display_on", "0")
         elif value != 0:
@@ -93,24 +103,19 @@ class DerekD1:
             serial_sender.set_live("brightness", str(value))
 
     def _toggle_pc_stats(self, enabled: bool):
-        self.cfg["pc_stats_manual"] = enabled
-        save_config(self.cfg)
-        for p in self._providers:
-            if hasattr(p, "set_manual_override"):
-                p.set_manual_override(enabled)
-                break
-        serial_sender.set_live("pc_disp", "7" if enabled else "0")
+        self.set_config("pc_stats_manual", enabled)
+        self._stats_provider.set_manual_override(enabled)
+        serial_sender.set_live("pc_disp", PC_DISP_STATS if enabled else "0")
         log.info("PC stats pin %s", "ON" if enabled else "OFF")
 
     def _toggle_overlay(self, enabled: bool):
         if enabled:
             if self._overlay is None:
-                provider = next((p for p in self._providers if hasattr(p, "snapshot")), None)
-                if provider:
-                    self._overlay = OverlayWindow(
-                        self._root, provider, on_close=self._on_overlay_close,
-                    )
-                    log.info("Overlay ON")
+                self._overlay = OverlayWindow(
+                    self._root, self._stats_provider,
+                    on_close=self._on_overlay_close, style="numline",
+                )
+                log.info("Overlay ON")
         else:
             if self._overlay is not None:
                 ov = self._overlay
@@ -126,8 +131,7 @@ class DerekD1:
     def _toggle_countdown(self):
         if self._stopwatch is None:
             self._stopwatch = StopwatchOverlay(self._root)
-        if not self._stopwatch._countdown:
-            self._stopwatch._toggle_mode()
+        self._stopwatch.start_countdown()
         self._stopwatch.toggle()
 
     def _on_overlay_close(self):
@@ -136,15 +140,13 @@ class DerekD1:
 
     def _sync_overlay_tile(self, on):
         if self._main_win:
-            self._main_win._overlay_on = on
-            ov = self._main_win._ov_tiles
-            self._main_win._btn_overlay.config(image=ov[2] if on else ov[0])
+            self._main_win.set_overlay_state(on)
 
     def sync_alarm_indicator(self):
         if not hasattr(self, '_main_win') or not self._main_win:
             return
         alarms = self.cfg.get("alarms", [])
-        active = any(a.get("enabled", False) and a.get("days", 0) for a in alarms)
+        active = any(a.get("enabled", False) for a in alarms)
         self._main_win.set_alarm_indicator(active)
 
     def _open_settings(self, tab=0):
@@ -155,7 +157,7 @@ class DerekD1:
         self._root.wait_window(dlg._win)
         self.sync_alarm_indicator()
         if self._main_win:
-            self._main_win._render_buttons()
+            self._main_win.refresh_buttons()
 
     def _quit(self):
         self._running = False
@@ -163,14 +165,15 @@ class DerekD1:
             try:
                 p.stop()
             except Exception:
-                pass
+                log.exception("Provider %s failed during shutdown", p.__class__.__name__)
         if self.icon:
             self.icon.stop()
+            self.icon = None
         self._root.after(0, self._root.destroy)
 
     def _on_tray_click(self):
         user32 = ctypes.windll.user32
-        self._main_win._saved_foreground_hwnd = user32.GetForegroundWindow()
+        self._main_win.set_saved_foreground(user32.GetForegroundWindow())
         self._root.after(0, self._toggle_window)
 
     def _toggle_window(self):
@@ -197,21 +200,20 @@ class DerekD1:
                     if user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1):
                         if msg.message == WM_HOTKEY and msg.wParam == HOTKEY_ID:
                             fg = user32.GetForegroundWindow()
-                            self._main_win._saved_foreground_hwnd = fg
+                            self._main_win.set_saved_foreground(fg)
                             self._root.after(0, self._toggle_window)
                         elif msg.message == 0x0012:
                             break
                     else:
-                        ctypes.windll.kernel32.Sleep(50)
+                        ctypes.windll.kernel32.Sleep(HOTKEY_SLEEP_MS)
             finally:
                 user32.UnregisterHotKey(None, HOTKEY_ID)
 
         threading.Thread(target=listener, daemon=True).start()
 
     def _queue_defaults(self):
-        q = serial_sender.queue_on_connect
         for key, val in DEVICE_DEFAULTS.items():
-            q(key, val)
+            serial_sender.queue_on_connect_default(key, val)
 
     def _get_next_alarm_message(self):
         alarms = [a for a in self.cfg.get("alarms", [])
@@ -272,14 +274,14 @@ class DerekD1:
     def run(self):
         serial_sender.set_port(self.cfg.get("serial_port", "auto"))
         serial_sender.add_line_callback(self._on_serial_line)
-        self._queue_defaults()
         saved_name = self.cfg.get("user_name", "").strip()
         if saved_name:
             serial_sender.queue_on_connect("user_name", saved_name)
-        threading.Thread(target=ws_bridge.start, daemon=True, name="ws-bridge").start()
         self._setup_providers()
+        self._queue_defaults()
+        threading.Thread(target=ws_bridge.start, daemon=True, name="ws-bridge").start()
 
-        self._root = __import__("tkinter").Tk()
+        self._root = tk.Tk()
         self._root.withdraw()
 
         self._main_win = MainWindow(self._root, self, cfg=self.cfg)
@@ -291,7 +293,7 @@ class DerekD1:
 
         self.icon = pystray.Icon(
             "Iris",
-            make_icon_image(64, online=False),
+            make_icon_image(TRAY_ICON_SIZE, online=False),
             APP_NAME,
             menu=build_tray_menu(self),
         )
@@ -302,4 +304,4 @@ class DerekD1:
 
 
 if __name__ == "__main__":
-    DerekD1().run()
+    IrisApp().run()

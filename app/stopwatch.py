@@ -61,6 +61,13 @@ class StopwatchOverlay:
         self._drag_x = self._drag_y = self._drag_ox = self._drag_oy = None
         self._tray_icon = None
 
+    def is_countdown(self):
+        return self._countdown
+
+    def start_countdown(self):
+        if not self._countdown:
+            self._toggle_mode()
+
     def toggle(self):
         if self._visible:
             self._hide()

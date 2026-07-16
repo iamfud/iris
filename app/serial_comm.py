@@ -7,6 +7,7 @@ and delivers STATS lines from providers to the device.
 
 import json
 import logging
+import queue
 import threading
 import time
 
@@ -36,11 +37,16 @@ class SerialSender:
         self._forced_port = None
         self._ser = None
         self._on_connect_queue = {}
-        self._rx_q = __import__("queue").Queue(maxsize=64)
+        self._rx_q = queue.Queue(maxsize=64)
+        self._dispatch_q = queue.Queue(maxsize=256)
         self._line_callbacks = []
         self._time_sync_interval = 60.0
+        self._last_time_sync = 0.0
+        self._dispatch_stop = threading.Event()
+        self._last_drop_warn = 0.0
         threading.Thread(target=self._keepalive, daemon=True, name="serial-keepalive").start()
         threading.Thread(target=self._reader, daemon=True, name="serial-reader").start()
+        threading.Thread(target=self._dispatcher, daemon=True, name="serial-dispatcher").start()
         threading.Thread(target=self._time_sync_loop, daemon=True, name="serial-timesync").start()
 
     # ── Public API ────────────────────────────────────────────
@@ -51,6 +57,10 @@ class SerialSender:
     def queue_on_connect(self, key, value):
         with self._lock:
             self._on_connect_queue[key] = value
+
+    def queue_on_connect_default(self, key, value):
+        with self._lock:
+            self._on_connect_queue.setdefault(key, value)
 
     def set_port(self, port_name):
         with self._lock:
@@ -86,9 +96,11 @@ class SerialSender:
         message = message.replace("|", " ").replace("\n", " ")[:120]
         self._write(f"NOTIFY:{title}|{message}\n")
 
+    def _send_command(self, cmd, payload):
+        return self._write(f"{cmd}:{payload}\n")
+
     def send_vc_join(self, name):
-        name = name.replace("\n", " ")[:48]
-        self._write(f"VC:{name}\n")
+        self._send_command("VC", name.replace("\n", " ")[:48])
 
     def factory_reset(self):
         sent = 0
@@ -142,7 +154,7 @@ class SerialSender:
         return True
 
     def get_config(self, timeout=5):
-        _, resp = self._send_and_wait("GET:config\n", prefix="CONFIG:", timeout=timeout)
+        _, resp = self._send_and_wait("GET:config", prefix="CONFIG:", timeout=timeout)
         if resp and resp.startswith("CONFIG:"):
             try:
                 return json.loads(resp[7:])
@@ -192,7 +204,7 @@ class SerialSender:
         while not self._rx_q.empty():
             try:
                 self._rx_q.get_nowait()
-            except __import__("queue").Empty:
+            except queue.Empty:
                 break
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -200,7 +212,7 @@ class SerialSender:
                 resp = self._rx_q.get(timeout=min(0.2, deadline - time.time()))
                 if resp.startswith(prefix):
                     return "OK" in resp, resp
-            except __import__("queue").Empty:
+            except queue.Empty:
                 pass
         return False, f"timeout after {timeout}s"
 
@@ -221,17 +233,30 @@ class SerialSender:
                             pass
                         self._ser = None
             if line:
-                for cb in list(self._line_callbacks):
-                    try:
-                        cb(line)
-                    except Exception:
-                        pass
+                try:
+                    self._dispatch_q.put_nowait(line)
+                except queue.Full:
+                    if time.time() - self._last_drop_warn > 5:
+                        self._last_drop_warn = time.time()
+                        log.warning("Dispatch queue full — dropping serial line")
                 try:
                     self._rx_q.put_nowait(line)
-                except __import__("queue").Full:
+                except queue.Full:
                     pass
             else:
                 time.sleep(0.02)
+
+    def _dispatcher(self):
+        while not self._dispatch_stop.is_set():
+            try:
+                line = self._dispatch_q.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            for cb in list(self._line_callbacks):
+                try:
+                    cb(line)
+                except Exception:
+                    log.exception("Serial callback failed")
 
     def _keepalive(self):
         _min_reconnect = 0.0
@@ -274,14 +299,16 @@ class SerialSender:
                     self._write(f"SET:{key}={value}\n")
                 self._write(f"SET:utc_offset={_local_utc_offset()}\n")
                 self._write(f"SET:time={int(time.time())}\n")
+                self._last_time_sync = time.time()
                 log.info("[serial] settings + time pushed on connect")
 
     def _time_sync_loop(self):
         while True:
             time.sleep(self._time_sync_interval)
-            if self.connected_port():
+            if self.connected_port() and time.time() - self._last_time_sync >= self._time_sync_interval * 0.9:
                 self._write(f"SET:utc_offset={_local_utc_offset()}\n")
                 self._write(f"SET:time={int(time.time())}\n")
+                self._last_time_sync = time.time()
 
     @staticmethod
     def _find_derek_port():

@@ -106,6 +106,7 @@ class MediaProvider:
             }
         except Exception as e:
             log.debug(f"[media] SMTC error: {e}")
+            self._smtc_mgr = None
             return None
 
     def _poll(self, loop):
@@ -137,6 +138,7 @@ class MediaProvider:
                 if self.serial:
                     self.serial.send_notification("Media", "Playback ended")
                 self._last_notify_key = ""
+                self._smtc_mgr = None
 
             time.sleep(3)
 

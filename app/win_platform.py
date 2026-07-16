@@ -7,6 +7,126 @@ import winreg
 
 log = logging.getLogger("iris.platform")
 
+
+def list_audio_output_devices():
+    """Return ((endpoint_id, friendly_name) list, error_string | None)."""
+    results = []
+    err = None
+    try:
+        import comtypes
+        from pycaw.api.mmdeviceapi import IMMDeviceEnumerator
+        from pycaw.constants import CLSID_MMDeviceEnumerator, EDataFlow
+        from pycaw.utils import AudioUtilities
+        comtypes.CoInitialize()
+        de = comtypes.CoCreateInstance(
+            CLSID_MMDeviceEnumerator, IMMDeviceEnumerator,
+            comtypes.CLSCTX_INPROC_SERVER)
+        col = de.EnumAudioEndpoints(EDataFlow.eRender.value, 1)
+        render_ids = {col.Item(i).GetId() for i in range(col.GetCount())}
+        for d in AudioUtilities.GetAllDevices():
+            if d.id in render_ids and d.FriendlyName:
+                results.append((d.id, d.FriendlyName))
+        if not results:
+            err = "no active output devices found"
+    except ImportError:
+        err = "pycaw not installed"
+    except Exception as e:
+        err = f"pycaw error: {e}"
+        log.debug("[audio] list_audio_output_devices pycaw: %s", e)
+
+    if not results:
+        try:
+            import sounddevice as sd
+            wasapi = next(
+                (i for i, h in enumerate(sd.query_hostapis()) if 'WASAPI' in h['name']),
+                None)
+            if wasapi is not None:
+                for dev_idx in sd.query_hostapis(wasapi)['devices']:
+                    d = sd.query_devices(dev_idx)
+                    if d['max_output_channels'] > 0:
+                        results.append((f"sd:{dev_idx}", d['name']))
+                if results:
+                    err = None
+                else:
+                    err = (err or "") + " | no WASAPI output devices"
+        except ImportError:
+            err = (err or "") + " | sounddevice not installed"
+        except Exception as e:
+            log.debug("[audio] sounddevice fallback: %s", e)
+
+    return results, err
+
+
+def get_current_default_audio_output():
+    """Return the endpoint ID of the current default audio render device, or None."""
+    try:
+        import comtypes
+        from pycaw.api.mmdeviceapi import IMMDeviceEnumerator
+        from pycaw.constants import CLSID_MMDeviceEnumerator, EDataFlow, ERole
+        comtypes.CoInitialize()
+        de = comtypes.CoCreateInstance(
+            CLSID_MMDeviceEnumerator, IMMDeviceEnumerator,
+            comtypes.CLSCTX_INPROC_SERVER)
+        default = de.GetDefaultAudioEndpoint(EDataFlow.eRender.value, ERole.eConsole.value)
+        return default.GetId()
+    except Exception as e:
+        log.debug("[audio] get_current_default: %s", e)
+        return None
+
+
+def set_default_audio_output(device_key: str) -> bool:
+    """Set the Windows default audio playback device."""
+    endpoint_id = None
+
+    if device_key.startswith("sd:"):
+        try:
+            import sounddevice as sd
+            import comtypes
+            from pycaw.api.mmdeviceapi import IMMDeviceEnumerator
+            from pycaw.constants import CLSID_MMDeviceEnumerator, EDataFlow
+            from pycaw.utils import AudioUtilities
+            sd_idx = int(device_key[3:])
+            target_name = sd.query_devices(sd_idx)['name']
+            comtypes.CoInitialize()
+            de = comtypes.CoCreateInstance(
+                CLSID_MMDeviceEnumerator, IMMDeviceEnumerator,
+                comtypes.CLSCTX_INPROC_SERVER)
+            col = de.EnumAudioEndpoints(EDataFlow.eRender.value, 1)
+            render_ids = {col.Item(i).GetId() for i in range(col.GetCount())}
+            for d in AudioUtilities.GetAllDevices():
+                if d.id in render_ids:
+                    fn = d.FriendlyName or ""
+                    if target_name in fn or fn in target_name:
+                        endpoint_id = d.id
+                        break
+        except Exception as e:
+            log.warning("[audio] resolve sd:%s -> endpoint: %s", device_key[3:], e)
+    else:
+        endpoint_id = device_key
+
+    if not endpoint_id:
+        log.warning("[audio] could not resolve endpoint ID for %r", device_key)
+        return False
+
+    try:
+        import comtypes
+        from pycaw.utils import AudioUtilities
+        from pycaw.constants import ERole
+        comtypes.CoInitialize()
+        AudioUtilities.SetDefaultDevice(
+            endpoint_id,
+            roles=[ERole.eConsole, ERole.eMultimedia, ERole.eCommunications],
+        )
+        log.info("[audio] default output set -> %s", endpoint_id[:50])
+        return True
+    except ImportError:
+        log.debug("[audio] pycaw not available")
+        return False
+    except Exception as e:
+        log.warning("[audio] set_default_audio_output: %s", e)
+        return False
+
+
 _MEDIA_CANDIDATES = [
     ("VLC",            "VLC media player",            "vlc.exe"),
     ("AIMP",           "AIMP",                        "AIMP.exe"),
@@ -221,22 +341,28 @@ _PENDING = object()
 
 def _extract_via_ps(path, size):
     """Extract shell icon using PowerShell + System.Drawing (runs in bg thread)."""
+    key = (os.path.normpath(path).lower(), size)
+    cached = _file_icon_cache.get(key)
+    if cached is not None and cached is not _PENDING:
+        return cached
+
     import subprocess, tempfile, shutil
     try:
         from PIL import Image as _PIL
         ps_exe  = shutil.which("pwsh") or "powershell"
         tmp     = tempfile.mktemp(suffix=".png")
-        ps_path = path.replace("'", "''")
         tmp_esc = tmp.replace("\\", "\\\\")
+        env = os.environ.copy()
+        env["IRIS_ICON_PATH"] = path
         cmd = (
             "Add-Type -AssemblyName System.Drawing; "
-            f"$i=[System.Drawing.Icon]::ExtractAssociatedIcon('{ps_path}'); "
+            "$i=[System.Drawing.Icon]::ExtractAssociatedIcon($env:IRIS_ICON_PATH); "
             f"if($i){{$b=$i.ToBitmap();$b.Save('{tmp_esc}');$b.Dispose();$i.Dispose()}}"
         )
         subprocess.run(
             [ps_exe, "-NonInteractive", "-NoProfile", "-WindowStyle", "Hidden",
              "-Command", cmd],
-            capture_output=True, timeout=12,
+            capture_output=True, timeout=12, env=env,
         )
         if os.path.exists(tmp):
             img = _PIL.open(tmp).convert("RGBA")
@@ -247,9 +373,11 @@ def _extract_via_ps(path, size):
                 os.unlink(tmp)
             except Exception:
                 pass
+            _file_icon_cache[key] = img
             return img
     except Exception as exc:
         log.warning("[icon] PS extract failed %r: %s", path, exc)
+    _file_icon_cache[key] = None
     return None
 
 

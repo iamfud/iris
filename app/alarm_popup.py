@@ -3,9 +3,11 @@
 import ctypes
 import tkinter as tk
 
+import logging
+
 from constants import BG, BG_CARD, NEON
 
-log = __import__("logging").getLogger("iris.alarm_popup")
+log = logging.getLogger("iris.alarm_popup")
 
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32

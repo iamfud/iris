@@ -8,8 +8,8 @@ import ctypes.wintypes
 
 from PIL import Image, ImageDraw, ImageTk
 
-from constants import BG, BG_CARD, FG, FG_DIM, NEON, BUTTON
-from widgets import CircularGauge, StepSlider
+from constants import BG, BG_CARD, DEFAULT_BRIGHTNESS, FG, FG_DIM, NEON, BUTTON, FONT_SM
+from widgets import CircularGauge, StepSlider, ToolTip
 import mdi_icons
 
 log = logging.getLogger("iris.main_window")
@@ -23,6 +23,50 @@ def _find_ha_url(cfg):
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
 
+# ── Hardware-key SendInput structures (user's proven layout) ─────
+PUL = ctypes.POINTER(ctypes.c_ulong)
+
+class _KBD_INPUT(ctypes.Structure):
+    _fields_ = [("wVk",         ctypes.c_ushort),
+                ("wScan",       ctypes.c_ushort),
+                ("dwFlags",     ctypes.c_ulong),
+                ("time",        ctypes.c_ulong),
+                ("dwExtraInfo", PUL)]
+
+class _MOUSE_INPUT(ctypes.Structure):
+    _fields_ = [("dx",          ctypes.c_long),
+                ("dy",          ctypes.c_long),
+                ("mouseData",   ctypes.c_ulong),
+                ("dwFlags",     ctypes.c_ulong),
+                ("time",        ctypes.c_ulong),
+                ("dwExtraInfo", PUL)]
+
+class _HW_INPUT(ctypes.Structure):
+    _fields_ = [("uMsg",    ctypes.c_ulong),
+                ("wParamL", ctypes.c_short),
+                ("lParamH", ctypes.c_ushort)]
+
+class _INPUT_UNION(ctypes.Union):
+    _fields_ = [("ki", _KBD_INPUT),
+                ("mi", _MOUSE_INPUT),
+                ("hi", _HW_INPUT)]
+
+class _INPUT(ctypes.Structure):
+    _fields_ = [("type", ctypes.c_ulong),
+                ("ii",   _INPUT_UNION)]
+
+
+def _hardware_key(scan_code, press=True):
+    """Send a single key press/release via hardware scancode."""
+    flags = 0x0008  # KEYEVENTF_SCANCODE
+    if not press:
+        flags |= 0x0002  # KEYEVENTF_KEYUP
+    extra = ctypes.c_ulong(0)
+    ii = _INPUT_UNION()
+    ii.ki = _KBD_INPUT(0, scan_code, flags, 0, ctypes.pointer(extra))
+    inp = _INPUT(ctypes.c_ulong(1), ii)
+    user32.SendInput(1, ctypes.pointer(inp), ctypes.sizeof(inp))
+
 user32.SetForegroundWindow.argtypes = [ctypes.c_void_p]
 user32.SetForegroundWindow.restype = ctypes.c_bool
 user32.IsWindow.argtypes = [ctypes.c_void_p]
@@ -32,47 +76,6 @@ user32.GetWindowThreadProcessId.restype = ctypes.c_ulong
 user32.keybd_event.argtypes = [ctypes.c_ubyte, ctypes.c_ubyte, ctypes.c_ulong, ctypes.c_ulong]
 user32.GetWindowTextW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
 user32.GetWindowTextW.restype = ctypes.c_int
-
-# SendInput structures
-INPUT_KEYBOARD = 1
-KEYEVENTF_KEYUP = 0x0002
-
-class KEYBDINPUT(ctypes.Structure):
-    _fields_ = [
-        ("wVk", ctypes.wintypes.WORD),
-        ("wScan", ctypes.wintypes.WORD),
-        ("dwFlags", ctypes.wintypes.DWORD),
-        ("time", ctypes.wintypes.DWORD),
-        ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
-    ]
-
-class _INPUT_UNION(ctypes.Union):
-    _fields_ = [("ki", KEYBDINPUT)]
-
-class INPUT(ctypes.Structure):
-    _anonymous_ = ("u",)
-    _fields_ = [
-        ("type", ctypes.wintypes.DWORD),
-        ("u", _INPUT_UNION),
-    ]
-
-user32.SendInput.argtypes = [ctypes.c_uint, ctypes.POINTER(INPUT), ctypes.c_int]
-user32.SendInput.restype = ctypes.c_uint
-
-
-def _send_keys_sendinput(vk_codes, key_up=False):
-    """Send keyboard events via SendInput."""
-    n = len(vk_codes)
-    arr = (INPUT * n)()
-    for i, vk in enumerate(vk_codes):
-        arr[i].type = INPUT_KEYBOARD
-        arr[i].ki.wVk = vk
-        arr[i].ki.wScan = 0
-        arr[i].ki.dwFlags = KEYEVENTF_KEYUP if key_up else 0
-        arr[i].ki.time = 0
-        arr[i].ki.dwExtraInfo = None
-    return user32.SendInput(n, arr, ctypes.sizeof(INPUT))
-
 
 WS_EX_LAYERED = 0x80000
 LWA_ALPHA = 0x2
@@ -212,6 +215,10 @@ class MainWindow:
         self._gauge_fps = CircularGauge(gf, "FPS", 240, "", size=gauge_size)
         self._gauge_fps.grid(row=0, column=2)
 
+        gf.bind("<Button-1>", self._on_gauge_click)
+        for w in gf.winfo_children():
+            w.bind("<Button-1>", self._on_gauge_click)
+
         tk.Frame(self._win, bg=BG_CARD, height=1).place(
             x=15, y=36 + gauge_size + 10 + 5, width=190)
 
@@ -315,6 +322,17 @@ class MainWindow:
             self._btn_nav.pop()
         self._render_buttons()
 
+    def set_overlay_state(self, on):
+        self._overlay_on = on
+        ov = self._ov_tiles
+        self._btn_overlay.config(image=ov[2] if on else ov[0])
+
+    def set_saved_foreground(self, hwnd):
+        self._saved_foreground_hwnd = hwnd
+
+    def refresh_buttons(self):
+        self._render_buttons()
+
     def _current_buttons(self):
         """Return the list of buttons to render at the current nav level."""
         if not self._btn_nav:
@@ -330,39 +348,43 @@ class MainWindow:
         _T, _GAP = 40, 10
         _W = 190
         _COLS = 4
+        col_offset = 0
         row_offset = 0
 
-        # Back button if in a sub-panel
+        # Back button if in a sub-panel — occupies grid slot 0
         if self._btn_nav:
             parent = self._btn_nav[-1]
-            back_img = self._make_tile_photo("arrow-left", BUTTON)
-            self._btn_tile_refs.append(back_img)
+            back_img = self._make_tile_photo("reply", BUTTON, icon_color=(72, 178, 233))
+            back_hov = self._make_tile_photo("reply", self._adjust_hex(BUTTON, 20), icon_color=(72, 178, 233))
+            self._btn_tile_refs.extend([back_img, back_hov])
             back_btn = tk.Label(self._btn_inner, image=back_img, bg=BG, cursor="hand2",
                                 padx=0, pady=0, borderwidth=0)
             back_btn.place(x=0, y=0)
-            back_btn.bind("<Button-1>", lambda e: self.btn_nav_pop())
+            def _bh(e, b=back_btn, h=back_hov, n=back_img): b.config(image=h)
+            def _bl(e, b=back_btn, n=back_img): b.config(image=n)
+            back_btn.bind("<Enter>", _bh)
+            back_btn.bind("<Leave>", _bl)
+            back_btn.bind("<ButtonRelease-1>", lambda e: self._win.after_idle(self.btn_nav_pop))
             back_btn.bind("<MouseWheel>", self._on_btn_wheel)
-
-            back_lbl = tk.Label(self._btn_inner, text=parent.get("name",""),
-                                font=("Segoe UI", 8), fg=NEON, bg=BG, anchor="w")
-            back_lbl.place(x=_T + _GAP, y=0, width=_W - _T - _GAP, height=_T)
-            back_lbl.bind("<Button-1>", lambda e: self.btn_nav_pop())
-            back_lbl.bind("<MouseWheel>", self._on_btn_wheel)
-
-            row_offset = 1
 
         # "+" empty-state prompt (only when no buttons exist at this level)
         if not buttons:
+            _px = (_T + _GAP) if self._btn_nav else 0  # past back button
             plus_img = self._make_tile_photo("plus", BG_CARD)
-            self._btn_tile_refs.append(plus_img)
+            plus_hov = self._make_tile_photo("plus", self._adjust_hex(BG_CARD, 20))
+            self._btn_tile_refs.extend([plus_img, plus_hov])
             plus_btn = tk.Label(self._btn_inner, image=plus_img, bg=BG, cursor="hand2",
                                 padx=0, pady=0, borderwidth=0)
-            plus_btn.place(x=0, y=row_offset * (_T + _GAP))
+            plus_btn.place(x=_px, y=row_offset * (_T + _GAP))
+            def _ph(e, b=plus_btn, h=plus_hov, n=plus_img): b.config(image=h)
+            def _pl(e, b=plus_btn, n=plus_img): b.config(image=n)
+            plus_btn.bind("<Enter>", _ph)
+            plus_btn.bind("<Leave>", _pl)
             plus_btn.bind("<Button-1>", lambda e: self.app._open_settings(tab=2))
             plus_btn.bind("<MouseWheel>", self._on_btn_wheel)
             plus_tip = tk.Label(self._btn_inner, text="Add",
                                 font=("Segoe UI", 6), fg=FG, bg=BG)
-            plus_tip.place(x=0, y=row_offset * (_T + _GAP) + _T - 2, width=_T, height=12)
+            plus_tip.place(x=_px, y=row_offset * (_T + _GAP) + _T - 2, width=_T, height=12)
             plus_tip.bind("<MouseWheel>", self._on_btn_wheel)
 
         max_row = row_offset
@@ -370,29 +392,69 @@ class MainWindow:
         for i, slot in enumerate(buttons):
             if slot is None:
                 continue
-            col = i % _COLS
-            row = row_offset + i // _COLS
+            idx = i + 1 if self._btn_nav else i  # shift by 1 for back button
+            col = idx % _COLS
+            row = idx // _COLS
             max_row = max(max_row, row)
 
-            icon_name = slot.get("icon") or "help-circle"
+            btype = slot.get("type", "")
+            if btype == "AUDIO OUTPUT":
+                cur_id = None
+                try:
+                    from win_platform import get_current_default_audio_output
+                    cur_id = get_current_default_audio_output()
+                except Exception:
+                    pass
+                alt_id = slot.get("audio_input_device_id_alt", "").strip()
+                if alt_id and cur_id and cur_id == alt_id:
+                    icon_name = slot.get("audio_alt_icon") or "headphones"
+                else:
+                    icon_name = slot.get("audio_primary_icon") or "speaker"
+            else:
+                icon_name = slot.get("icon") or "help-circle"
             fill = slot.get("color") or BG_CARD
             name = slot.get("name") or ""
-            app_icon = slot.get("app_icon_path") or (slot.get("shortcut_path") if slot.get("type") in ("SHORTCUT", "GROUP") else None)
+            app_icon = slot.get("app_icon_path") or (slot.get("shortcut_path") if btype in ("SHORTCUT", "GROUP") else None)
+            ring = NEON if btype == "GROUP" else None
 
-            img = self._make_tile_photo(icon_name, fill, app_icon_path=app_icon)
-            self._btn_tile_refs.append(img)
+            img = self._make_tile_photo(icon_name, fill, ring_hex=ring, app_icon_path=app_icon)
+            hov = self._make_tile_photo(icon_name, self._adjust_hex(fill, 20), ring_hex=ring, app_icon_path=app_icon)
+            prs = self._make_tile_photo(icon_name, self._adjust_hex(fill, -20), ring_hex=ring, app_icon_path=app_icon)
+            self._btn_tile_refs.extend([img, hov, prs])
 
             btn = tk.Label(self._btn_inner, image=img, bg=BG, cursor="hand2",
                            padx=0, pady=0, borderwidth=0)
             btn.place(x=col * (_T + _GAP), y=row * (_T + _GAP))
             btn.bind("<MouseWheel>", self._on_btn_wheel)
 
-            def _handler(s=slot):
-                return lambda e, s=s: self._on_button_action(s)
-            btn.bind("<Button-1>", _handler())
+            def _on_enter(e, b=btn, h=hov): b.config(image=h)
+            def _on_leave(e, b=btn, n=img): b.config(image=n)
+            def _on_press(e, b=btn, p=prs): b.config(image=p)
+            def _on_release(e, b=btn, s=slot, n=img):
+                b.config(image=n)
+                self._on_button_action(s)
+
+            btn.bind("<Enter>", _on_enter)
+            btn.bind("<Leave>", _on_leave)
+            btn.bind("<ButtonPress-1>", _on_press)
+            btn.bind("<ButtonRelease-1>", _on_release)
+
+            if name:
+                ToolTip(btn, name)
 
         nrows = max_row + 1
         self._btn_inner.configure(height=nrows * (_T + _GAP) + _GAP)
+
+    @staticmethod
+    def _adjust_hex(hex_color, amount):
+        try:
+            r, g, b = tuple(int(hex_color[i:i+2], 16) for i in (1, 3, 5))
+            r = max(0, min(255, r + amount))
+            g = max(0, min(255, g + amount))
+            b = max(0, min(255, b + amount))
+            return f"#{r:02x}{g:02x}{b:02x}"
+        except Exception:
+            return hex_color
 
     def _on_btn_wheel(self, e):
         self._btn_canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
@@ -407,7 +469,7 @@ class MainWindow:
             path = slot.get("shortcut_path", "").strip()
             if path:
                 threading.Thread(
-                    target=lambda: subprocess.Popen(path, shell=True),
+                    target=lambda: subprocess.Popen(["cmd", "/c", "start", "", path]),
                     daemon=True,
                 ).start()
             self.btn_nav_push(slot)
@@ -421,7 +483,7 @@ class MainWindow:
             path = slot.get("shortcut_path", "").strip()
             if path:
                 threading.Thread(
-                    target=lambda: subprocess.Popen(path, shell=True),
+                    target=lambda: subprocess.Popen(["cmd", "/c", "start", "", path]),
                     daemon=True,
                 ).start()
         elif btype == "REST":
@@ -430,6 +492,8 @@ class MainWindow:
             self._do_openrgb_action(slot)
         elif btype == "HOTKEY":
             self._do_hotkey_action(slot)
+        elif btype == "AUDIO OUTPUT":
+            self._do_audio_output_action(slot)
         elif btype == "STOPWATCH":
             self.app._toggle_stopwatch()
 
@@ -457,74 +521,233 @@ class MainWindow:
         threading.Thread(target=_call, daemon=True).start()
 
     def _do_openrgb_action(self, slot):
-        profile = slot.get("openrgb_profile", "").strip()
-        if not profile:
-            return
+        profile_name = slot.get("openrgb_profile", "").strip()
+        if profile_name:
+            from providers.openrgb import _list_profile_files, _profile_name_from_path, _apply_profile
+            for fp in _list_profile_files():
+                if _profile_name_from_path(fp) == profile_name:
+                    import threading
+                    threading.Thread(target=_apply_profile, args=(fp, profile_name), daemon=True).start()
+                    return
+        self._show_openrgb_picker()
 
-        def _call():
+    def _show_openrgb_picker(self):
+        import math, colorsys, io, base64
+        from PIL import Image
+
+        popup = tk.Toplevel(self._win)
+        popup.overrideredirect(True)
+        popup.configure(bg=BG)
+        popup.attributes("-topmost", True)
+
+        WHEEL = 220
+        S = WHEEL * 4
+        cx = cy = S // 2
+        radius_px = S // 2 - 4
+        WR = S // 2 - 4  # wheel radius in source pixels
+
+        wheel_img = Image.new("RGB", (S, S), (0, 0, 0))
+        for y in range(S):
+            for x in range(S):
+                dx = x - cx
+                dy = y - cy
+                dist = math.sqrt(dx * dx + dy * dy)
+                if dist <= radius_px:
+                    hue = (math.degrees(math.atan2(dy, dx)) % 360) / 360.0
+                    sat = dist / WR
+                    r, g, b = colorsys.hsv_to_rgb(hue, sat, 1.0)
+                    wheel_img.putpixel((x, y), (int(r * 255), int(g * 255), int(b * 255)))
+
+        wheel_img_small = wheel_img.resize((WHEEL, WHEEL), Image.LANCZOS)
+        buf = io.BytesIO()
+        wheel_img_small.save(buf, format="PNG")
+        photo = tk.PhotoImage(data=base64.b64encode(buf.getvalue()).decode("ascii"))
+
+        scale = S / WHEEL
+        canvas = tk.Canvas(popup, width=WHEEL, height=WHEEL, bg=BG,
+                           highlightthickness=0, bd=0, cursor="crosshair")
+        canvas.create_image(0, 0, anchor="nw", image=photo)
+        canvas.image = photo
+        canvas.pack(padx=16, pady=(0, 0))
+
+        sel = canvas.create_oval(0, 0, 0, 0, outline="white", width=2)
+
+        def _pos_from_rgb(r, g, b):
+            h, s, _ = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+            angle = math.radians(h * 360)
+            dist = s * WR / scale
+            wx = WHEEL // 2 + dist * math.cos(angle)
+            wy = WHEEL // 2 + dist * math.sin(angle)
+            return wx, wy
+
+        def _apply_to_openrgb(rr, gg, bb):
+            import threading as _th
+            _th.Thread(target=self._apply_openrgb_color, args=(rr, gg, bb), daemon=True).start()
+
+        def _set_color_from_rgb(rr, gg, bb):
+            wx, wy = _pos_from_rgb(rr, gg, bb)
+            hs = 4
+            canvas.coords(sel, wx - hs, wy - hs, wx + hs, wy + hs)
+            hex_var.set(f"#{rr:02x}{gg:02x}{bb:02x}".upper())
+            _apply_to_openrgb(rr, gg, bb)
+
+        def _pick(e):
+            x, y = int(e.x * scale), int(e.y * scale)
+            if x < 0 or x >= S or y < 0 or y >= S:
+                return
+            pr, pg, pb = wheel_img.getpixel((x, y))
+            if (pr, pg, pb) == (0, 0, 0):
+                return
+            _set_color_from_rgb(pr, pg, pb)
+
+        canvas.bind("<Button-1>", _pick)
+
+        hex_var = tk.StringVar(value="")
+        hex_frame = tk.Frame(popup, bg=BG)
+        hex_frame.pack(fill=tk.X, padx=16, pady=(8, 0))
+        tk.Label(hex_frame, text="Hex:", bg=BG, fg=FG_DIM,
+                 font=FONT_SM).pack(side="left")
+        hex_entry = tk.Entry(hex_frame, textvariable=hex_var, width=9,
+                             bg=BG, fg=FG, insertbackground=FG,
+                             relief="flat", bd=4, highlightthickness=1,
+                             highlightcolor=NEON, highlightbackground=BG_CARD,
+                             font=("Segoe UI", 14, "bold"))
+        hex_entry.pack(side="left", padx=(4, 0))
+
+        def _apply_hex(*_):
+            c = hex_var.get().strip().lstrip("#")
+            if len(c) != 6:
+                return
             try:
-                from providers.openrgb import OpenRGBProvider
-                # Use SDK client directly
-                from openrgb import OpenRGBClient as ORC
-                cl = ORC()
-                profiles = cl.load_profile(profile)
-                if profiles:
-                    cl.apply_profile(profiles[0])
-                    log.info("OpenRGB profile '%s' applied", profile)
-                cl.disconnect()
-            except Exception as ex:
-                log.warning("OpenRGB action failed: %s", ex)
+                rr = int(c[0:2], 16)
+                gg = int(c[2:4], 16)
+                bb = int(c[4:6], 16)
+            except ValueError:
+                return
+            _set_color_from_rgb(rr, gg, bb)
 
-        import threading
-        threading.Thread(target=_call, daemon=True).start()
+        hex_entry.bind("<Return>", _apply_hex)
+
+        btn_frame = tk.Frame(popup, bg=BG)
+        btn_frame.pack(fill=tk.X, padx=16, pady=(12, 16))
+        from widgets import RoundedButton
+        RoundedButton(btn_frame, text="CLOSE", style="sec",
+                      command=popup.destroy,
+                      padx=6, pady=2, font=FONT_SM).pack(side="right")
+
+        popup.bind("<Escape>", lambda e: popup.destroy())
+
+        # Drag handle bar
+        drag_bar = tk.Frame(popup, bg=BG_CARD, height=16, cursor="fleur")
+        drag_bar.pack(fill=tk.X, before=canvas)
+        drag_data = {"x": 0, "y": 0}
+        def _drag_start(e):
+            drag_data["x"] = e.x_root
+            drag_data["y"] = e.y_root
+        def _drag_move(e):
+            dx = e.x_root - drag_data["x"]
+            dy = e.y_root - drag_data["y"]
+            drag_data["x"] = e.x_root
+            drag_data["y"] = e.y_root
+            popup.geometry(f"+{popup.winfo_x() + dx}+{popup.winfo_y() + dy}")
+        drag_bar.bind("<Button-1>", _drag_start)
+        drag_bar.bind("<B1-Motion>", _drag_move)
+
+        popup.update_idletasks()
+        pw = popup.winfo_reqwidth()
+        ph = popup.winfo_reqheight()
+        mw = self._win.winfo_x() + self._win.winfo_width() // 2
+        mh = self._win.winfo_y() + self._win.winfo_height() // 2
+        popup.geometry(f"+{mw - pw // 2}+{mh - ph // 2}")
+        popup.grab_set()
+
+    def _apply_openrgb_color(self, r, g, b):
+        try:
+            from openrgb import OpenRGBClient
+            from openrgb.utils import RGBColor
+            cl = OpenRGBClient()
+            cl.set_color(RGBColor(red=r, green=g, blue=b))
+            log.info("OpenRGB colour #%02x%02x%02x applied", r, g, b)
+        except ConnectionRefusedError:
+            log.warning("[openrgb] SDK server not running — enable it in OpenRGB Settings")
+        except Exception as ex:
+            log.warning("OpenRGB colour apply failed: %s", ex)
 
     def _do_hotkey_action(self, slot):
         keys = slot.get("keys", [])
         if not keys:
             return
 
+        title = getattr(self, '_saved_foreground_title', '')
+        if not title:
+            log.warning("[hotkey] no saved foreground title")
+            return
+
         self._sending_hotkey = True
-        hwnd = getattr(self, '_saved_foreground_hwnd', None)
         self.hide()
 
         try:
-            if hwnd and user32.IsWindow(hwnd):
-                ctypes.windll.user32.SwitchToThisWindow(hwnd, True)
-            _time.sleep(0.2)
+            import pygetwindow as gw
+            matches = gw.getWindowsWithTitle(title)
+            if not matches:
+                log.warning("[hotkey] window '%s' not found", title)
+                return
 
-            def _vk_str(vk):
-                if 48 <= vk <= 57:
-                    return chr(vk)
-                if 65 <= vk <= 90:
-                    return chr(vk).lower()
-                return {
-                    8: "backspace", 9: "tab", 13: "enter", 16: "shift",
-                    17: "ctrl", 18: "alt", 27: "esc", 32: "space",
-                    33: "page up", 34: "page down", 35: "end", 36: "home",
-                    37: "left", 38: "up", 39: "right", 40: "down",
-                    45: "insert", 46: "delete", 91: "windows", 92: "windows",
-                    112: "f1", 113: "f2", 114: "f3", 115: "f4",
-                    116: "f5", 117: "f6", 118: "f7", 119: "f8",
-                    120: "f9", 121: "f10", 122: "f11", 123: "f12",
-                    144: "num lock", 186: ";", 187: "=", 188: ",",
-                    189: "-", 190: ".", 191: "/", 192: "`",
-                    219: "[", 220: "\\", 221: "]", 222: "'",
-                }.get(vk)
+            target = matches[0]
+            log.info("[hotkey] activating '%s'", target.title)
+            target.activate()
+            _time.sleep(0.5)
 
-            parts = [_vk_str(vk) for vk in keys if _vk_str(vk) is not None]
-            if parts:
-                import keyboard as _kb
-                hotkey = "+".join(parts)
-                _kb.press(hotkey)
-                _time.sleep(0.15)
-                _kb.release(hotkey)
-                log.info("  Hotkey sent: %s", hotkey)
-            else:
-                log.warning("  No mapped keys for vk=%s", keys)
+            # Convert VK codes to hardware scancodes
+            scans = []
+            for vk in keys:
+                scan = user32.MapVirtualKeyW(vk, 0)
+                if scan:
+                    scans.append(scan)
+
+            if not scans:
+                log.warning("[hotkey] no scancodes for vk=%s", keys)
+                return
+
+            # Press chord (all down, brief hold, all up)
+            for scan in scans:
+                _hardware_key(scan, press=True)
+                _time.sleep(0.03)
+            _time.sleep(0.08)
+            for scan in reversed(scans):
+                _hardware_key(scan, press=False)
+                _time.sleep(0.03)
+
+            log.info("[hotkey] sent via hardware scancodes to '%s'", title)
         except Exception as ex:
-            log.error("Hotkey error: %s", ex)
+            log.error("[hotkey] error: %s", ex)
         finally:
             self._win.after(200, lambda: setattr(self, '_sending_hotkey', False))
+
+    def _do_audio_output_action(self, slot):
+        try:
+            primary = slot.get("audio_input_device_id", "").strip()
+            alt     = slot.get("audio_input_device_id_alt", "").strip()
+            log.info("[audio] _do_audio_output_action primary=%s alt=%s", primary[:50] if primary else "", alt[:50] if alt else "")
+            if not primary:
+                log.warning("[audio] no primary device configured")
+                return
+            if not alt:
+                device_key = primary
+            else:
+                from win_platform import get_current_default_audio_output
+                current = get_current_default_audio_output()
+                log.info("[audio] current default=%s", (current or "None")[:50])
+                device_key = alt if current and current == primary else primary
+            log.info("[audio] switching to %s", device_key[:50])
+            import threading
+            from win_platform import set_default_audio_output
+            def _switch():
+                set_default_audio_output(device_key)
+                self._win.after(200, self._render_buttons)
+            threading.Thread(target=_switch, daemon=True).start()
+        except Exception as e:
+            log.exception("[audio] _do_audio_output_action failed: %s", e)
 
     # ── Tile photo cache ──────────────────────────────────────────
     _tile_cache = {}
@@ -537,28 +760,30 @@ class MainWindow:
         extracted via the Windows shell API replaces the MDI vector icon.
         """
         _T, _CR = 40, 8
-        S = _T * 4
-        R = _CR * 4
-        bw = 8
+        S = _T * 2
+        R = _CR * 2
+        bw = 4
 
         cache_key = (mdi_name, fill_hex, ring_hex, icon_color, app_icon_path, icon_scale)
         cached = self._tile_cache.get(cache_key)
         if cached is not None:
             return cached
 
+        if fill_hex == "RAINBOW":
+            return self._make_rainbow_tile(mdi_name, ring_hex, icon_color, app_icon_path,
+                                           icon_scale, _T, _CR, S, R, bw, cache_key)
+
         frgb = tuple(int(fill_hex[i:i+2], 16) for i in (1, 3, 5))
         brgb = tuple(int(BG[i:i+2], 16) for i in (1, 3, 5))
-        ic_rgb = icon_color or (224, 224, 224)
+        if icon_color:
+            ic_rgb = icon_color
+        else:
+            lum = 0.299 * frgb[0] + 0.587 * frgb[1] + 0.114 * frgb[2]
+            ic_rgb = (30, 30, 30) if lum > 160 else (224, 224, 224)
 
         img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
-
-        if ring_hex:
-            rrgb = tuple(int(ring_hex[i:i+2], 16) for i in (1, 3, 5))
-            draw.rounded_rectangle([0, 0, S-1, S-1], R, fill=(*rrgb, 255))
-            draw.rounded_rectangle([bw, bw, S-1-bw, S-1-bw], max(0, R-bw), fill=(*frgb, 255))
-        else:
-            draw.rounded_rectangle([0, 0, S-1, S-1], R, fill=(*frgb, 255))
+        draw.rounded_rectangle([0, 0, S-1, S-1], R, fill=(*frgb, 255))
 
         # gloss
         mask = Image.new("L", (S, S), 0)
@@ -579,22 +804,22 @@ class MainWindow:
             from win_platform import _extract_via_ps
             app_img = _extract_via_ps(app_icon_path, size=_T)
             if app_img:
-                # Trim transparent padding, then fill the tile
                 bbox = app_img.getbbox()
                 if bbox:
                     app_img = app_img.crop(bbox)
                 app_img = app_img.resize((_T, _T), Image.LANCZOS)
-                tile = Image.new("RGBA", (_T, _T), (*brgb, 255))
-                icon_layer = Image.new("RGBA", (_T, _T), (0, 0, 0, 0))
-                icon_layer.paste(app_img, (0, 0), app_img)
-                mask = Image.new("L", (_T, _T), 0)
-                ImageDraw.Draw(mask).rounded_rectangle((0, 0, _T-1, _T-1), _CR, fill=255)
-                img = Image.composite(icon_layer, tile, mask)
-                base = Image.new("RGB", (_T, _T), brgb)
-                base.paste(img, mask=img.split()[3])
-                photo = ImageTk.PhotoImage(base)
-                self._tile_cache[cache_key] = photo
-                return photo
+                app_img_s = app_img.resize((S, S), Image.LANCZOS)
+                ox = (S - app_img_s.width) // 2
+                oy = (S - app_img_s.height) // 2
+                layer = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+                layer.paste(app_img_s, (ox, oy), app_img_s)
+                # Clip to rounded rect so ring/rounded corners show through
+                mask_s = Image.new("L", (S, S), 0)
+                ImageDraw.Draw(mask_s).rounded_rectangle((0, 0, S-1, S-1), R, fill=255)
+                clipped = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+                clipped.paste(layer, mask=mask_s)
+                img = Image.alpha_composite(img, clipped)
+                icon_drawn = True
         if not icon_drawn:
             try:
                 icon = mdi_icons.render(mdi_name, int(S * icon_scale), ic_rgb)
@@ -607,6 +832,91 @@ class MainWindow:
             except Exception as e:
                 log.warning("Icon render(%s) failed: %s", mdi_name, e)
 
+        # Ring border on top of everything
+        if ring_hex:
+            rrgb = tuple(int(ring_hex[i:i+2], 16) for i in (1, 3, 5))
+            ring_img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+            r_draw = ImageDraw.Draw(ring_img)
+            r_draw.rounded_rectangle([0, 0, S-1, S-1], R, fill=(*rrgb, 255))
+            r_draw.rounded_rectangle([bw, bw, S-1-bw, S-1-bw], max(0, R-bw), fill=(0, 0, 0, 0))
+            img = Image.alpha_composite(img, ring_img)
+
+        img = img.resize((_T, _T), Image.LANCZOS)
+        base = Image.new("RGB", (_T, _T), brgb)
+        base.paste(img, mask=img.split()[3])
+        photo = ImageTk.PhotoImage(base)
+        self._tile_cache[cache_key] = photo
+        return photo
+
+    def _make_rainbow_tile(self, mdi_name, ring_hex, icon_color, app_icon_path,
+                           icon_scale, _T, _CR, S, R, bw, cache_key):
+        brgb = tuple(int(BG[i:i+2], 16) for i in (1, 3, 5))
+        if icon_color:
+            ic_rgb = icon_color
+        else:
+            ic_rgb = (224, 224, 224)
+        img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+        import math, colorsys
+        _cx = _cy = S // 2
+        for _py in range(S):
+            for _px in range(S):
+                _dx = _px - _cx
+                _dy = _py - _cy
+                _hue = (math.degrees(math.atan2(_dy, _dx)) % 360) / 360.0
+                _rr, _gg, _bb = colorsys.hsv_to_rgb(_hue, 1.0, 1.0)
+                img.putpixel((_px, _py), (int(_rr*255), int(_gg*255), int(_bb*255)))
+        mask = Image.new("L", (S, S), 0)
+        ImageDraw.Draw(mask).rounded_rectangle([0, 0, S-1, S-1], R, fill=255)
+        _clipped = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+        _clipped.paste(img, mask=mask)
+        img = _clipped
+        gloss = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+        gd = ImageDraw.Draw(gloss)
+        hm = int(S * 0.45)
+        for y in range(hm):
+            a = int(62 * (1 - y / hm))
+            gd.line([(0, y), (S-1, y)], fill=(255, 255, 255, a))
+        clipped = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+        clipped.paste(gloss, mask=mask)
+        img = Image.alpha_composite(img, clipped)
+        icon_drawn = False
+        if app_icon_path:
+            from win_platform import _extract_via_ps
+            app_img = _extract_via_ps(app_icon_path, size=_T)
+            if app_img:
+                bbox = app_img.getbbox()
+                if bbox:
+                    app_img = app_img.crop(bbox)
+                app_img = app_img.resize((_T, _T), Image.LANCZOS)
+                app_img_s = app_img.resize((S, S), Image.LANCZOS)
+                ox = (S - app_img_s.width) // 2
+                oy = (S - app_img_s.height) // 2
+                layer = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+                layer.paste(app_img_s, (ox, oy), app_img_s)
+                mask_s = Image.new("L", (S, S), 0)
+                ImageDraw.Draw(mask_s).rounded_rectangle((0, 0, S-1, S-1), R, fill=255)
+                clipped2 = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+                clipped2.paste(layer, mask=mask_s)
+                img = Image.alpha_composite(img, clipped2)
+                icon_drawn = True
+        if not icon_drawn:
+            try:
+                icon = mdi_icons.render(mdi_name, int(S * icon_scale), ic_rgb)
+                if icon:
+                    ox = (S - icon.width) // 2
+                    oy = (S - icon.height) // 2
+                    layer = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+                    layer.paste(icon, (ox, oy), icon)
+                    img = Image.alpha_composite(img, layer)
+            except Exception as e:
+                log.warning("Icon render(%s) failed: %s", mdi_name, e)
+        if ring_hex:
+            rrgb = tuple(int(ring_hex[i:i+2], 16) for i in (1, 3, 5))
+            ring_img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+            r_draw = ImageDraw.Draw(ring_img)
+            r_draw.rounded_rectangle([0, 0, S-1, S-1], R, fill=(*rrgb, 255))
+            r_draw.rounded_rectangle([bw, bw, S-1-bw, S-1-bw], max(0, R-bw), fill=(0, 0, 0, 0))
+            img = Image.alpha_composite(img, ring_img)
         img = img.resize((_T, _T), Image.LANCZOS)
         base = Image.new("RGB", (_T, _T), brgb)
         base.paste(img, mask=img.split()[3])
@@ -655,7 +965,7 @@ class MainWindow:
         if not path:
             return
         import threading, subprocess
-        threading.Thread(target=lambda: subprocess.Popen(path, shell=True), daemon=True).start()
+        threading.Thread(target=lambda: subprocess.Popen([path], shell=False), daemon=True).start()
 
     def _build_tiles(self):
         self._tile_refs = []
@@ -673,13 +983,13 @@ class MainWindow:
         tk.Frame(self._win, bg=BG_CARD, height=1).place(
             x=_X, y=_BY - 148, width=_W)
 
-        # ── Title "Display" ──
-        tk.Label(self._win, text="Display", font=("Segoe UI", 10),
+        # ── Title "Display Brightness" ──
+        tk.Label(self._win, text="Display Brightness", font=("Segoe UI", 10),
                  fg=NEON, bg=BG, anchor="w").place(
             x=_X + 2, y=_BY - 143, width=_W - 2, height=16)
 
         # ── Brightness slider (5 steps via StepSlider) ──
-        self._brightness_var = tk.IntVar(value=self.app.cfg.get("brightness", 3))
+        self._brightness_var = tk.IntVar(value=self.app.cfg.get("brightness", DEFAULT_BRIGHTNESS))
         self._slider_brightness = StepSlider(
             self._win, list(range(5)), self._brightness_var,
             on_change=self._on_brightness_change,
@@ -709,13 +1019,15 @@ class MainWindow:
 
         for i, (icon, cb) in enumerate(_media_specs):
             imgs = self._make_tile_set(icon, icon_scale=0.52)
+            prs = self._make_tile_photo(icon, self._adjust_hex(BG_CARD, -20), icon_scale=0.52)
+            self._tile_refs.extend(imgs + [prs])
             btn = tk.Label(_media_frame, image=imgs[0], bg=BG, cursor="hand2",
                            padx=0, pady=0, borderwidth=0)
             btn.place(x=i * (_T + _GAP), y=0)
             btn.bind("<Enter>", lambda e, imgs_=imgs, b=btn: b.config(image=imgs_[1]))
             btn.bind("<Leave>", lambda e, imgs_=imgs, b=btn: b.config(image=imgs_[0]))
-            btn.bind("<Button-1>", lambda e, c=cb: (c(), "break")[1])
-            self._tile_refs.extend(imgs)
+            btn.bind("<ButtonPress-1>", lambda e, p=prs, b=btn: b.config(image=p))
+            btn.bind("<ButtonRelease-1>", lambda e, c=cb, imgs_=imgs, b=btn: (b.config(image=imgs_[0]), c()))
 
         # ════════════════════════════════════════════════════════════
         #  Separator A — between media & bottom tiles (15px each side)
@@ -733,8 +1045,14 @@ class MainWindow:
         self._pc_display_on = self.app.cfg.get("pc_stats_manual", False)
         self._overlay_on = False
 
+        # ── Pressed tile helpers ──
+        _prs_fill = self._adjust_hex(BG_CARD, -20)
+
         # ── Tile 0: PC stats display toggle ──
         t0 = self._make_tile_set("monitor", icon_scale=0.52)
+        prs0_off = self._make_tile_photo("monitor", _prs_fill, icon_scale=0.52)
+        prs0_on  = self._make_tile_photo("monitor", _prs_fill, NEON, (72, 178, 233), icon_scale=0.52)
+        self._tile_refs.extend([prs0_off, prs0_on])
         self._btn_display = tk.Label(_tile_frame, image=t0[0], bg=BG, cursor="hand2",
                                      padx=0, pady=0, borderwidth=0)
         self._btn_display.place(x=0, y=0)
@@ -743,14 +1061,16 @@ class MainWindow:
             self._btn_display.config(image=t0[3] if self._pc_display_on else t0[1])
         def _leave0(e):
             self._btn_display.config(image=t0[2] if self._pc_display_on else t0[0])
-        def _click0(e):
+        def _press0(e):
+            self._btn_display.config(image=prs0_on if self._pc_display_on else prs0_off)
+        def _release0(e):
             self._pc_display_on = not self._pc_display_on
             self._btn_display.config(image=t0[2] if self._pc_display_on else t0[0])
             self.app._toggle_pc_stats(self._pc_display_on)
-            return "break"
         self._btn_display.bind("<Enter>", _enter0)
         self._btn_display.bind("<Leave>", _leave0)
-        self._btn_display.bind("<Button-1>", _click0)
+        self._btn_display.bind("<ButtonPress-1>", _press0)
+        self._btn_display.bind("<ButtonRelease-1>", _release0)
 
         if self._pc_display_on:
             self.app._toggle_pc_stats(True)
@@ -758,6 +1078,9 @@ class MainWindow:
         # ── Tile 1: PC stats overlay toggle ──
         t1 = self._make_tile_set("speedometer", icon_scale=0.52)
         self._ov_tiles = t1
+        prs1_off = self._make_tile_photo("speedometer", _prs_fill, icon_scale=0.52)
+        prs1_on  = self._make_tile_photo("speedometer", _prs_fill, NEON, (72, 178, 233), icon_scale=0.52)
+        self._tile_refs.extend([prs1_off, prs1_on])
         self._btn_overlay = tk.Label(_tile_frame, image=t1[0], bg=BG, cursor="hand2",
                                      padx=0, pady=0, borderwidth=0)
         self._btn_overlay.place(x=1 * (_T + _GAP), y=0)
@@ -766,32 +1089,48 @@ class MainWindow:
             self._btn_overlay.config(image=t1[3] if self._overlay_on else t1[1])
         def _leave1(e):
             self._btn_overlay.config(image=t1[2] if self._overlay_on else t1[0])
-        def _click1(e):
+        def _press1(e):
+            self._btn_overlay.config(image=prs1_on if self._overlay_on else prs1_off)
+        def _release1(e):
             self._overlay_on = not self._overlay_on
             self._btn_overlay.config(image=t1[2] if self._overlay_on else t1[0])
             self.app._toggle_overlay(self._overlay_on)
-            return "break"
         self._btn_overlay.bind("<Enter>", _enter1)
         self._btn_overlay.bind("<Leave>", _leave1)
-        self._btn_overlay.bind("<Button-1>", _click1)
+        self._btn_overlay.bind("<ButtonPress-1>", _press1)
+        self._btn_overlay.bind("<ButtonRelease-1>", _release1)
 
         # ── Tile 2: Settings (static) ──
         t2 = self._make_tile_set("cog", icon_scale=0.52)
+        prs2 = self._make_tile_photo("cog", _prs_fill, icon_scale=0.52)
+        self._tile_refs.append(prs2)
         self._btn_settings = tk.Label(_tile_frame, image=t2[0], bg=BG, cursor="hand2",
                                       padx=0, pady=0, borderwidth=0)
         self._btn_settings.place(x=2 * (_T + _GAP), y=0)
         self._btn_settings.bind("<Enter>", lambda e: self._btn_settings.config(image=t2[1]))
         self._btn_settings.bind("<Leave>", lambda e: self._btn_settings.config(image=t2[0]))
-        self._btn_settings.bind("<Button-1>", lambda e: self.app._open_settings() or "break")
+        self._btn_settings.bind("<ButtonPress-1>", lambda e: self._btn_settings.config(image=prs2))
+        self._btn_settings.bind("<ButtonRelease-1>", lambda e: (self._btn_settings.config(image=t2[0]), self.app._open_settings()))
 
         # ── Tile 3: Exit (static) ──
-        t3 = self._make_tile_set("power", icon_scale=0.52)
+        t3 = self._make_tile_set("tray-arrow-down", icon_scale=0.52)
+        prs3 = self._make_tile_photo("tray-arrow-down", _prs_fill, icon_scale=0.52)
+        self._tile_refs.append(prs3)
         self._btn_exit = tk.Label(_tile_frame, image=t3[0], bg=BG, cursor="hand2",
                                   padx=0, pady=0, borderwidth=0)
         self._btn_exit.place(x=3 * (_T + _GAP), y=0)
         self._btn_exit.bind("<Enter>", lambda e: self._btn_exit.config(image=t3[1]))
         self._btn_exit.bind("<Leave>", lambda e: self._btn_exit.config(image=t3[0]))
-        self._btn_exit.bind("<Button-1>", lambda e: (self.hide(), "break")[1])
+        self._btn_exit.bind("<ButtonPress-1>", lambda e: self._btn_exit.config(image=prs3))
+        self._btn_exit.bind("<ButtonRelease-1>", lambda e: (self._btn_exit.config(image=t3[0]), self._on_power(e)))
+
+    def _on_gauge_click(self, e):
+        if not self._overlay_on:
+            self._overlay_on = True
+            self._btn_overlay.config(image=self._ov_tiles[2])
+            self.app._toggle_overlay(True)
+        if not self._pin_pinned:
+            self.hide()
 
     def _update_status(self):
         port = self.app._port
@@ -820,7 +1159,16 @@ class MainWindow:
             self.show()
 
     def show(self):
-        self._saved_foreground_hwnd = user32.GetForegroundWindow()
+        # _saved_foreground_hwnd was already set by the hotkey listener or
+        # tray click BEFORE the panel appeared — don't re-fetch it.
+        if not getattr(self, '_saved_foreground_hwnd', 0) or not user32.IsWindow(self._saved_foreground_hwnd):
+            self._saved_foreground_hwnd = user32.GetForegroundWindow()
+        if self._saved_foreground_hwnd:
+            buf = ctypes.create_unicode_buffer(500)
+            user32.GetWindowTextW(self._saved_foreground_hwnd, buf, 500)
+            self._saved_foreground_title = buf.value
+        else:
+            self._saved_foreground_title = ""
         self._win.deiconify()
         self._win.update_idletasks()
         self._apply_region()
@@ -831,6 +1179,19 @@ class MainWindow:
     def hide(self):
         self._win.withdraw()
         self._visible = False
+
+    def _on_power(self, e):
+        if self._pin_pinned:
+            self._pin_pinned = False
+            self._win.attributes("-topmost", False)
+            icon = mdi_icons.render("pin-outline", 16, (180, 180, 180))
+            photo = ImageTk.PhotoImage(icon)
+            self._pin_btn.config(image=photo)
+            self._pin_btn.image = photo
+            self._cfg["panel_pin"] = False
+            from config import save_config
+            save_config(self._cfg)
+        self.hide()
 
     def _on_focusout(self, e):
         if not self._sending_hotkey and not self._pin_pinned:

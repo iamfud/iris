@@ -19,7 +19,7 @@ try:
 except ImportError:
     _PIL = False
 
-from constants import APP_NAME, APP_VERSION, BG, BG_CARD, FG, FG_DIM, FONT_UI, NEON, NEON_DIM, NEON_GRN, NEON_RED, BUTTON, BORDER, DANGER, DANGER_HOVER, DEFAULT_CONFIG, FONT_SM, HA_PALETTE, format_keys
+from constants import APP_NAME, APP_VERSION, BG, BG_CARD, FG, FG_DIM, FONT_UI, NEON, NEON_DIM, NEON_GRN, NEON_RED, GAUGE_WARN, TYPE_PURPLE, TYPE_CYAN, BUTTON, BORDER, DANGER, DANGER_HOVER, DEFAULT_CONFIG, FONT_SM, HA_PALETTE, format_keys
 from styles import apply_dark_theme
 from widgets import RoundedButton, DarkCombobox, TabBar, Toggle, IrisScrollbar, ColourPicker, ToolTip
 from win_platform import scan_media_apps
@@ -436,9 +436,11 @@ class SettingsDialog:
                           command=self._alarm_add_click).grid(row=0, column=0, sticky="w")
             RoundedButton(self._btn_bar, text="OK", command=self._ok).grid(row=0, column=2)
         elif idx == self._tab_buttons_index:
-            RoundedButton(self._btn_bar, text="+ ADD BUTTON", style="prim",
-                          command=lambda: self._start_add(None)).grid(row=0, column=0, sticky="w")
-            RoundedButton(self._btn_bar, text="OK", command=self._ok).grid(row=0, column=2)
+            editing = getattr(self, '_button_editing_slot', None) is not None or getattr(self, '_button_new_parent', None) is not None
+            if not editing:
+                RoundedButton(self._btn_bar, text="+ ADD BUTTON", style="prim",
+                              command=lambda: self._start_add(None)).grid(row=0, column=0, sticky="w")
+                RoundedButton(self._btn_bar, text="OK", command=self._ok).grid(row=0, column=2)
         elif idx == 3:  # About
             from constants import DANGER
             RoundedButton(self._btn_bar, text="FACTORY RESET", style="danger",
@@ -510,14 +512,14 @@ class SettingsDialog:
             self._rebuild_alarm_view()
 
         RoundedButton(row1, text="\u00d7", command=_do_delete, style="sec",
-                      padx=8, pady=2, font=FONT_SM).pack(side="right", padx=(4, 0))
+                      radius=0, padx=8, pady=2, font=FONT_SM).pack(side="right", padx=(4, 0))
 
         def _edit(a=alarm):
             self._alarm_editing_id = a["id"]
             self._rebuild_alarm_view()
 
         RoundedButton(row1, text="EDIT", command=_edit, style="sec",
-                      padx=8, pady=2, font=FONT_SM).pack(side="right", padx=(0, 4))
+                      radius=0, padx=8, pady=2, font=FONT_SM).pack(side="right", padx=(0, 4))
 
         row2 = tk.Frame(card, bg=BG_CARD)
         row2.pack(fill="x", padx=12, pady=(0, 4))
@@ -829,13 +831,21 @@ class SettingsDialog:
             return cached
 
         _T, _CR = 40, 8
-        S = _T * 4
-        R = _CR * 4
-        bw = 8
+        S = _T * 2
+        R = _CR * 2
+        bw = 4
+
+        if fill_hex == "RAINBOW":
+            return self._make_rainbow_tile(mdi_name, app_icon_path, icon_color, icon_scale,
+                                           bg_hex, _T, _CR, S, R, cache_key)
 
         frgb = tuple(int(fill_hex[i:i+2], 16) for i in (1, 3, 5))
         brgb = tuple(int((bg_hex or BG)[i:i+2], 16) for i in (1, 3, 5))
-        ic_rgb = icon_color or (224, 224, 224)
+        if icon_color:
+            ic_rgb = icon_color
+        else:
+            lum = 0.299 * frgb[0] + 0.587 * frgb[1] + 0.114 * frgb[2]
+            ic_rgb = (30, 30, 30) if lum > 160 else (224, 224, 224)
 
         img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
@@ -899,6 +909,73 @@ class SettingsDialog:
         self._tile_cache[cache_key] = photo
         return photo
 
+    def _make_rainbow_tile(self, mdi_name, app_icon_path, icon_color, icon_scale,
+                           bg_hex, _T, _CR, S, R, cache_key):
+        brgb = tuple(int((bg_hex or BG)[i:i+2], 16) for i in (1, 3, 5))
+        if icon_color:
+            ic_rgb = icon_color
+        else:
+            ic_rgb = (224, 224, 224)
+        img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+        import math, colorsys
+        _cx = _cy = S // 2
+        for _py in range(S):
+            for _px in range(S):
+                _dx = _px - _cx
+                _dy = _py - _cy
+                _hue = (math.degrees(math.atan2(_dy, _dx)) % 360) / 360.0
+                _rr, _gg, _bb = colorsys.hsv_to_rgb(_hue, 1.0, 1.0)
+                img.putpixel((_px, _py), (int(_rr*255), int(_gg*255), int(_bb*255)))
+        mask = Image.new("L", (S, S), 0)
+        ImageDraw.Draw(mask).rounded_rectangle([0, 0, S-1, S-1], R, fill=255)
+        _clipped = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+        _clipped.paste(img, mask=mask)
+        img = _clipped
+        gloss = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+        gd = ImageDraw.Draw(gloss)
+        hm = int(S * 0.45)
+        for y in range(hm):
+            a = int(62 * (1 - y / hm))
+            gd.line([(0, y), (S-1, y)], fill=(255, 255, 255, a))
+        clipped = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+        clipped.paste(gloss, mask=mask)
+        img = Image.alpha_composite(img, clipped)
+        if app_icon_path:
+            from win_platform import _extract_via_ps
+            app_img = _extract_via_ps(app_icon_path, size=_T)
+            if app_img:
+                bbox = app_img.getbbox()
+                if bbox:
+                    app_img = app_img.crop(bbox)
+                app_img = app_img.resize((_T, _T), Image.LANCZOS)
+                tile = Image.new("RGBA", (_T, _T), (*brgb, 255))
+                icon_layer = Image.new("RGBA", (_T, _T), (0, 0, 0, 0))
+                icon_layer.paste(app_img, (0, 0), app_img)
+                mask2 = Image.new("L", (_T, _T), 0)
+                ImageDraw.Draw(mask2).rounded_rectangle((0, 0, _T-1, _T-1), _CR, fill=255)
+                img = Image.composite(icon_layer, tile, mask2)
+                base = Image.new("RGB", (_T, _T), brgb)
+                base.paste(img, mask=img.split()[3])
+                photo = ITK.PhotoImage(base)
+                self._tile_cache[cache_key] = photo
+                return photo
+        try:
+            icon = mdi_icons.render(mdi_name, int(S * icon_scale), ic_rgb)
+            if icon:
+                ox = (S - icon.width) // 2
+                oy = (S - icon.height) // 2
+                layer = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+                layer.paste(icon, (ox, oy), icon)
+                img = Image.alpha_composite(img, layer)
+        except Exception as e:
+            log.warning("Icon render(%s) failed: %s", mdi_name, e)
+        img = img.resize((_T, _T), Image.LANCZOS)
+        base = Image.new("RGB", (_T, _T), brgb)
+        base.paste(img, mask=img.split()[3])
+        photo = ITK.PhotoImage(base)
+        self._tile_cache[cache_key] = photo
+        return photo
+
     def _rebuild_buttons_view(self):
         for w in self._buttons_frame.winfo_children():
             w.destroy()
@@ -947,7 +1024,8 @@ class SettingsDialog:
             margin = depth * 20
 
             border = tk.Frame(parent, bg=BORDER, bd=0)
-            border.pack(fill="x", pady=(0, 6), padx=(margin, 0))
+            top_pady = 8 if depth > 0 and i == 0 else 0
+            border.pack(fill="x", pady=(top_pady, 6), padx=(margin, 0))
             card = tk.Frame(border, bg=BG_CARD, bd=0)
             card.pack(fill="both", expand=True, padx=1, pady=1)
             row = tk.Frame(card, bg=BG_CARD)
@@ -967,16 +1045,24 @@ class SettingsDialog:
                                 bg=BG_CARD, fg=FG, anchor="w")
             name_lbl.pack(fill="x")
             btype = slot.get("type", "")
-            type_color = {"SHORTCUT": NEON, "REST": NEON_GRN, "HOTKEY": NEON_DIM, "OPENRGB": NEON_RED, "GROUP": NEON, "STOPWATCH": NEON_GRN}
+            type_color = {"SHORTCUT": NEON, "REST": NEON_GRN, "HOTKEY": NEON_DIM, "OPENRGB": NEON_RED, "GROUP": GAUGE_WARN, "STOPWATCH": TYPE_PURPLE, "AUDIO OUTPUT": TYPE_CYAN}
             type_lbl = tk.Label(info, text=btype, font=("Segoe UI", 7),
                                 bg=BG_CARD, fg=type_color.get(btype, FG_DIM), anchor="w")
             type_lbl.pack(fill="x")
 
-            RoundedButton(row, text="EDIT", style="sec",
-                          command=lambda s=slot: self._start_edit(s),
+            RoundedButton(row, text="\u25bc", style="sec", radius=0, bg=NEON, fg=BG,
+                          hover="#5cc8f8",
+                          command=lambda idx=i, items=items: self._move_slot(items, idx, 1),
                           padx=6, pady=2, font=FONT_SM).pack(side="right", padx=(2, 0))
-            RoundedButton(row, text="\u00d7", style="sec",
+            RoundedButton(row, text="\u25b2", style="sec", radius=0, bg=NEON, fg=BG,
+                          hover="#5cc8f8",
+                          command=lambda idx=i, items=items: self._move_slot(items, idx, -1),
+                          padx=6, pady=2, font=FONT_SM).pack(side="right", padx=(2, 0))
+            RoundedButton(row, text="\u00d7", style="sec", radius=0, hover=NEON_RED,
                           command=lambda s=slot: self._delete_slot(s),
+                          padx=6, pady=2, font=FONT_SM).pack(side="right", padx=(2, 0))
+            RoundedButton(row, text="EDIT", style="sec", radius=0,
+                          command=lambda s=slot: self._start_edit(s),
                           padx=6, pady=2, font=FONT_SM).pack(side="right", padx=(2, 0))
 
             if btype == "GROUP":
@@ -984,7 +1070,7 @@ class SettingsDialog:
                 sid = id(slot)
                 expanded = sid in self._btn_expanded
                 toggle_txt = "\u25bc" if expanded else "\u25b6"
-                toggle_btn = RoundedButton(row, text=f"{toggle_txt} {len(children)}", style="sec",
+                toggle_btn = RoundedButton(row, text=f"{toggle_txt} {len(children)}", style="sec", radius=0,
                                            padx=6, pady=2, font=FONT_SM)
                 toggle_btn.pack(side="right", padx=(2, 0))
                 toggle_btn.configure(command=lambda s=sid: self._toggle_expand(s))
@@ -994,14 +1080,14 @@ class SettingsDialog:
                 type_lbl.bind("<Button-1>", lambda e, s=sid: self._toggle_expand(s), add="+")
 
                 # Always create sub-frame with children + ADD button; hide when collapsed
-                sub = tk.Frame(parent, bg=BG)
+                sub = tk.Frame(card, bg=BG)
                 if children:
                     self._render_tree(sub, children, depth + 1)
-                RoundedButton(sub, text="+ ADD", style="sec",
+                RoundedButton(sub, text="+ ADD", style="prim", radius=0,
                               command=lambda p=slot: self._start_add(p.setdefault("children", [])),
-                              padx=6, pady=2, font=FONT_SM).pack(anchor="w")
+                              padx=6, pady=2, font=FONT_SM).pack(side="right")
                 if expanded:
-                    sub.pack(fill=tk.X, padx=(margin + 20, 0), pady=(0, 6))
+                    sub.pack(fill=tk.X, padx=(0, 0), pady=(0, 0))
                 self._btn_group_frames[sid] = (sub, margin, toggle_btn, slot)
 
     def _toggle_expand(self, sid):
@@ -1018,12 +1104,16 @@ class SettingsDialog:
             toggle_btn.configure(text=f"\u25b6 {len(children)}")
         else:
             self._btn_expanded.add(sid)
-            sub.pack(fill=tk.X, padx=(margin + 20, 0), pady=(0, 6))
+            sub.pack(fill=tk.X, padx=(0, 0), pady=(0, 0))
             toggle_btn.configure(text=f"\u25bc {len(children)}")
+        self._buttons_frame.update_idletasks()
+        if hasattr(self, '_sync_button_scrollregion'):
+            self._sync_button_scrollregion()
 
     def _start_edit(self, slot):
         self._button_editing_slot = slot
         self._rebuild_buttons_view()
+        self._rebuild_bottom_bar(self._tabs._active)
 
     def _start_add(self, parent_list):
         if parent_list is None:
@@ -1031,6 +1121,7 @@ class SettingsDialog:
         self._button_new_parent = parent_list
         self._button_editing_slot = None
         self._rebuild_buttons_view()
+        self._rebuild_bottom_bar(self._tabs._active)
 
     def _delete_slot(self, slot):
         def _find(items):
@@ -1046,6 +1137,14 @@ class SettingsDialog:
         save_config(self._cfg)
         self._rebuild_buttons_view()
 
+    def _move_slot(self, items, idx, direction):
+        new_idx = idx + direction
+        if new_idx < 0 or new_idx >= len(items):
+            return
+        items[idx], items[new_idx] = items[new_idx], items[idx]
+        save_config(self._cfg)
+        self._rebuild_buttons_view()
+
     def _build_button_edit(self, parent, slot, form_data=None):
         data = form_data if form_data is not None else (slot if slot else {})
         is_new = slot is None
@@ -1057,14 +1156,8 @@ class SettingsDialog:
         inner = tk.Frame(edit_card, bg=BG_CARD, padx=16, pady=16)
         inner.pack(fill=tk.X)
 
-        header_frame = tk.Frame(inner, bg=BG_CARD)
-        header_frame.pack(fill=tk.X)
-        back_btn = RoundedButton(header_frame, text="\u2190 Back", style="sec",
-                                 command=self._cancel_edit, padx=8, pady=2, font=FONT_SM)
-        back_btn.pack(side="left")
-        ToolTip(back_btn, "Go back to the button list without saving")
-        tk.Label(header_frame, text="EDIT BUTTON" if not is_new else "NEW BUTTON",
-                 font=("Segoe UI", 10, "bold"), bg=BG_CARD, fg=NEON).pack(side="left", padx=(8, 0))
+        tk.Label(inner, text="EDIT BUTTON" if not is_new else "NEW BUTTON",
+                 font=("Segoe UI", 10, "bold"), bg=BG_CARD, fg=NEON).pack(anchor="w")
 
         # Name
         tk.Label(inner, text="Name", bg=BG_CARD, fg=FG_DIM, font=FONT_SM).pack(anchor="w", pady=(8, 0))
@@ -1078,7 +1171,7 @@ class SettingsDialog:
         # Type
         tk.Label(inner, text="Type", bg=BG_CARD, fg=FG_DIM, font=FONT_SM).pack(anchor="w", pady=(8, 0))
         type_var = tk.StringVar(value=data.get("type", "SHORTCUT"))
-        type_choices = ["SHORTCUT", "REST", "HOTKEY", "OPENRGB", "GROUP", "STOPWATCH"]
+        type_choices = ["SHORTCUT", "REST", "HOTKEY", "OPENRGB", "GROUP", "STOPWATCH", "AUDIO OUTPUT"]
         type_frame = tk.Frame(inner, bg=BG_CARD)
         type_frame.pack(fill=tk.X, pady=(2, 0))
         type_frame.columnconfigure(0, weight=1, uniform=type_frame)
@@ -1100,6 +1193,7 @@ class SettingsDialog:
             "OPENRGB": "Apply an OpenRGB lighting profile",
             "GROUP": "Create a sub-panel with nested buttons (optionally also launch a shortcut)",
             "STOPWATCH": "Start a floating stopwatch / countdown timer",
+            "AUDIO OUTPUT": "Switch the Windows default audio playback device",
         }
         for i, t in enumerate(type_choices):
             pill = tk.Label(type_frame, text=t, bg=BUTTON, fg=FG,
@@ -1117,10 +1211,11 @@ class SettingsDialog:
         icon_var = tk.StringVar(value=data.get("icon", "help-circle"))
         color_var = tk.StringVar(value=data.get("color", ""))
 
-        tk.Label(inner, text="Edit Icon", bg=BG_CARD, fg=FG_DIM, font=FONT_SM).pack(anchor="w", pady=(8, 0))
+        edit_icon_section = tk.Frame(inner, bg=BG_CARD)
+        tk.Label(edit_icon_section, text="Edit Icon", bg=BG_CARD, fg=FG_DIM, font=FONT_SM).pack(anchor="w", pady=(8, 0))
 
         # Preview tile (matches panel rendering)
-        prev_row = tk.Frame(inner, bg=BG_CARD)
+        prev_row = tk.Frame(edit_icon_section, bg=BG_CARD)
         prev_row.pack(fill=tk.X, pady=(4, 0))
 
         preview_photo = [None]
@@ -1142,6 +1237,16 @@ class SettingsDialog:
         color_var.trace_add("write", _update_preview_tile)
         icon_var.trace_add("write", _update_preview_tile)
         _update_preview_tile()
+
+        def _toggle_type_visibility(*_):
+            if type_var.get() == "AUDIO OUTPUT":
+                edit_icon_section.pack_forget()
+            else:
+                try:
+                    edit_icon_section.pack(fill=tk.X, before=btn_row)
+                except (tk.TclError, AttributeError):
+                    pass
+        type_var.trace_add("write", _toggle_type_visibility)
 
         def _capture_state():
             d = {
@@ -1252,26 +1357,41 @@ class SettingsDialog:
             def _pick_color(c):
                 color_var.set(c)
 
+            import math as _math, colorsys as _colorsys
+            from PIL import Image as _PILImage, ImageDraw as _PILDraw
+
+            _COLS = 10
             for idx, color in enumerate(HA_PALETTE):
-                cell = tk.Frame(swatch_frame, bg=color, width=sw, height=sh,
+                cell = tk.Frame(swatch_frame, width=sw, height=sh,
                                 cursor="hand2", highlightbackground=BORDER, highlightthickness=1)
-                cell.grid(row=idx // 10, column=idx % 10, padx=gap // 2, pady=gap // 2)
+                cell.grid(row=idx // _COLS, column=idx % _COLS, padx=gap // 2, pady=gap // 2)
                 cell.pack_propagate(False)
-                cell.bind("<Button-1>", lambda e, c=color: _pick_color(c))
 
-            # Replace first swatch with no-colour (clears fill)
-            nocell = tk.Frame(swatch_frame, bg=BG_CARD, width=sw, height=sh,
-                              cursor="hand2", highlightbackground=BORDER, highlightthickness=1)
-            nocell.grid(row=0, column=0, padx=gap // 2, pady=gap // 2)
-            nocell.pack_propagate(False)
-            nocell_lbl = tk.Label(nocell, text="\u2715", fg="#888", bg=BG_CARD,
-                                  font=("Segoe UI", 10), cursor="hand2")
-            nocell_lbl.place(relx=0.5, rely=0.5, anchor="center")
-            nocell_lbl.bind("<Button-1>", lambda e: (_pick_color(""), _update_preview()))
-            nocell.bind("<Button-1>", lambda e: (_pick_color(""), _update_preview()))
-            ToolTip(nocell, "Clear the tile background colour")
+                if color == "RAINBOW":
+                    cell.configure(bg=BG_CARD)
+                    _S = sh * 4
+                    _rimg = _PILImage.new("RGBA", (_S, _S), (0, 0, 0, 0))
+                    _cx = _cy = _S // 2
+                    for _y in range(_S):
+                        for _x in range(_S):
+                            _dx = _x - _cx
+                            _dy = _y - _cy
+                            _hue = (_math.degrees(_math.atan2(_dy, _dx)) % 360) / 360.0
+                            _rr, _gg, _bb = _colorsys.hsv_to_rgb(_hue, 1.0, 1.0)
+                            _rimg.putpixel((_x, _y), (int(_rr * 255), int(_gg * 255), int(_bb * 255)))
+                    _rimg = _rimg.resize((sw, sh), _PILImage.LANCZOS)
+                    _buf = io.BytesIO()
+                    _rimg.save(_buf, format="PNG")
+                    _photo = tk.PhotoImage(data=base64.b64encode(_buf.getvalue()).decode("ascii"))
+                    _lbl = tk.Label(cell, image=_photo, bg=BG_CARD, cursor="hand2")
+                    _lbl.place(relx=0.5, rely=0.5, anchor="center")
+                    _lbl.bind("<Button-1>", lambda e, c=color: _pick_color(c))
+                    cell._rainbow_photo = _photo
+                else:
+                    cell.configure(bg=color)
+                    cell.bind("<Button-1>", lambda e, c=color: _pick_color(c))
 
-            # Preview tile in bottom-right 2×2 gap
+            # Preview tile in bottom-right 2x2 gap
             preview_frame = tk.Frame(swatch_frame, bg=BG_CARD,
                                      width=sw * 2 + gap, height=sh * 2 + gap,
                                      highlightbackground=BORDER, highlightthickness=1)
@@ -1291,7 +1411,17 @@ class SettingsDialog:
                     tile = Image.new("RGBA", (S, S), (0, 0, 0, 0))
                     dr = ImageDraw.Draw(tile)
                     rr = 4 * 4
-                    dr.rounded_rectangle((0, 0, S - 1, S - 1), rr, fill=c)
+                    if c == "RAINBOW":
+                        _cx = _cy = S // 2
+                        for _py in range(S):
+                            for _px in range(S):
+                                _dx = _px - _cx
+                                _dy = _py - _cy
+                                _hue = (_math.degrees(_math.atan2(_dy, _dx)) % 360) / 360.0
+                                _rr, _gg, _bb = _colorsys.hsv_to_rgb(_hue, 1.0, 1.0)
+                                dr.point((_px, _py), fill=(int(_rr*255), int(_gg*255), int(_bb*255)))
+                    else:
+                        dr.rounded_rectangle((0, 0, S - 1, S - 1), rr, fill=c)
                     # gloss
                     mask = Image.new("L", (S, S), 0)
                     ImageDraw.Draw(mask).rounded_rectangle((0, 0, S - 1, S - 1), rr, fill=255)
@@ -1323,7 +1453,13 @@ class SettingsDialog:
                             tile = Image.composite(icon_layer, tile, mask)
                             icon_drawn = True
                     if not icon_drawn:
-                        r = mdi_icons.render(i, int(S * 0.7), (255, 255, 255))
+                        if c == "RAINBOW":
+                            frgb_p = (128, 128, 128)
+                        else:
+                            frgb_p = tuple(int(c[j:j+2], 16) for j in (1, 3, 5))
+                        lum_p = 0.299 * frgb_p[0] + 0.587 * frgb_p[1] + 0.114 * frgb_p[2]
+                        ic = (30, 30, 30) if lum_p > 160 else (255, 255, 255)
+                        r = mdi_icons.render(i, int(S * 0.7), ic)
                         if r:
                             ox = (S - r.width) // 2
                             oy = (S - r.height) // 2
@@ -1449,11 +1585,12 @@ class SettingsDialog:
                 tk.Label(self._button_fields_frame, text="Profile name",
                          bg=BG_CARD, fg=FG_DIM, font=FONT_SM).pack(anchor="w")
                 op = tk.StringVar(value=data.get("openrgb_profile", ""))
-                tk.Entry(self._button_fields_frame, textvariable=op,
-                         bg=BG, fg=FG, insertbackground=FG,
-                         relief="flat", bd=4, highlightthickness=1,
-                         highlightcolor=NEON, highlightbackground=NEON_DIM,
-                         font=FONT_SM).pack(fill=tk.X, pady=(2, 0))
+                from providers.openrgb import _list_profile_files, _profile_name_from_path
+                profile_paths = _list_profile_files()
+                profile_names = [_profile_name_from_path(p) for p in profile_paths]
+                combo = DarkCombobox(self._button_fields_frame, textvariable=op)
+                combo._frame.pack(fill=tk.X, pady=(2, 0))
+                combo._values = profile_names
                 self._btn_field_vars["openrgb_profile"] = op
 
             elif t == "HOTKEY":
@@ -1482,12 +1619,149 @@ class SettingsDialog:
                 clr_lbl.pack(side=tk.RIGHT, padx=(4, 0))
                 clr_lbl.bind("<Button-1>", lambda e: self._clear_hotkey())
 
+            elif t == "AUDIO OUTPUT":
+                # ── Icon selection state ──
+                p_icon_var = tk.StringVar(value=data.get("audio_primary_icon", "speaker"))
+                a_icon_var = tk.StringVar(value=data.get("audio_alt_icon", "headphones"))
+                self._btn_field_vars["audio_primary_icon"] = p_icon_var
+                self._btn_field_vars["audio_alt_icon"] = a_icon_var
+
+                def _make_icon_chooser(parent, var):
+                    frame = tk.Frame(parent, bg=BG_CARD)
+                    refs = [None, None]
+
+                    def _rgb(h):
+                        h = h.lstrip("#")
+                        return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+
+                    def _img(name):
+                        c = _rgb(NEON if var.get() == name else FG_DIM)
+                        return mdi_icons.render_tk(name, 14, c)
+
+                    refs[0] = _img("speaker")
+                    refs[1] = _img("headphones")
+                    frame.photo_refs = refs
+                    sp_lbl = tk.Label(frame, image=refs[0], bg=BG_CARD, cursor="hand2")
+                    sp_lbl.pack(side="left", padx=1)
+                    hp_lbl = tk.Label(frame, image=refs[1], bg=BG_CARD, cursor="hand2")
+                    hp_lbl.pack(side="left", padx=1)
+
+                    def _set_speaker(e):
+                        var.set("speaker")
+                    def _set_headphones(e):
+                        var.set("headphones")
+                    sp_lbl.bind("<Button-1>", _set_speaker)
+                    hp_lbl.bind("<Button-1>", _set_headphones)
+
+                    def _refresh(*_):
+                        refs[0] = _img("speaker")
+                        refs[1] = _img("headphones")
+                        sp_lbl.configure(image=refs[0])
+                        hp_lbl.configure(image=refs[1])
+
+                    var.trace_add("write", _refresh)
+                    return frame
+
+                # ── Shared cache of (device_id, name) pairs ──
+                cache = []
+                p_saved_name = data.get("audio_input_device_name", "")
+                p_saved_id = data.get("audio_input_device_id", "")
+                a_saved_name = data.get("audio_input_device_name_alt", "")
+                a_saved_id = data.get("audio_input_device_id_alt", "")
+
+                if p_saved_name and p_saved_id:
+                    cache.append((p_saved_id, p_saved_name))
+
+                # ── Primary Device ──
+                tk.Label(self._button_fields_frame, text="Primary Device",
+                         bg=BG_CARD, fg=FG_DIM, font=FONT_SM).pack(anchor="w")
+                p_row = tk.Frame(self._button_fields_frame, bg=BG_CARD)
+                p_row.pack(fill=tk.X, pady=(2, 0))
+                p_name_var = tk.StringVar(value=p_saved_name)
+                p_id_var = tk.StringVar(value=p_saved_id)
+                p_combo = DarkCombobox(p_row, textvariable=p_name_var)
+                p_combo._frame.pack(side="left", fill=tk.X, expand=True)
+                if p_saved_name:
+                    p_combo._values = [p_saved_name]
+                _make_icon_chooser(p_row, p_icon_var).pack(side="right")
+
+                # ── Alternate Device (with "None" option) ──
+                tk.Label(self._button_fields_frame, text="Alternate Device (toggle)",
+                         bg=BG_CARD, fg=FG_DIM, font=FONT_SM).pack(anchor="w", pady=(6, 0))
+                a_row = tk.Frame(self._button_fields_frame, bg=BG_CARD)
+                a_row.pack(fill=tk.X, pady=(2, 0))
+                a_name_var = tk.StringVar(value=a_saved_name)
+                a_id_var = tk.StringVar(value=a_saved_id)
+                a_combo = DarkCombobox(a_row, textvariable=a_name_var)
+                a_combo._frame.pack(side="left", fill=tk.X, expand=True)
+                a_combo._values = [""] + ([a_saved_name] if a_saved_name else [])
+                if a_saved_name and a_saved_id:
+                    cache.append((a_saved_id, a_saved_name))
+                _make_icon_chooser(a_row, a_icon_var).pack(side="right")
+
+                # ── Shared SCAN ──
+                st_var = tk.StringVar()
+                status_lbl = tk.Label(self._button_fields_frame, textvariable=st_var,
+                                      bg=BG_CARD, fg=FG_DIM, font=FONT_SM)
+                status_lbl.pack(anchor="w", pady=(2, 0))
+
+                def shared_scan():
+                    from win_platform import list_audio_output_devices
+                    devices, err = list_audio_output_devices()
+                    cache.clear()
+                    cache.extend(devices)
+                    names = [n for _, n in devices]
+                    p_combo._values = names
+                    a_combo._values = [""] + names
+                    if names:
+                        p_combo._var.set(names[0])
+                        a_combo._var.set(names[0])
+                        p_id_var.set(devices[0][0])
+                        a_id_var.set(devices[0][0])
+                    st_var.set(f"// {len(names)} device(s) found" if names else f"// {err or 'no devices found'}")
+
+                scan_row = tk.Frame(self._button_fields_frame, bg=BG_CARD)
+                scan_row.pack(fill=tk.X, pady=(4, 0))
+                scan_lbl = tk.Label(scan_row, text="SCAN", bg=BUTTON, fg=FG,
+                                    font=("Segoe UI", 8, "bold"), padx=8, pady=5,
+                                    cursor="hand2")
+                scan_lbl.pack(side="left")
+                scan_lbl.bind("<Button-1>", lambda e: shared_scan())
+
+                def on_select_primary(*_):
+                    name = p_name_var.get()
+                    for did, dname in cache:
+                        if dname == name:
+                            p_id_var.set(did)
+                            break
+
+                def on_select_alt(*_):
+                    name = a_name_var.get()
+                    if not name.strip():
+                        a_id_var.set("")
+                    else:
+                        for did, dname in cache:
+                            if dname == name:
+                                a_id_var.set(did)
+                                break
+
+                p_combo._frame.bind("<<ComboboxSelected>>", on_select_primary)
+                a_combo._frame.bind("<<ComboboxSelected>>", on_select_alt)
+                self._btn_field_vars["audio_input_device_id"] = p_id_var
+                self._btn_field_vars["audio_input_device_name"] = p_name_var
+                self._btn_field_vars["audio_input_device_id_alt"] = a_id_var
+                self._btn_field_vars["audio_input_device_name_alt"] = a_name_var
+
         type_var.trace_add("write", _toggle_fields)
         self._btn_field_vars = {}
         self._btn_field_vars["app_icon_path"] = tk.StringVar(value=data.get("app_icon_path", ""))
         self._win.after(10, _toggle_fields)
 
-        # Save / Cancel
+        # Edit Icon above the button row
+        if type_var.get() != "AUDIO OUTPUT":
+            edit_icon_section.pack(fill=tk.X)
+
+        # Save / Cancel (always at the bottom)
         btn_row = tk.Frame(inner, bg=BG_CARD)
         btn_row.pack(fill=tk.X, pady=(12, 0))
 
@@ -1517,6 +1791,9 @@ class SettingsDialog:
         self._button_editing_slot = None
         self._button_new_parent = None
         self._rebuild_buttons_view()
+        self._rebuild_bottom_bar(self._tabs._active)
+
+
 
     def _button_save(self, name_var, type_var, icon_var, color_var, is_new):
         new_data = {
@@ -1545,7 +1822,19 @@ class SettingsDialog:
             new_data["children"] = []
             sv = self._btn_field_vars.get("shortcut_path")
             new_data["shortcut_path"] = sv.get().strip() if sv else ""
-
+        elif t == "AUDIO OUTPUT":
+            aid = self._btn_field_vars.get("audio_input_device_id")
+            anm = self._btn_field_vars.get("audio_input_device_name")
+            a2i = self._btn_field_vars.get("audio_input_device_id_alt")
+            a2n = self._btn_field_vars.get("audio_input_device_name_alt")
+            api = self._btn_field_vars.get("audio_primary_icon")
+            aai = self._btn_field_vars.get("audio_alt_icon")
+            new_data["audio_input_device_id"] = aid.get().strip() if aid else ""
+            new_data["audio_input_device_name"] = anm.get().strip() if anm else ""
+            new_data["audio_input_device_id_alt"] = a2i.get().strip() if a2i else ""
+            new_data["audio_input_device_name_alt"] = a2n.get().strip() if a2n else ""
+            new_data["audio_primary_icon"] = api.get().strip() if api else "speaker"
+            new_data["audio_alt_icon"] = aai.get().strip() if aai else "headphones"
         if is_new:
             target = self._button_new_parent
             if target is not None:
@@ -1563,6 +1852,7 @@ class SettingsDialog:
         self._button_editing_slot = None
         self._button_new_parent = None
         self._rebuild_buttons_view()
+        self._rebuild_bottom_bar(self._tabs._active)
 
     # ── Hotkey recording ──────────────────────────────────────
 
@@ -1672,20 +1962,98 @@ class SettingsDialog:
     # ── ABOUT TAB ─────────────────────────────────────────────
 
     def _build_about(self, f):
-        main = tk.Frame(f, bg=BG)
-        main.pack(fill=tk.BOTH, expand=True, padx=16, pady=16)
+        import webbrowser
 
-        tk.Label(main, text=APP_NAME, font=("Segoe UI", 18, "bold"),
+        outer = tk.Frame(f, bg=BG)
+        outer.pack(fill="both", expand=True, padx=16, pady=16)
+
+        canvas = tk.Canvas(outer, bg=BG, highlightthickness=0, bd=0)
+        canvas.pack(fill="both", expand=True)
+
+        inner = tk.Frame(canvas, bg=BG)
+        canvas_win = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        def _sync_scrollregion():
+            bbox = canvas.bbox("all")
+            if not bbox:
+                return
+            view_h = max(1, canvas.winfo_height())
+            content_h = max(view_h, bbox[3] - bbox[1])
+            canvas.configure(scrollregion=(0, 0, bbox[2], content_h))
+            if bbox[3] - bbox[1] <= view_h:
+                canvas.yview_moveto(0)
+
+        def _canvas_cfg(e):
+            canvas.itemconfig(canvas_win, width=e.width)
+            _sync_scrollregion()
+        canvas.bind("<Configure>", _canvas_cfg)
+        inner.bind("<Configure>", lambda _: _sync_scrollregion())
+
+        def _wheel(e):
+            canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+            return "break"
+        canvas.bind("<MouseWheel>", _wheel)
+        inner.bind("<MouseWheel>", _wheel)
+
+        _WHEEL_TAG = "_about_wheel"
+        canvas.bind_class(_WHEEL_TAG, "<MouseWheel>", _wheel)
+        def _install_wheel_tag(w):
+            tags = w.bindtags()
+            if tags[0] != _WHEEL_TAG:
+                w.bindtags((_WHEEL_TAG,) + tags)
+            for c in w.winfo_children():
+                _install_wheel_tag(c)
+        _install_wheel_tag(inner)
+
+        # ── Content ──
+
+        def _req(parent, feature, instruction, url=None):
+            row = tk.Frame(parent, bg=BG)
+            row.pack(fill="x", pady=3)
+            tk.Label(row, text=feature, font=("Segoe UI", 9, "bold"), bg=BG, fg=NEON,
+                     width=18, anchor="w").pack(side="left")
+            if url:
+                lbl = tk.Label(row, text=instruction, font=("Segoe UI", 9, "underline"),
+                               bg=BG, fg=NEON, cursor="hand2", anchor="w")
+                lbl.bind("<Button-1>", lambda e, u=url: webbrowser.open(u))
+            else:
+                lbl = tk.Label(row, text=instruction, font=("Segoe UI", 9),
+                               bg=BG, fg=FG, anchor="w")
+            lbl.pack(side="left", fill="x", expand=True)
+
+        tk.Label(inner, text=APP_NAME, font=("Segoe UI", 18, "bold"),
                  bg=BG, fg=NEON).pack(anchor="w", pady=(0, 2))
-        tk.Label(main, text=f"Version {APP_VERSION}", font=FONT_UI,
-                 bg=BG, fg=FG_DIM).pack(anchor="w", pady=(0, 20))
+        tk.Label(inner, text=f"Version {APP_VERSION}", font=FONT_UI,
+                 bg=BG, fg=FG_DIM).pack(anchor="w", pady=(0, 16))
 
-        tk.Label(main, text="A custom monitor control panel for ESP8266-driven\ndisplays.",
-                 font=FONT_UI, bg=BG, fg=FG, justify="left").pack(anchor="w", pady=(0, 24))
+        tk.Label(inner, text="On-screen PC stats overlay with ESP8266-driven secondary display.",
+                 font=FONT_UI, bg=BG, fg=FG, wraplength=360, justify="left").pack(anchor="w", pady=(0, 12))
 
-        tk.Frame(main, bg=NEON_DIM, height=1).pack(fill=tk.X, pady=(0, 12))
+        tk.Frame(inner, bg=NEON_DIM, height=1).pack(fill=tk.X, pady=(0, 10))
 
-        tk.Frame(main, bg=BG, height=16).pack()
+        # ── Setup Guide ──
+        tk.Label(inner, text="SETUP GUIDE", font=("Segoe UI", 10, "bold"),
+                 bg=BG, fg=NEON).pack(anchor="w", pady=(0, 8))
+
+        _req(inner, "CPU/GPU temps", "Install MSI Afterburner (RTSS included)",
+             "https://www.msi.com/Landing/afterburner/graphics-cards")
+        _req(inner, "", "Keep Afterburner running in the background for temp & FPS data")
+        _req(inner, "FPS overlay", "Provided by RTSS (bundled with Afterburner above)")
+        _req(inner, "OpenRGB", "Install OpenRGB, enable SDK Server in Settings",
+             "https://openrgb.org/releases.html")
+
+        tk.Frame(inner, bg=NEON_DIM, height=1).pack(fill=tk.X, pady=(8, 10))
+
+        # ── Python ──
+        tk.Label(inner, text="RUNNING FROM SOURCE", font=("Segoe UI", 10, "bold"),
+                 bg=BG, fg=NEON).pack(anchor="w", pady=(0, 8))
+
+        tk.Label(inner, text="Python 3.10+  \u2022  Windows 10/11  \u2022  pip install -r requirements.txt",
+                 font=("Segoe UI", 9), bg=BG, fg=FG, wraplength=360, justify="left").pack(anchor="w")
+        tk.Label(inner, text="Launch: python app/main.py  |  Build .exe: build.bat",
+                 font=("Segoe UI", 9), bg=BG, fg=FG_DIM, wraplength=360, justify="left").pack(anchor="w", pady=(4, 0))
+
+        tk.Frame(inner, bg=BG, height=16).pack()
 
     def _ok(self):
         self._apply()
@@ -1795,10 +2163,6 @@ class SettingsDialog:
             time.sleep(0.02)
             self._serial.set_live("feature_day_clock", "1" if mode == "Day Clock" else "0")
             time.sleep(0.02)
-            name = raw_name if raw_name else ""
-            self._serial.set_live("user_name", name)
-            self._serial.queue_on_connect("user_name", name)
-            time.sleep(0.02)
             self._sync_next_alarm()
             log.info("[settings] applied")
 
@@ -1807,6 +2171,11 @@ class SettingsDialog:
     def _apply_user_name(self):
         if self._suppress_apply or self._user_name_suppress:
             return
+        if hasattr(self, '_name_debounce'):
+            self._win.after_cancel(self._name_debounce)
+        self._name_debounce = self._win.after(300, self._flush_user_name)
+
+    def _flush_user_name(self):
         raw = self._user_name_var.get().strip()
         if raw == "Your Name":
             raw = ""

@@ -2,6 +2,10 @@
 
 APP_VERSION = "3.0"
 APP_NAME = "IRIS"
+TRAY_ICON_SIZE = 64
+DEFAULT_BRIGHTNESS = 3
+PC_DISP_STATS = "7"
+HOTKEY_SLEEP_MS = 50
 
 DEFAULT_CONFIG = {
     "serial_port": "auto",
@@ -68,14 +72,18 @@ FONT_SM = ("Segoe UI", 9)
 NEON_GRN = "#00ff88"
 NEON_RED = "#ff3355"
 GAUGE_WARN = "#ffd166"
+TYPE_PURPLE = "#bb66ff"
+TYPE_CYAN = "#33ddcc"
 HA_PALETTE = [
     "#FF0000", "#FF3300", "#FF6600", "#FF8800", "#FFAA00", "#FFCC00",
     "#FFFF00", "#CCFF00", "#88FF00", "#00CC00", "#00BB44", "#00FF88",
     "#00FFCC", "#00CCFF", "#00AAFF", "#0066FF", "#0033CC", "#0000FF",
     "#6600FF", "#9900CC", "#FF00FF", "#FF0099", "#FFFFFF", "#888888",
-    "#FF4444", "#FF7744", "#FF9944", "#FFBB44", "#FFDD44", "#FFEE44",
-    "#DDFF44", "#AAFF44", "#44FF44", "#44FF88", "#44FFBB", "#44DDCC",
-    "#44BBFF", "#4488FF", "#4455FF", "#6644FF",
+    "#555555", "#000000",
+    "#FF8888", "#FFAA66",
+    "#FFDD77", "#BBEE77",
+    "#77DD88", "#77DDCC", "#77CCFF", "#7799FF", "#BB88FF", "#FF88CC",
+    "#CCAAFF", "RAINBOW",
 ]
 
 DANGER = "#aa1a00"

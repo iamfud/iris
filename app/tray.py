@@ -3,13 +3,14 @@
 import logging
 import pystray
 from PIL import Image, ImageDraw
+from constants import TRAY_ICON_SIZE
 
 log = logging.getLogger("iris.tray")
 
 _ICON_CACHE = {}
 
 
-def make_icon_image(size=64, online=False):
+def make_icon_image(size=TRAY_ICON_SIZE, online=False):
     key = (size, online)
     if key in _ICON_CACHE:
         return _ICON_CACHE[key]
