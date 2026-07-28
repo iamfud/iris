@@ -1,0 +1,171 @@
+{
+  "pages": [
+    {
+      "id": "features",
+      "title": "Pixel Clock",
+      "subtitle": "Configure LED matrix",
+      "icon": "widgets",
+      "nav_group": "main",
+      "sections": [
+        {
+          "title": "Clock Display",
+          "controls": [
+            {
+              "type": "text",
+              "key": "user_name",
+              "label": "Your Name",
+              "placeholder": "Your Name",
+              "save_debounce_ms": 300
+            },
+            {
+              "type": "select",
+              "key": "clock_mode",
+              "label": "Clock Mode",
+              "value_from": "_clock_mode",
+              "options": [
+                { "value": "small", "label": "Small Clock" },
+                { "value": "large", "label": "Large Clock", "set": { "feature_large_clock": true, "feature_day_clock": false } },
+                { "value": "day", "label": "Day and time", "set": { "feature_large_clock": false, "feature_day_clock": true } }
+              ]
+            },
+            {
+              "type": "toggle",
+              "key": "feature_greeting",
+              "label": "Greeting message",
+              "description": "Show greeting message on startup"
+            },
+            {
+              "type": "toggle",
+              "key": "feature_time",
+              "label": "Time display",
+              "description": "Show/hide the current time on the display"
+            },
+            {
+              "type": "toggle",
+              "key": "feature_date",
+              "label": "Date reminder",
+              "description": "Alternate time display with the current date"
+            },
+            {
+              "type": "toggle",
+              "key": "feature_minute_bar",
+              "label": "Minute bar",
+              "description": "Visual minute progress bar on the display"
+            }
+          ]
+        },
+        {
+          "title": "Extras",
+          "controls": [
+            {
+              "type": "toggle",
+              "key": "feature_eyes",
+              "label": "Animated eyes",
+              "description": "Animated eyes that follow motion"
+            },
+            {
+              "type": "toggle",
+              "key": "feature_notifications",
+              "label": "Notifications",
+              "description": "Show phone/PC notifications on the display"
+            },
+            {
+              "type": "toggle",
+              "key": "night_mode_enabled",
+              "label": "Night mode",
+              "description": "Dim display during nighttime hours"
+            },
+            {
+              "type": "toggle",
+              "key": "pc_stats_enabled",
+              "label": "PC Stats",
+              "description": "Show PC hardware stats on the display"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "home_assistant",
+      "title": "Home Assistant",
+      "subtitle": "Coming soon",
+      "icon": "home",
+      "nav_group": "main",
+      "sections": []
+    },
+    {
+      "id": "derek",
+      "title": "Derek",
+      "subtitle": "Coming soon",
+      "icon": "memory",
+      "nav_group": "main",
+      "sections": []
+    },
+    {
+      "id": "rgb",
+      "title": "RGB",
+      "subtitle": "Coming soon",
+      "icon": "palette",
+      "nav_group": "main",
+      "sections": []
+    },
+    {
+      "id": "notifications",
+      "title": "Notifications",
+      "subtitle": "Coming soon",
+      "icon": "notifications",
+      "nav_group": "main",
+      "sections": []
+    },
+    {
+      "id": "settings",
+      "title": "Settings",
+      "subtitle": "Application settings",
+      "icon": "settings",
+      "nav_group": "bottom",
+      "sections": []
+    }
+  ],
+  "control_types": {
+    "toggle": {
+      "description": "Boolean switch — on/off toggle",
+      "fields": ["key", "label", "description"]
+    },
+    "text": {
+      "description": "Text input field",
+      "fields": ["key", "label", "placeholder", "save_debounce_ms"]
+    },
+    "password": {
+      "description": "Password input with show/hide toggle",
+      "fields": ["key", "label", "placeholder", "save_debounce_ms"]
+    },
+    "select": {
+      "description": "Dropdown select",
+      "fields": ["key", "label", "options", "value_from"]
+    },
+    "slider": {
+      "description": "Range slider with value display",
+      "fields": ["key", "label", "min", "max", "step", "unit"]
+    },
+    "number": {
+      "description": "Numeric input",
+      "fields": ["key", "label", "min", "max", "step", "unit"]
+    },
+    "button": {
+      "description": "Action button",
+      "fields": ["label", "icon", "action", "target"]
+    },
+    "info": {
+      "description": "Read-only info display",
+      "fields": ["key", "label", "value"]
+    },
+    "folder_picker": {
+      "description": "Text input with browse-for-folder button",
+      "fields": ["key", "label"]
+    },
+    "file_picker": {
+      "description": "Text input with browse-for-file button",
+      "fields": ["key", "label", "file_types"]
+    }
+  }
+}

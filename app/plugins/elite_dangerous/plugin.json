@@ -1,0 +1,30 @@
+{
+  "name": "elite_dangerous",
+  "version": "1.0",
+  "display_name": "Elite Dangerous",
+  "description": "Journal-based telemetry from Elite Dangerous",
+  "icon": "videogame_asset",
+  "type": "app",
+  "exe_default": "EliteDangerous64.exe",
+  "message_not_running": "Elite Dangerous is not running. The plugin will activate when the game is detected.",
+  "min_api_version": "1.0",
+  "settings": [
+    {
+      "title": "Game Detection",
+      "controls": [
+        {
+          "type": "toggle",
+          "key": "enabled",
+          "label": "Enabled",
+          "description": "Start plugin when Elite Dangerous is detected"
+        },
+        {
+          "type": "folder_picker",
+          "key": "exe_path",
+          "label": "Target executable",
+          "description": "Plugin starts when this process is detected"
+        }
+      ]
+    }
+  ]
+}

@@ -50,3 +50,49 @@
 - `neon_card` (`widgets.py:764`) — defined but never called.
 - `icon_browser.py` — standalone, never imported by app.
 - Test debris: `test_debug.py`, `test_hotkey.py`, `test_hotkey2.py`, `test_rtss.py`, `app/test.py`, `app/test2.py`, `app/_dump_profile.py`, `app/err.txt`.
+
+# Session Memory — 2026-07-26
+
+## MAX7219 failsafe (implemented this session)
+- **Root cause**: No protection against SPI corruption causing all 256 LEDs to light up (~5A draw, melts 3D-printed case)
+- **Three-layer firmware failsafe added**:
+  1. Pixel-count watchdog: `drawPixel()` increments counter, `clearDisplay()` resets it, `endFrame()` triggers shutdown if >160 lit pixels. Normal screens peak ~80-100px.
+  2. Serial heartbeat timeout: 60s with no serial command → display forced off. Prevents runaway after PC app crash/disconnect.
+  3. Periodic MAX7219 register re-init: every 30s re-sends SCANLIMIT, DECODE, INTENSITY, TEST, SHUTDOWN registers to correct minor SPI corruption.
+- **Restore mechanism**: any serial command from PC clears failsafe, re-inits registers, re-renders
+- **New serial message**: `SAFETY:led_overload` — separate from `OVERHEAT:active` (which is PC CPU/GPU temp only)
+- **PC handler**: beep + log warning, does NOT send `display_on=0`
+- **Files changed**: `core/core.h`, `main.ino`, `core/renderer.h`, `core/serial.h`, `app/main.py`
+
+## Plugin Architecture Proposal (reviewed this session)
+- **Core principle**: plugins only gather data and publish events; Iris core decides output routing
+- **Architecture**: Plugin → Event Bus → Capability Manager → (Dashboard, Overlay, Hardware, MQTT, etc.)
+- **Signals**: strongly typed (String, Float, Boolean, Percentage, etc.) with metadata; advertise compatible capabilities
+- **Key design patterns chosen**: Topic-based Pub/Sub, Strategy (managers), Chain of Responsibility (trigger pipeline), Observer (signal state), Bulkhead (plugin crash isolation)
+
+### Critical feedback given:
+- **Event Bus needs topic-based routing** with wildcard subscriptions, not broadcast. Also needs structured event logging, backpressure handling, and per-signal rate limiting.
+- **"Capabilities" conflate transport, rendering, and action** — should be separated into Renderer (how to display), Transport (where to send), Action (what to do). Use Strategy Pattern.
+- **Signal metadata should be minimal** — plugin only provides required fields (id, name, type, category); UI-derived fields (priority, colour, icon) set by user config; update_frequency inferred from arrival rate.
+- **Missing: Derived/Computed Signals** — signals that transform other signals (e.g. CPU-GPU temp differential). This is where trigger/automation logic lives.
+- **Trigger system should be composable pipeline**: Change Detection → Condition Filter → Rate Limit → Dispatch. Not a flat list of alternatives.
+- **Plugin lifecycle undefined** — need discovery (entry points/directory scan), crash isolation (sandboxed execution), hot reload capability, and schema versioning.
+- **Need a Signal Registry** separate from Event Bus — holds definitions, current values, supports queries ("show me all Float°C signals").
+- **Migration path**: build new system alongside old, wrap existing `serial_sender` usage as HardwareManager, rewrite plugins one-by-one, switch over. Don't refactor in place.
+
+### Proposed folder structure:
+```
+iris/
+├── core/          # bus.py, registry.py, pipeline.py, engine.py
+├── signals/       # types.py, derived.py, triggers.py
+├── plugins/       # base.py, loader.py, per-plugin dirs with manifest.json
+├── managers/      # base.py, hardware/, display/, transport/, notifications/, logging/, ai/
+├── config/        # routing.py, schema.py, ui/settings.py
+└── app/           # main.py
+```
+
+## Settings UI Architecture
+- **Tkinter settings dialog** (`settings_dialog.py`) is **OBSOLETE** — do not modify or extend
+- **Active settings UI**: HTML/pywebview panel served via `ws_bridge.py` HTTP bridge
+- **Files**: `HTML/index.html` + `HTML/script.js` + `HTML/style.css` → served by `app/panel_window.py` via pywebview
+- **Plugin settings**: Currently rendered ad-hoc in `script.js` (`renderPluginSettings`) — being replaced with declarative settings definitions

@@ -1,0 +1,45 @@
+{
+  "name": "pc_stats",
+  "version": "1.0",
+  "display_name": "PC Stats",
+  "description": "CPU/GPU temperature and FPS monitoring",
+  "icon": "memory",
+  "type": "multi",
+  "requirements": [
+    {"name": "RTSS", "exe": "RTSS.exe", "description": "RivaTuner Statistics Server"},
+    {"name": "Afterburner", "exe": "MSIAfterburner.exe", "description": "MSI Afterburner"}
+  ],
+  "message_not_running": "PC Stats requires RTSS and MSI Afterburner to be running.",
+  "min_api_version": "1.0",
+  "settings": [
+    {
+      "title": "Temperature Limits",
+      "controls": [
+        {
+          "type": "toggle",
+          "key": "enabled",
+          "label": "Enabled",
+          "description": "Show PC hardware stats on the display"
+        },
+        {
+          "type": "slider",
+          "key": "cpu_temp_lim",
+          "label": "CPU Temperature Limit",
+          "min": 50,
+          "max": 100,
+          "step": 5,
+          "unit": "\u00b0C"
+        },
+        {
+          "type": "slider",
+          "key": "gpu_temp_lim",
+          "label": "GPU Temperature Limit",
+          "min": 50,
+          "max": 100,
+          "step": 5,
+          "unit": "\u00b0C"
+        }
+      ]
+    }
+  ]
+}

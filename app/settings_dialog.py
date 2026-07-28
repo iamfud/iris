@@ -4,12 +4,14 @@ import base64
 import ctypes
 import datetime
 import io
+import json
 import logging
 import os
+import sys
 import threading
 import time
 import tkinter as tk
-from tkinter import filedialog
+from tkinter import filedialog, messagebox
 
 import mdi_icons
 from config import config_path, load_config, save_config
@@ -19,7 +21,7 @@ try:
 except ImportError:
     _PIL = False
 
-from constants import APP_NAME, APP_VERSION, BG, BG_CARD, FG, FG_DIM, FONT_UI, NEON, NEON_DIM, NEON_GRN, NEON_RED, GAUGE_WARN, TYPE_PURPLE, TYPE_CYAN, BUTTON, BORDER, DANGER, DANGER_HOVER, DEFAULT_CONFIG, FONT_SM, HA_PALETTE, format_keys
+from constants import APP_NAME, APP_VERSION, BG, BG_CARD, FG, FG_DIM, FONT_UI, NEON, NEON_DIM, NEON_GRN, NEON_RED, GAUGE_WARN, TYPE_PURPLE, TYPE_CYAN, BUTTON, BUTTON_HOVER, BORDER, DANGER, DANGER_HOVER, DEFAULT_CONFIG, FONT_SM, HA_PALETTE, format_keys
 from styles import apply_dark_theme
 from widgets import RoundedButton, DarkCombobox, TabBar, Toggle, IrisScrollbar, ColourPicker, ToolTip
 from win_platform import scan_media_apps
@@ -51,6 +53,7 @@ FEATURE_KEYS = [
     ("feature_minute_bar", "Minute bar"),
     ("feature_eyes", "Animated eyes"),
     ("feature_notifications", "Notifications"),
+    ("feature_greeting", "Greeting message"),
     ("night_mode_enabled", "Night mode"),
     ("temp_alert", "Temp alert"),
     ("pc_stats_enabled", "PC Stats"),
@@ -77,9 +80,12 @@ def _dark_titlebar(hwnd):
 
 
 class SettingsDialog:
-    def __init__(self, parent, serial_sender, shared_cfg=None, initial_tab=0):
+    def __init__(self, parent, serial_sender, shared_cfg=None, initial_tab=0,
+                 on_hotkey_change=None, on_factory_reset=None):
         self._serial = serial_sender
         self._cfg = shared_cfg if shared_cfg is not None else load_config()
+        self._on_hotkey_change = on_hotkey_change
+        self._on_factory_reset = on_factory_reset
         self._vars = {}
         self._text_vars = {}
         self._suppress_apply = True
@@ -114,7 +120,7 @@ class SettingsDialog:
         t_feat = self._tabs.add("FEATURES")
         t_alarm = self._tabs.add("ALARM")
         t_btns = self._tabs.add("BUTTONS")
-        t_about = self._tabs.add("ABOUT")
+        t_support = self._tabs.add("SUPPORT")
 
         self._tab_alarm_index = 1
         self._tab_buttons_index = 2
@@ -124,7 +130,7 @@ class SettingsDialog:
         self._build_features(t_feat)
         self._build_alarm(t_alarm)
         self._build_buttons(t_btns)
-        self._build_about(t_about)
+        self._build_support(t_support)
 
         self._apply_config_to_ui(self._cfg)
         self._suppress_apply = False
@@ -292,6 +298,148 @@ class SettingsDialog:
             if tip:
                 ToolTip(row_w, tip)
 
+        # ── Hotkey ────────────────────────────────────────────
+        tk.Frame(main, bg=NEON_DIM, height=1).grid(
+            row=r, column=0, columnspan=2, sticky="ew", pady=(10, 10))
+        r += 1
+        tk.Label(main, text="Hotkey", font=("Segoe UI", 10, "bold"),
+                 bg=BG, fg=NEON).grid(row=r, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        r += 1
+
+        hotkey_border = tk.Frame(main, bg=BORDER, bd=0)
+        hotkey_border.grid(row=r, column=0, columnspan=2, sticky="ew", padx=2, pady=2)
+        hotkey_card = tk.Frame(hotkey_border, bg=BG_CARD, bd=0)
+        hotkey_card.pack(fill="both", expand=True, padx=1, pady=1)
+        hotkey_inner = tk.Frame(hotkey_card, bg=BG_CARD)
+        hotkey_inner.pack(fill="x", padx=12, pady=10)
+        r += 1
+
+        hotkey_mods = self._cfg.get("hotkey_modifiers", [17, 18])
+        hotkey_vk = self._cfg.get("hotkey_key", 73)
+        self._hotkey_mods = list(hotkey_mods)
+        self._hotkey_vk = hotkey_vk
+        self._hotkey_recording = False
+        self._hotkey_pressed = set()
+        self._hotkey_flash_on = True
+
+        from constants import VK_NAMES
+        def _mod_label(vk):
+            return VK_NAMES.get(vk, f"VK_{vk}").upper()
+
+        def _key_label(vk):
+            n = VK_NAMES.get(vk, "")
+            if not n:
+                n = chr(vk) if 48 <= vk <= 90 else f"VK_{vk}"
+            return n.upper()
+
+        def _build_hotkey_display():
+            self._hk_mod_label.configure(text=" + ".join(_mod_label(v) for v in self._hotkey_mods))
+            self._hk_key_lbl.configure(text=_key_label(self._hotkey_vk),
+                                       fg=NEON, bg=BG_CARD)
+
+        self._build_hotkey_display_fn = _build_hotkey_display
+
+        hk_row = tk.Frame(hotkey_inner, bg=BG_CARD)
+        hk_row.pack(fill="x")
+
+        hk_left = tk.Frame(hk_row, bg=BG_CARD)
+        hk_left.pack(side="left", fill="x", expand=True)
+
+        self._hk_mod_label = tk.Label(hk_left, text=" + ".join(_mod_label(v) for v in self._hotkey_mods),
+                                       font=("Segoe UI", 8), bg=BG_CARD, fg=FG)
+        self._hk_mod_label.pack(anchor="w")
+
+        self._hk_key_label = tk.Label(hk_left, text=_key_label(self._hotkey_vk),
+                                       font=("Segoe UI", 24, "bold"), bg=BG_CARD, fg=NEON)
+        self._hk_key_label.pack(anchor="w")
+
+        hk_btn_outer = tk.Frame(hk_row, bg=BG_CARD)
+        hk_btn_outer.pack(side="right", padx=(8, 0))
+
+        hk_btn_border = tk.Frame(hk_btn_outer, bg=NEON, bd=0, padx=1, pady=1)
+        hk_btn_border.pack()
+        hk_btn_inner = tk.Frame(hk_btn_border, bg=BG_CARD, cursor="hand2")
+        hk_btn_inner.pack(padx=1, pady=1)
+
+        self._hk_key_lbl = tk.Label(hk_btn_inner, text=_key_label(self._hotkey_vk),
+                                     font=("Segoe UI", 18, "bold"),
+                                     bg=BG_CARD, fg=NEON, padx=16, pady=6)
+        self._hk_key_lbl.pack()
+        self._hk_key_lbl.bind("<Button-1>", lambda e: _start_hotkey_record())
+        hk_btn_inner.bind("<Button-1>", lambda e: _start_hotkey_record())
+
+        def _flash_key():
+            if not self._hotkey_recording:
+                return
+            if self._hotkey_flash_on:
+                self._hk_key_lbl.configure(fg=NEON)
+            else:
+                self._hk_key_lbl.configure(fg="#333333")
+            self._hotkey_flash_on = not self._hotkey_flash_on
+            self._win.after(400, _flash_key)
+
+        def _start_hotkey_record():
+            if self._hotkey_recording:
+                return
+            self._hotkey_recording = True
+            self._hotkey_pressed = set()
+            self._hk_key_lbl.configure(text="...", fg=NEON)
+            self._hk_key_label.configure(text="...")
+            self._hk_mod_label.configure(text="Press new combination")
+            self._hotkey_flash_on = True
+            _flash_key()
+            self._win.bind("<KeyPress>", _on_hotkey_key, add=True)
+            self._win.bind("<KeyRelease>", _on_hotkey_release, add=True)
+
+        def _on_hotkey_key(e):
+            if not self._hotkey_recording:
+                return "break"
+            vk = e.keycode
+            if vk == 27:
+                _stop_hotkey_record(cancel=True)
+                return "break"
+            self._hotkey_pressed.add(vk)
+            modifiers = {16, 17, 18, 91, 92}
+            mods = sorted(k for k in self._hotkey_pressed if k in modifiers)
+            action = [k for k in self._hotkey_pressed if k not in modifiers]
+            if action:
+                self._hotkey_mods = mods if mods else [17, 18]
+                self._hotkey_vk = action[0]
+                _stop_hotkey_record(cancel=False)
+            else:
+                self._hk_mod_label.configure(text=" + ".join(_mod_label(v) for v in mods) if mods else "Press a modifier...")
+                self._hk_key_label.configure(text=_key_label(vk))
+                self._hk_key_lbl.configure(text=_key_label(vk))
+            return "break"
+
+        def _on_hotkey_release(e):
+            if self._hotkey_recording:
+                self._hotkey_pressed.discard(e.keycode)
+
+        def _stop_hotkey_record(cancel=False):
+            self._hotkey_recording = False
+            try:
+                self._win.unbind("<KeyPress>", _on_hotkey_key)
+                self._win.unbind("<KeyRelease>", _on_hotkey_release)
+            except Exception:
+                pass
+            if not cancel:
+                self._cfg["hotkey_modifiers"] = self._hotkey_mods
+                self._cfg["hotkey_key"] = self._hotkey_vk
+                save_config(self._cfg)
+                if self._on_hotkey_change:
+                    try:
+                        self._on_hotkey_change()
+                    except Exception:
+                        pass
+            _build_hotkey_display()
+            self._hk_key_lbl.configure(text=_key_label(self._hotkey_vk))
+
+        self._hk_hotkey_key_handler = _on_hotkey_key
+        self._hk_hotkey_release_handler = _on_hotkey_release
+
+        ToolTip(hk_btn_inner, "Click to change the global hotkey")
+
         # ── Temp Alert ────────────────────────────────────────
         tk.Frame(main, bg=NEON_DIM, height=1).grid(
             row=r, column=0, columnspan=2, sticky="ew", pady=(10, 10))
@@ -441,10 +589,8 @@ class SettingsDialog:
                 RoundedButton(self._btn_bar, text="+ ADD BUTTON", style="prim",
                               command=lambda: self._start_add(None)).grid(row=0, column=0, sticky="w")
                 RoundedButton(self._btn_bar, text="OK", command=self._ok).grid(row=0, column=2)
-        elif idx == 3:  # About
-            from constants import DANGER
-            RoundedButton(self._btn_bar, text="FACTORY RESET", style="danger",
-                          command=self._factory_reset).grid(row=0, column=0, sticky="w")
+        elif idx == 3:  # Support
+            RoundedButton(self._btn_bar, text="OK", command=self._ok).grid(row=0, column=2)
         else:  # Features
             RoundedButton(self._btn_bar, text="OK", command=self._ok).grid(row=0, column=2)
 
@@ -1961,7 +2107,7 @@ class SettingsDialog:
 
     # ── ABOUT TAB ─────────────────────────────────────────────
 
-    def _build_about(self, f):
+    def _build_support(self, f):
         import webbrowser
 
         outer = tk.Frame(f, bg=BG)
@@ -2053,7 +2199,85 @@ class SettingsDialog:
         tk.Label(inner, text="Launch: python app/main.py  |  Build .exe: build.bat",
                  font=("Segoe UI", 9), bg=BG, fg=FG_DIM, wraplength=360, justify="left").pack(anchor="w", pady=(4, 0))
 
+        tk.Frame(inner, bg=NEON_DIM, height=1).pack(fill=tk.X, pady=(10, 10))
+
+        # ── Config Management ──
+        tk.Label(inner, text="CONFIG MANAGEMENT", font=("Segoe UI", 10, "bold"),
+                 bg=BG, fg=NEON).pack(anchor="w", pady=(0, 8))
+
+        tk.Label(inner,
+                 text="Back up, restore, or reset your Iris configuration.",
+                 bg=BG, fg=FG_DIM, font=("Segoe UI", 9), wraplength=360, justify="left").pack(anchor="w")
+
+        btn_row = tk.Frame(inner, bg=BG)
+        btn_row.pack(anchor="w", pady=(0, 16))
+
+        RoundedButton(btn_row, text="Export Config", style="sec",
+                      bg=NEON_GRN, fg=BG, hover="#22ff99",
+                      command=self._export_config).pack(side="left", padx=(0, 6))
+        RoundedButton(btn_row, text="Import Config", style="sec",
+                      bg=TYPE_CYAN, fg=BG, hover="#44ddff",
+                      command=self._import_config).pack(side="left", padx=(6, 0))
+
+        RoundedButton(btn_row, text="FACTORY RESET", style="danger", bg=DANGER,
+                      hover=DANGER_HOVER, command=self._confirm_factory_reset).pack(side="left", padx=(12, 0))
+
         tk.Frame(inner, bg=BG, height=16).pack()
+
+    def _export_config(self):
+        path = filedialog.asksaveasfilename(
+            title="Export Iris Config",
+            defaultextension=".json",
+            filetypes=[("JSON", "*.json")],
+            initialfile="iris_config_backup.json",
+            parent=self._win,
+        )
+        if not path:
+            return
+        try:
+            with open(path, "w") as f:
+                json.dump(dict(self._cfg), f, indent=2)
+            log.info("config exported to %s", path)
+        except Exception as e:
+            messagebox.showerror("Export Failed", str(e), parent=self._win)
+
+    def _import_config(self):
+        path = filedialog.askopenfilename(
+            title="Import Iris Config",
+            filetypes=[("JSON", "*.json")],
+            parent=self._win,
+        )
+        if not path:
+            return
+        try:
+            with open(path) as f:
+                imported = json.load(f)
+            if not isinstance(imported, dict):
+                raise ValueError("invalid config")
+            self._cfg.clear()
+            self._cfg.update(imported)
+            save_config(self._cfg)
+            self._suppress_apply = True
+            self._apply_config_to_ui(self._cfg)
+            self._suppress_apply = False
+            messagebox.showinfo("Config Imported",
+                                "Configuration imported. Some settings may require a restart to take effect.",
+                                parent=self._win)
+        except Exception as e:
+            messagebox.showerror("Import Failed", str(e), parent=self._win)
+
+    def _confirm_factory_reset(self):
+        result = messagebox.askyesno(
+            "Factory Reset",
+            "This will erase all settings and restart Iris.\n\nContinue?",
+            parent=self._win,
+        )
+        if result:
+            self._factory_reset()
+            if self._on_factory_reset:
+                self._win.after(200, self._on_factory_reset)
+            else:
+                self._win.destroy()
 
     def _ok(self):
         self._apply()

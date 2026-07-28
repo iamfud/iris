@@ -2,6 +2,7 @@
 
 import logging
 import os
+import sys
 import threading
 import winreg
 
@@ -125,6 +126,38 @@ def set_default_audio_output(device_key: str) -> bool:
     except Exception as e:
         log.warning("[audio] set_default_audio_output: %s", e)
         return False
+
+
+def toggle_mic_mute() -> bool | None:
+    """Toggle mute on the default capture (microphone) device.
+
+    Returns the new mute state (True=muted, False=unmuted) on success,
+    or None on failure.
+    """
+    try:
+        import comtypes
+        from pycaw.api.mmdeviceapi import IMMDeviceEnumerator
+        from pycaw.constants import CLSID_MMDeviceEnumerator, EDataFlow, ERole
+        from pycaw.api.endpointvolume import IAudioEndpointVolume
+
+        comtypes.CoInitialize()
+        de = comtypes.CoCreateInstance(
+            CLSID_MMDeviceEnumerator, IMMDeviceEnumerator,
+            comtypes.CLSCTX_INPROC_SERVER)
+        device = de.GetDefaultAudioEndpoint(
+            EDataFlow.eCapture.value, ERole.eConsole.value)
+        IID = comtypes.GUID("{5CDF2C82-841E-4546-9722-0CF74078229A}")
+        epv = device.Activate(IID, comtypes.CLSCTX_INPROC_SERVER, None)
+        epv = epv.QueryInterface(IAudioEndpointVolume)
+        current = epv.GetMute()
+        epv.SetMute(not current, None)
+        return not current
+    except ImportError:
+        log.debug("[audio] pycaw not available for mic mute")
+        return None
+    except Exception as e:
+        log.warning("[audio] toggle_mic_mute: %s", e)
+        return None
 
 
 _MEDIA_CANDIDATES = [
@@ -403,3 +436,22 @@ def extract_file_icon(path, size, on_done):
         if result:
             on_done(result)
     threading.Thread(target=_run, daemon=True).start()
+
+
+def set_run_at_startup(enabled: bool):
+    """Add or remove Iris from HKCU Windows startup."""
+    key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
+    value_name = "Iris"
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0,
+                            winreg.KEY_SET_VALUE | winreg.KEY_QUERY_VALUE) as key:
+            if enabled:
+                exe = os.path.normpath(sys.executable)
+                winreg.SetValueEx(key, value_name, 0, winreg.REG_SZ, exe)
+            else:
+                try:
+                    winreg.DeleteValue(key, value_name)
+                except OSError:
+                    pass
+    except Exception as e:
+        log.warning(f"failed to {'enable' if enabled else 'disable'} startup: {e}")

@@ -31,6 +31,9 @@ extern int16_t barLaunchX, pipAnimX;
 extern uint8_t minuteBarSettled, minuteBarTarget, pipPhase;
 extern unsigned long lastPipFrameMs;
 
+extern bool _failsafeActive;
+extern uint16_t _litPixelCount;
+
 inline void beginFrame() { mx.control(MD_MAX72XX::UPDATE, MD_MAX72XX::OFF); }
 inline void endFrame()   { mx.control(MD_MAX72XX::UPDATE, MD_MAX72XX::ON); mx.update(); }
 inline void clearDisplay() { mx.clear(); }

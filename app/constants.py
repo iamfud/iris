@@ -1,6 +1,6 @@
 """Iris — Constants and design tokens."""
 
-APP_VERSION = "3.0"
+APP_VERSION = "3.1"
 APP_NAME = "IRIS"
 TRAY_ICON_SIZE = 64
 DEFAULT_BRIGHTNESS = 3
@@ -16,6 +16,7 @@ DEFAULT_CONFIG = {
     "feature_minute_bar": True,
     "feature_eyes": True,
     "feature_notifications": True,
+    "feature_greeting": True,
     "feature_large_clock": False,
     "feature_day_clock": True,
     "night_mode_enabled": False,
@@ -34,8 +35,10 @@ DEFAULT_CONFIG = {
     "mirror_enabled": True,
     "media_player_path": "",
     "alarms": [],
-    "ha_board": [],
+    "panel_board": [],
     "user_name": "",
+    "run_at_startup": False,
+    "plugins": {},
 }
 
 # Device-side defaults (pushed to ESP8266 on connect / factory reset)

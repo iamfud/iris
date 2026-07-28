@@ -1,0 +1,29 @@
+{
+  "name": "openrgb",
+  "version": "1.0",
+  "display_name": "OpenRGB",
+  "description": "Control RGB lighting via OpenRGB SDK server",
+  "icon": "palette",
+  "type": "service",
+  "message_not_running": "OpenRGB SDK server is not running. Start OpenRGB with the SDK server enabled.",
+  "min_api_version": "1.0",
+  "settings": [
+    {
+      "title": "RGB Control",
+      "controls": [
+        {
+          "type": "toggle",
+          "key": "enabled",
+          "label": "Enabled",
+          "description": "Connect to OpenRGB SDK server"
+        },
+        {
+          "type": "select",
+          "key": "profile",
+          "label": "Profile",
+          "options_key": "openrgb_profiles"
+        }
+      ]
+    }
+  ]
+}

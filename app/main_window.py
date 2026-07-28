@@ -123,6 +123,8 @@ class MainWindow:
         self._drag_x = self._drag_y = self._drag_ox = self._drag_oy = None
         self._saved_foreground_hwnd = None
         self._sending_hotkey = False
+        self._sticky_after_id = None
+        self._sticky_leave_active = False
 
         self._win = tk.Toplevel(root)
         self._win.title("Iris")
@@ -142,6 +144,7 @@ class MainWindow:
         self._win.bind("<Map>", self._on_map)
         self._win.bind("<Escape>", lambda e: self.hide())
         self._win.bind("<FocusOut>", self._on_focusout)
+        self._win.bind("<FocusIn>", self._on_focusin)
 
         self._build_ui()
         if self._cfg.get("panel_pin"):
@@ -1044,6 +1047,7 @@ class MainWindow:
 
         self._pc_display_on = self.app.cfg.get("pc_stats_manual", False)
         self._overlay_on = False
+        self._mic_muted = False
 
         # ── Pressed tile helpers ──
         _prs_fill = self._adjust_hex(BG_CARD, -20)
@@ -1100,17 +1104,35 @@ class MainWindow:
         self._btn_overlay.bind("<ButtonPress-1>", _press1)
         self._btn_overlay.bind("<ButtonRelease-1>", _release1)
 
-        # ── Tile 2: Settings (static) ──
-        t2 = self._make_tile_set("cog", icon_scale=0.52)
-        prs2 = self._make_tile_photo("cog", _prs_fill, icon_scale=0.52)
-        self._tile_refs.append(prs2)
-        self._btn_settings = tk.Label(_tile_frame, image=t2[0], bg=BG, cursor="hand2",
-                                      padx=0, pady=0, borderwidth=0)
-        self._btn_settings.place(x=2 * (_T + _GAP), y=0)
-        self._btn_settings.bind("<Enter>", lambda e: self._btn_settings.config(image=t2[1]))
-        self._btn_settings.bind("<Leave>", lambda e: self._btn_settings.config(image=t2[0]))
-        self._btn_settings.bind("<ButtonPress-1>", lambda e: self._btn_settings.config(image=prs2))
-        self._btn_settings.bind("<ButtonRelease-1>", lambda e: (self._btn_settings.config(image=t2[0]), self.app._open_settings()))
+        # ── Tile 2: Microphone mute toggle ──
+        _mic_unmuted = self._make_tile_photo("microphone", BG_CARD, icon_scale=0.52)
+        _mic_unmuted_hov = self._make_tile_photo("microphone", "#353535", icon_scale=0.52)
+        _mic_muted_ph = self._make_tile_photo("microphone-off", BG_CARD, NEON, (72, 178, 233), icon_scale=0.52)
+        _mic_muted_hov = self._make_tile_photo("microphone-off", "#353535", NEON, (72, 178, 233), icon_scale=0.52)
+        _mic_prs_unmuted = self._make_tile_photo("microphone", _prs_fill, icon_scale=0.52)
+        _mic_prs_muted = self._make_tile_photo("microphone-off", _prs_fill, NEON, (72, 178, 233), icon_scale=0.52)
+        self._tile_refs.extend([_mic_unmuted, _mic_unmuted_hov, _mic_muted_ph, _mic_muted_hov,
+                                _mic_prs_unmuted, _mic_prs_muted])
+        self._btn_mic = tk.Label(_tile_frame, image=_mic_unmuted, bg=BG, cursor="hand2",
+                                 padx=0, pady=0, borderwidth=0)
+        self._btn_mic.place(x=2 * (_T + _GAP), y=0)
+
+        def _enter_mic(e):
+            self._btn_mic.config(image=_mic_muted_hov if self._mic_muted else _mic_unmuted_hov)
+        def _leave_mic(e):
+            self._btn_mic.config(image=_mic_muted_ph if self._mic_muted else _mic_unmuted)
+        def _press_mic(e):
+            self._btn_mic.config(image=_mic_prs_muted if self._mic_muted else _mic_prs_unmuted)
+        def _release_mic(e):
+            from win_platform import toggle_mic_mute
+            result = toggle_mic_mute()
+            if result is not None:
+                self._mic_muted = result
+            self._btn_mic.config(image=_mic_muted_ph if self._mic_muted else _mic_unmuted)
+        self._btn_mic.bind("<Enter>", _enter_mic)
+        self._btn_mic.bind("<Leave>", _leave_mic)
+        self._btn_mic.bind("<ButtonPress-1>", _press_mic)
+        self._btn_mic.bind("<ButtonRelease-1>", _release_mic)
 
         # ── Tile 3: Exit (static) ──
         t3 = self._make_tile_set("tray-arrow-down", icon_scale=0.52)
@@ -1175,8 +1197,21 @@ class MainWindow:
         self._win.lift()
         self._win.focus_force()
         self._visible = True
+        # Snap mouse cursor to center of panel
+        px = self._win.winfo_x()
+        py = self._win.winfo_y()
+        pw = self._win.winfo_width()
+        ph = self._win.winfo_height()
+        ctypes.windll.user32.SetCursorPos(px + pw // 2, py + ph // 2)
 
     def hide(self):
+        if self._sticky_after_id:
+            try:
+                self._win.after_cancel(self._sticky_after_id)
+            except Exception:
+                pass
+            self._sticky_after_id = None
+            self._sticky_leave_active = False
         self._win.withdraw()
         self._visible = False
 
@@ -1194,8 +1229,64 @@ class MainWindow:
         self.hide()
 
     def _on_focusout(self, e):
-        if not self._sending_hotkey and not self._pin_pinned:
+        if self._sending_hotkey or self._pin_pinned:
+            return
+        if self._is_fullscreen_app():
+            self._start_sticky_leave()
+        else:
             self.hide()
+
+    def _is_fullscreen_app(self):
+        hwnd = self._saved_foreground_hwnd
+        if not hwnd or not user32.IsWindow(hwnd):
+            return False
+        try:
+            rect = ctypes.wintypes.RECT()
+            user32.GetWindowRect(hwnd, ctypes.byref(rect))
+            sx = user32.GetSystemMetrics(0)
+            sy = user32.GetSystemMetrics(1)
+            return (rect.left <= 0 and rect.top <= 0
+                    and rect.right >= sx and rect.bottom >= sy)
+        except Exception:
+            return False
+
+    def _start_sticky_leave(self):
+        if self._sticky_leave_active:
+            return
+        self._sticky_leave_active = True
+
+        def _check():
+            if not self._visible:
+                self._sticky_leave_active = False
+                return
+            try:
+                pt = ctypes.wintypes.POINT()
+                user32.GetCursorPos(ctypes.byref(pt))
+                px = self._win.winfo_x()
+                py = self._win.winfo_y()
+                pw = self._win.winfo_width()
+                ph = self._win.winfo_height()
+                inside = (px <= pt.x <= px + pw and py <= pt.y <= py + ph)
+                if inside:
+                    self._sticky_after_id = self._win.after(100, _check)
+                else:
+                    self._sticky_leave_active = False
+                    self.hide()
+            except Exception:
+                self._sticky_leave_active = False
+                self.hide()
+
+        self._sticky_after_id = self._win.after(2000, _check)
+
+    def _on_focusin(self, e=None):
+        if self._sticky_leave_active:
+            self._sticky_leave_active = False
+            if self._sticky_after_id:
+                try:
+                    self._win.after_cancel(self._sticky_after_id)
+                except Exception:
+                    pass
+                self._sticky_after_id = None
 
     def set_alarm_indicator(self, active):
         self.set_status_icon("alarm", active)

@@ -1,37 +1,37 @@
 """Iris — Tray icon and static menu."""
 
 import logging
+from pathlib import Path
 import pystray
-from PIL import Image, ImageDraw
+from PIL import Image
 from constants import TRAY_ICON_SIZE
 
 log = logging.getLogger("iris.tray")
 
 _ICON_CACHE = {}
 
+_MEDIA_DIR = Path(__file__).resolve().parent.parent / "media"
+
 
 def make_icon_image(size=TRAY_ICON_SIZE, online=False):
     key = (size, online)
     if key in _ICON_CACHE:
         return _ICON_CACHE[key]
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    d.rounded_rectangle(
-        [2, 2, size - 2, size - 2], radius=8, fill=(72, 178, 233, 255)
-    )
-    d.rectangle(
-        [size // 4, size // 4, size // 2, size * 3 // 4], fill=(0, 0, 0, 0)
-    )
-    d.arc(
-        [size // 4, size // 4, size * 3 // 4, size * 3 // 4], -90, 90,
-        fill=(72, 178, 233, 255), width=max(2, size // 12),
-    )
-    if online:
-        r = max(3, size // 9)
-        d.ellipse(
-            [size - r * 2 - 1, size - r * 2 - 1, size - 1, size - 1],
-            fill=(0, 255, 100, 255),
-        )
+
+    src = _MEDIA_DIR / "Iris_full.png"
+    if not src.exists():
+        src = _MEDIA_DIR / "Iris_128.png"
+    if not src.exists():
+        src = _MEDIA_DIR / "Iris_256.png"
+
+    if src.exists():
+        img = Image.open(src).convert("RGBA")
+        if img.size != (size, size):
+            img = img.resize((size, size), Image.LANCZOS)
+    else:
+        log.warning("No tray icon file found in %s", _MEDIA_DIR)
+        img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+
     _ICON_CACHE[key] = img
     return img
 

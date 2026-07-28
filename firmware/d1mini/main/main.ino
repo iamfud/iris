@@ -129,12 +129,21 @@ unsigned long lastModeSwitch        = 0;
 unsigned long lastNotifyScrollTick  = 0;
 unsigned long bootMs                = 0;
 
+// ── Failsafe ──────────────────────────────────────────────────
+bool          _failsafeActive   = false;
+uint16_t      _litPixelCount    = 0;
+unsigned long _lastSerialCmdMs  = 0;
+unsigned long _lastReinitMs     = 0;
+uint8_t       _recoveryCount    = 0;
+unsigned long _recoveryWindowMs = 0;
+
 // ============================================================
 void saveLiveSettings() {}
 
 void setBrightnessLevelFromIndex() {
   if (brightnessIndex >= BRIGHTNESS_LEVELS) brightnessIndex = BRIGHTNESS_LEVELS - 1;
-  mx.control(MD_MAX72XX::INTENSITY, BRIGHTNESS_VALS[brightnessIndex]);
+  uint8_t val = (nightModeActive) ? 1 : BRIGHTNESS_VALS[brightnessIndex];
+  mx.control(MD_MAX72XX::INTENSITY, val);
 }
 
 void applyDisplayOn() {
@@ -154,15 +163,71 @@ void updateEyeEngine() {
   updateEyeMotion(); updateBlinkAnimation(); applyExpressionLids();
 }
 
+// ── Failsafe helpers ──────────────────────────────────────────
+void reinitMAX7219() {
+  mx.control(MD_MAX72XX::TEST, MD_MAX72XX::OFF);
+  mx.control(MD_MAX72XX::DECODE, 0);
+  mx.control(MD_MAX72XX::SCANLIMIT, 7);
+  mx.control(MD_MAX72XX::INTENSITY, BRIGHTNESS_VALS[brightnessIndex]);
+}
+
+void trackReinit() {
+  unsigned long now = millis();
+  if (now - _recoveryWindowMs > 60000) {
+    _recoveryCount = 0;
+    _recoveryWindowMs = now;
+  }
+  _recoveryCount++;
+  if (_recoveryCount >= 3) {
+    Serial.println("SAFETY:rebooting");
+    Serial.flush();
+    delay(100);
+    ESP.restart();
+  }
+}
+
+void triggerFailsafe() {
+  if (_failsafeActive) return;
+  _failsafeActive = true;
+  for (int attempt = 0; attempt < 5; attempt++) {
+    mx.control(MD_MAX72XX::INTENSITY, 0);
+    mx.control(MD_MAX72XX::SHUTDOWN, MD_MAX72XX::ON);
+    beginFrame(); clearDisplay(); endFrame();
+    mx.control(MD_MAX72XX::SHUTDOWN, MD_MAX72XX::ON);
+    yield();
+  }
+  Serial.println("SAFETY:led_overload");
+}
+
+void checkFailsafeRestore() {
+  if (!_failsafeActive) return;
+  trackReinit();
+  _failsafeActive = false;
+  reinitMAX7219();
+  renderCurrentScreen();
+}
+
 // ============================================================
 void setup() {
   Serial.begin(115200); Serial.setTimeout(10);
   mx.begin();
-  setBrightnessLevelFromIndex();
+
+  // Boot self-test: prove SPI works before entering normal operation
+  Serial.println("BOOT:self_test");
   beginFrame(); clearDisplay(); endFrame();
+  delay(50);
+  mx.control(MD_MAX72XX::TEST, MD_MAX72XX::ON);
+  delay(250);
+  mx.control(MD_MAX72XX::TEST, MD_MAX72XX::OFF);
+  beginFrame(); clearDisplay(); endFrame();
+  reinitMAX7219();
+  Serial.println("BOOT:self_test_pass");
+
+  ESP.wdtEnable(5000);
+  ESP.wdtFeed();
+
   initEyeEngine();
   notifyScrollMessage.reserve(200);
-  applyDisplayOn();
   renderCurrentScreen();
   lastSecondTick = lastBlinkTick = lastModeSwitch = millis();
   lastNotifyScrollTick = millis(); lastGreetingTickMs = millis();
@@ -175,6 +240,27 @@ void loop() {
   handleSerial();
   unsigned long nowMs = millis();
   bool dirty = false;
+
+  if (!_failsafeActive && displayOn && _lastSerialCmdMs > 0
+      && (nowMs - _lastSerialCmdMs) > SERIAL_TIMEOUT_MS) {
+    displayOn = false;
+    applyDisplayOn();
+    Serial.println("TIMEOUT:display_off");
+  }
+  if (!_failsafeActive && displayOn
+      && (nowMs - _lastReinitMs) >= REINIT_INTERVAL_MS) {
+    _lastReinitMs = nowMs;
+    reinitMAX7219();
+  }
+  if (_failsafeActive) {
+    if (nowMs - lastSecondTick >= 1000) {
+      lastSecondTick += 1000;
+      tickClock();
+      updateNightMode();
+      checkAlarmState();
+    }
+    return;
+  }
 
   if (greetingActive) {
     if (nowMs-lastGreetingTickMs>=TEXT_SCROLL_STEP_MS) {
@@ -199,7 +285,7 @@ void loop() {
   }
 
   if (nowMs-lastSecondTick>=1000) {
-    lastSecondTick+=1000; tickClock(); updateNightMode(); checkAlarmState();
+    lastSecondTick+=1000; tickClock(); updateNightMode(); setBrightnessLevelFromIndex(); checkAlarmState();
     eyeOverlayMode=(!alarmActive&&featureEyesEnabled&&!nightModeActive)?eyeState.active:false;
     dirty=true;
   }

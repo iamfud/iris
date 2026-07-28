@@ -14,6 +14,7 @@ import tkinter as tk
 import pystray
 
 import ws_bridge
+import alarm_sound
 from config import load_config, save_config
 from constants import APP_NAME, DEFAULT_BRIGHTNESS, DEVICE_DEFAULTS, HOTKEY_SLEEP_MS, PC_DISP_STATS, TRAY_ICON_SIZE
 from alarm_popup import AlarmPopup
@@ -23,6 +24,9 @@ from providers.ha import HAProvider
 from providers.media import MediaProvider
 from providers.notification_mirror import NotificationMirrorProvider
 from providers.openrgb import OpenRGBProvider
+import plugin_manager
+from plugin_manager import start_all as start_plugins, stop_all as stop_plugins, check_plugins
+import panel_window
 from settings_dialog import SettingsDialog
 from tray import make_icon_image, build_tray_menu
 from main_window import MainWindow
@@ -57,6 +61,7 @@ class IrisApp:
         self._overlay = None
         self._stopwatch = None
         self._alarm_active = False
+        self._alarm_silenced = False
 
     def set_config(self, key, value):
         self.cfg[key] = value
@@ -77,6 +82,7 @@ class IrisApp:
                 p.start()
             except Exception as e:
                 log.warning(f"[provider] {p.__class__.__name__} failed: {e}")
+        start_plugins(self.cfg, serial_sender)
 
     def _poll_serial(self):
         while self._running:
@@ -87,6 +93,14 @@ class IrisApp:
                 self._port = port
                 self._update_icon()
             _time.sleep(3)
+
+    def _plugin_check_loop(self):
+        while self._running:
+            _time.sleep(60)
+            try:
+                check_plugins()
+            except Exception as e:
+                log.warning("[plugin-check] failed: %s", e)
 
     def _update_icon(self):
         if self.icon:
@@ -150,10 +164,15 @@ class IrisApp:
         self._main_win.set_alarm_indicator(active)
 
     def _open_settings(self, tab=0):
-        self._root.after(0, lambda: self._run_settings(tab=tab))
+        self._root.after(0, lambda: self._open_settings_panel())
+
+    def _open_settings_panel(self):
+        panel_window.open_panel()
 
     def _run_settings(self, tab=0):
-        dlg = SettingsDialog(self._root, serial_sender, self.cfg, initial_tab=tab)
+        dlg = SettingsDialog(self._root, serial_sender, self.cfg, initial_tab=tab,
+                             on_hotkey_change=self._reregister_hotkey,
+                             on_factory_reset=lambda: self._root.after(100, self._open_settings))
         self._root.wait_window(dlg._win)
         self.sync_alarm_indicator()
         if self._main_win:
@@ -166,6 +185,7 @@ class IrisApp:
                 p.stop()
             except Exception:
                 log.exception("Provider %s failed during shutdown", p.__class__.__name__)
+        stop_plugins()
         if self.icon:
             self.icon.stop()
             self.icon = None
@@ -180,23 +200,49 @@ class IrisApp:
         self._main_win.toggle()
 
     def _setup_hotkey(self):
-        import ctypes
+        self._hotkey_stop = threading.Event()
+        self._hotkey_thread = None
+        self._reregister_hotkey()
+
+    def _reregister_hotkey(self):
+        if self._hotkey_stop.is_set():
+            self._hotkey_stop.clear()
+        else:
+            self._hotkey_stop.set()
+        if self._hotkey_thread and self._hotkey_thread.is_alive():
+            self._hotkey_thread.join(timeout=0.5)
+
+        self._hotkey_stop.clear()
+        user32 = ctypes.windll.user32
         MOD_ALT = 0x0001
         MOD_CONTROL = 0x0002
+        MOD_SHIFT = 0x0004
+        MOD_WIN = 0x0008
         WM_HOTKEY = 0x0312
         HOTKEY_ID = 1
-        user32 = ctypes.windll.user32
+        MODS_MAP = {
+            16: MOD_SHIFT,
+            17: MOD_CONTROL,
+            18: MOD_ALT,
+            91: MOD_WIN,
+            92: MOD_WIN,
+        }
+
+        modifiers = self.cfg.get("hotkey_modifiers", [17, 18])
+        key_vk = self.cfg.get("hotkey_key", 73)
+
+        mod_flags = 0
+        for vk in modifiers:
+            mod_flags |= MODS_MAP.get(vk, 0)
 
         def listener():
             msg = ctypes.wintypes.MSG()
             user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 0)
-            if not user32.RegisterHotKey(
-                None, HOTKEY_ID, MOD_CONTROL | MOD_ALT, ord("I")
-            ):
-                log.warning("Failed to register global hotkey")
+            if not user32.RegisterHotKey(None, HOTKEY_ID, mod_flags, key_vk):
+                log.warning("Failed to register global hotkey (mods=%s key=%s)", modifiers, key_vk)
                 return
             try:
-                while True:
+                while not self._hotkey_stop.is_set():
                     if user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1):
                         if msg.message == WM_HOTKEY and msg.wParam == HOTKEY_ID:
                             fg = user32.GetForegroundWindow()
@@ -209,7 +255,9 @@ class IrisApp:
             finally:
                 user32.UnregisterHotKey(None, HOTKEY_ID)
 
-        threading.Thread(target=listener, daemon=True).start()
+        self._hotkey_thread = threading.Thread(target=listener, daemon=True)
+        self._hotkey_thread.start()
+        log.info("Global hotkey registered")
 
     def _queue_defaults(self):
         for key, val in DEVICE_DEFAULTS.items():
@@ -244,32 +292,63 @@ class IrisApp:
     def _alarm_dismiss(self):
         serial_sender.set_live("alarm_dismiss", "1")
         self._alarm_active = False
+        self._alarm_silenced = True
+        alarm_sound.stop()
         self._root.after(0, self._alarm_popup.hide)
         log.info("[alarm] dismissed from panel")
 
     def _alarm_snooze(self):
         serial_sender.set_live("alarm_snooze", "1")
         self._alarm_active = False
+        self._alarm_silenced = True
+        alarm_sound.stop()
         self._root.after(0, self._alarm_popup.hide)
         log.info("[alarm] snoozed from panel")
+
+    def _get_active_alarm(self):
+        """Find which alarm is currently matching (by time)."""
+        import datetime as _dt
+        now = _dt.datetime.now()
+        for a in self.cfg.get("alarms", []):
+            if not a.get("enabled", False):
+                continue
+            mask = a.get("days", 0)
+            if not mask:
+                continue
+            if a["hour"] == now.hour and a["minute"] == now.minute:
+                return a
+        return None
 
     def _on_serial_line(self, line):
         if line.startswith("ALARM:"):
             state = line[6:].strip().lower()
             active = state == "active"
+            if active and self._alarm_silenced:
+                return
+            if not active:
+                self._alarm_silenced = False
             if active != self._alarm_active:
                 self._alarm_active = active
                 if active:
-                    winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
-                    log.info("[alarm] ALARM:active — PC beep")
+                    a = self._get_active_alarm()
+                    sound = (a or {}).get("sound", "remind")
+                    alarm_sound.play(sound)
+                    log.info("[alarm] ALARM:active — playing %s", sound)
                     msg = self._get_next_alarm_message()
                     self._root.after(0, lambda m=msg: self._alarm_popup.show(m))
                 else:
+                    alarm_sound.stop()
                     log.info("[alarm] alarm cleared")
                     self._root.after(0, self._alarm_popup.hide)
         elif line.startswith("OVERHEAT:active"):
-            winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
-            log.info("[overheat] OVERHEAT:active — PC beep")
+            alarm_sound.play("annoy")
+            log.info("[overheat] OVERHEAT:active — playing annoy")
+        elif line.startswith("SAFETY:led_overload"):
+            log.warning("[safety] SAFETY:led_overload — display shut down by firmware")
+        elif line.startswith("TIMEOUT:display_off"):
+            log.info("[safety] display timed out — no serial heartbeat")
+        elif line.startswith("SAFETY:rebooting"):
+            log.warning("[safety] SAFETY:rebooting — repeated corruption, ESP restarting")
 
     def run(self):
         serial_sender.set_port(self.cfg.get("serial_port", "auto"))
@@ -280,6 +359,7 @@ class IrisApp:
         self._setup_providers()
         self._queue_defaults()
         threading.Thread(target=ws_bridge.start, daemon=True, name="ws-bridge").start()
+        ws_bridge.register_app(self)
 
         self._root = tk.Tk()
         self._root.withdraw()
@@ -300,6 +380,7 @@ class IrisApp:
         self.icon.run_detached()
 
         threading.Thread(target=self._poll_serial, daemon=True, name="serial-poll").start()
+        threading.Thread(target=self._plugin_check_loop, daemon=True, name="plugin-check").start()
         self._root.mainloop()
 
 

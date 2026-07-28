@@ -30,8 +30,10 @@ extern String sanitizeScrollText(String msg);
 extern unsigned long bootMs;
 
 extern void saveLiveSettings();
+extern void checkFailsafeRestore();
 extern char vcJoinName[64];
 extern unsigned long vcJoinUntilMs;
+extern unsigned long _lastSerialCmdMs;
 extern uint8_t vuBars[12];
 extern unsigned long lastVuMs;
 extern uint8_t currentVolume;
@@ -54,6 +56,12 @@ String jsonEscape(const String& src) {
 void processSerialLine(const char* raw) {
   String line(raw); line.trim();
   if (line.length()==0) return;
+  _lastSerialCmdMs = millis();
+  if (_failsafeActive) checkFailsafeRestore();
+  if (!displayOn) {
+    displayOn = true;
+    applyDisplayOn();
+  }
   if ((millis()-bootMs)<BOOT_GRACE_MS) {
     if (!line.startsWith("GET:")&&line!="STATUS?") return;
   }
@@ -178,7 +186,7 @@ void processSerialLine(const char* raw) {
     else if (key=="alarm_message") alarmMessageText=val;
     else if (key=="alarm_snooze_mins") { int m=val.toInt(); if(m>0) alarmSnoozeMins=m; }
     else if (key=="user_name") userName=val;
-    else if (key=="night_mode_enabled") { nightModeEnabled=bval; updateNightMode(); }
+    else if (key=="night_mode_enabled") { nightModeEnabled=bval; updateNightMode(); setBrightnessLevelFromIndex(); }
     else if (key=="night_lat"||key=="night_lon") {}
     else if (key=="mqtt_host"||key=="mqtt_port"||key=="mqtt_user"||key=="mqtt_pass"||key=="mqtt_client_id") { Serial.println("SET:OK:"+key); return; }
     else { Serial.println("SET:ERR:unknown_key:"+key); return; }

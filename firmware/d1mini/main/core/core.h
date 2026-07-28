@@ -28,6 +28,9 @@ const unsigned long ACCESSORY_OVERLAY_MS = 1500;
 const unsigned long TEMP_FLASH_OFF_MS   = 1000;   // 1s off
 const unsigned long TEMP_FLASH_CYCLE_MS = 11000;  // 1s off + 10s on
 
+const unsigned long SERIAL_TIMEOUT_MS = 300000;   // 5 min no serial → display off
+const unsigned long REINIT_INTERVAL_MS = 10000;   // re-init MAX7219 regs every 10s
+
 #define EYE_FRAME_MS         50
 #define EYE_IDLE_MIN_MS    60000
 #define EYE_IDLE_MAX_MS   300000
