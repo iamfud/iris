@@ -18,8 +18,8 @@ _html_dir = os.path.join(
 
 _DEFAULT_WIDTH = 950
 _DEFAULT_HEIGHT = 680
-_MIN_WIDTH = 600
-_MIN_HEIGHT = 400
+_MIN_WIDTH = 800
+_MIN_HEIGHT = 560
 
 _proc = None
 
@@ -185,6 +185,7 @@ def _run(width, height, x=None, y=None):
         "y": y,
         "width": width,
         "height": height,
+        "ready": False,
     }
 
     api = _JSApi(state)
@@ -215,6 +216,8 @@ def _run(width, height, x=None, y=None):
         api._window = w
 
         def _on_moved(mx, my):
+            if not state["ready"]:
+                return
             try:
                 state["x"] = int(mx)
                 state["y"] = int(my)
@@ -222,6 +225,9 @@ def _run(width, height, x=None, y=None):
                 pass
 
         def _on_resized(rw, rh):
+            # Ignore startup resize noise (was shrinking saved size each open).
+            if not state["ready"]:
+                return
             try:
                 rw, rh = int(rw), int(rh)
                 if _valid_size(rw, rh):
@@ -231,6 +237,7 @@ def _run(width, height, x=None, y=None):
                 pass
 
         def _on_shown():
+            state["ready"] = True
             # Capture centred position after first show if none was saved.
             if state["x"] is None or state["y"] is None:
                 try:
