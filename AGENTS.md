@@ -91,8 +91,68 @@ iris/
 └── app/           # main.py
 ```
 
+# Session Memory — 2026-07-28
+
+## WiFi radio disabled (all-pixels-on investigation)
+- ESP8266 RF modem is ON by default at boot even with zero WiFi code in the sketch — background radio activity can glitch HSPI transactions to the MAX7219 (suspected cause of intermittent all-pixels-on fault)
+- Fix in `firmware/d1mini/main/main.ino` setup(): `WiFi.persistent(false)` → `WiFi.mode(WIFI_OFF)` → `WiFi.forceSleepBegin()` + `delay(1)`, before Serial/mx init; requires `#include <ESP8266WiFi.h>`
+- The 250ms all-pixels flash at startup is the intentional boot self-test (`TEST=ON` in setup), NOT the fault
+- No arduino-cli/PlatformIO on this machine — firmware compiles via Arduino IDE only
+
 ## Settings UI Architecture
 - **Tkinter settings dialog** (`settings_dialog.py`) is **OBSOLETE** — do not modify or extend
 - **Active settings UI**: HTML/pywebview panel served via `ws_bridge.py` HTTP bridge
 - **Files**: `HTML/index.html` + `HTML/script.js` + `HTML/style.css` → served by `app/panel_window.py` via pywebview
 - **Plugin settings**: Currently rendered ad-hoc in `script.js` (`renderPluginSettings`) — being replaced with declarative settings definitions
+
+# Session Memory — 2026-07-31
+
+## Vision System Plan (NOT IMPLEMENTED — design only)
+
+Vision = generic screen analysis system. NOT game-specific, NOT a "health bar detector". New root Settings page "Vision" where users create one or more Vision Sensors. Each sensor monitors a small screen region and raises an Iris event when a configurable condition is met. Phase 1: colour-based detection only (Colour Percentage / Pixel Match / Average Brightness). No OCR, template matching, or ML.
+
+### Design decisions (confirmed with user)
+- **Event consumers (Phase 1)**: every sensor always produces a measured value/state via `poll()`/`snapshot()`; when its "Hardware Display" output toggle is on, a triggered event also sends `serial_sender.send_notification(event_name, event_message)`. No overlay/sound consumers yet.
+- **Anchoring**: regions stored as percentages of the display/monitor the region was captured on. Runtime bbox = monitor rect × region%. No window tracking.
+- **Pixel math**: pure Pillow `ImageGrab` + sampled pixel grid (≤ ~4k samples/measurement). No numpy.
+
+### Sensor schema (`cfg["plugins"]["vision"]["sensors"]`)
+```json
+{
+  "id": "vs_1", "name": "Health Low", "enabled": true,
+  "exe": "EliteDangerous64.exe",
+  "mode": "color_percentage",          // | "pixel_match" | "average_brightness"
+  "anchor": {"x":0, "y":0, "w":1920, "h":1080},  // display rect at calibration
+  "region": {"x_pct":45, "y_pct":70, "w_pct":20, "h_pct":3},
+  "color": "#ff0000",
+  "pixel": {"x_pct":50, "y_pct":50},              // used by pixel_match
+  "tolerance": 40,                     // RGB Euclidean distance, 0-255
+  "threshold": 30.0, "direction": "below",        // "above" | "below"
+  "poll_rate": 1.0, "cooldown_s": 10.0,
+  "event_name": "Health Low", "event_message": "Hull below 30%",
+  "output_display": true, "created": 0
+}
+```
+Modes measure: colour % (0–100), pixel match (0/100), avg brightness (0–255). Event fires on the **rising edge** of threshold crossing (false→true) with configurable cooldown.
+
+### New files
+- `app/vision.py` — reusable screen engine (no game logic): `virtual_screen_bounds()`/`monitor_rects()`/`monitor_containing()` via `EnumDisplayMonitors`; `RegionSelector` (fullscreen dim Tk overlay, drag rectangle, Esc cancels, auto-confirm on release); `select_region(root, timeout)` marshals to Tk main thread via `root.after()` + `threading.Event` (HTTP thread blocks, mainloop keeps running); `resolve_exe_for_point(x,y)` via `WindowFromPoint`→PID→`psutil`; `capture(bbox)`/`region_to_bbox`/`screenshot_b64`; `measure(draft)` → `{value, active, mode, sampled}`.
+- `app/plugins/vision/plugin.json` — `type: service`, capabilities `status`/`outputs`/`live_data`, output id `display` ("Hardware Display"). Auto-discovered by `plugin_manager` — no `main.py` change needed.
+- `app/plugins/vision/connector.py` — `VisionSensorManager`: 0.5s tick re-reads sensors from cfg (hot-apply) → per enabled sensor, `is_exe_running(exe)` gates a per-sensor capture thread (near-zero CPU when apps closed); capture loop at `poll_rate` Hz → `measure()` → edge detection + cooldown → optional `send_notification`; caches runtime state for `poll()`/`snapshot()`.
+- `app/plugins/vision/plugin.py` — thin `Plugin` wrapper (start/stop/poll/snapshot) delegating to the manager.
+
+### Modified files
+- `app/ws_bridge.py` — switch `HTTPServer` → `ThreadingHTTPServer` (blocking capture must not stall the panel's 1s poll). Endpoints: `GET /api/vision/sensors` (config + live state), `POST /api/vision/sensors` (create), `POST /api/vision/sensors/<id>` (update), `POST /api/vision/sensors/<id>/delete`, `POST /api/vision/capture` → `{exe, anchor, region, screenshot_b64}`, `POST /api/vision/test` (draft body → fresh `{value, active}`, stateless, works even if exe not running).
+- `app/panel_window.py` — add `hide_panel()`/`show_panel()` to `_JSApi` (panel hides during region capture).
+- `HTML/index.html` — sidebar nav item `data-page="vision"`, icon `visibility`, label "Vision".
+- `HTML/script.js` — dispatch branch + `renderVision()` (sensor cards: name/exe/status dot/live value/enable/Test/Edit/Delete/Add) + `renderVisionWizard()` (5 steps: 1 Capture Region, 2 Eyedropper on preview canvas, 3 Process auto-detect, 4 Configure, 5 Test live polling `/api/vision/test` ~0.5s).
+- `HTML/style.css` — sensor cards, wizard stepper, preview canvas, colour swatch, big live readout (reuse `--neon-*` tokens).
+
+### Runtime behaviour
+- Vision is a service plugin → runs whenever enabled; each sensor's capture thread runs only while its exe is alive.
+- Config edits hot-apply on the next manager tick (no restart).
+
+### Known limitations (accepted for Phase 1)
+- Exclusive-fullscreen games may minimize when the dim overlay appears during calibration (same constraint as hotkey) — calibrate in borderless-windowed. Runtime capture unaffected.
+- DRM/protected content captures black.
+- Display-relative anchoring: moving the app to a different monitor moves the captured region off target.
