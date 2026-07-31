@@ -9,6 +9,7 @@ import ctypes
 import logging
 import multiprocessing
 import os
+import threading
 
 log = logging.getLogger("iris.panel")
 
@@ -125,22 +126,28 @@ def _run(width, height, x=None, y=None):
         if x is not None and y is not None:
             x, y = _clamp_to_screen(x, y, width, height)
 
-        w = webview.create_window(
-            "Iris",
-            file_url,
-            width=width,
-            height=height,
-            x=x,
-            y=y,
-            frameless=True,
-            easy_drag=False,
-            background_color="#0A0A0A",
-            js_api=api,
-            min_size=(600, 400),
-        )
+        create_kwargs = {
+            "width": width,
+            "height": height,
+            "frameless": True,
+            "easy_drag": False,
+            "background_color": "#0A0A0A",
+            "js_api": api,
+            "min_size": (600, 400),
+        }
+        # Only pass x/y when a position was saved; omitting them centres the window.
+        if x is not None and y is not None:
+            create_kwargs["x"] = x
+            create_kwargs["y"] = y
+
+        w = webview.create_window("Iris", file_url, **create_kwargs)
         api._window = w
 
+        _save_timer = None
+        _periodic_timer = None
+
         def _save_position():
+            nonlocal _save_timer
             try:
                 x_save = w.x
                 y_save = w.y
@@ -159,11 +166,40 @@ def _run(width, height, x=None, y=None):
                 save_config(cfg)
             except Exception as e:
                 print("[panel] failed to save window position:", e)
+            finally:
+                _save_timer = None
 
-        w.events.closed += _save_position
+        def _schedule_save():
+            nonlocal _save_timer
+            if _save_timer is not None:
+                _save_timer.cancel()
+            _save_timer = threading.Timer(0.5, _save_position)
+            _save_timer.start()
+
+        def _start_periodic_save():
+            nonlocal _periodic_timer
+            _save_position()
+            _periodic_timer = threading.Timer(2.0, _start_periodic_save)
+            _periodic_timer.start()
+
+        def _stop_timers():
+            nonlocal _save_timer, _periodic_timer
+            if _save_timer is not None:
+                _save_timer.cancel()
+                _save_timer = None
+            if _periodic_timer is not None:
+                _periodic_timer.cancel()
+                _periodic_timer = None
+
+        w.events.moved += _schedule_save
+        w.events.resized += _schedule_save
+        w.events.closing += _save_position
+        w.events.closed += _stop_timers
+        _start_periodic_save()
         webview.start(debug=False)
 
-        # Fallback in case the closed event didn't fire.
+        # Fallback after the event loop ends.
+        _stop_timers()
         _save_position()
     except Exception:
         print("[panel] failed to open")
