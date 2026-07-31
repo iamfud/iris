@@ -144,7 +144,6 @@ def _run(width, height, x=None, y=None):
         api._window = w
 
         _save_timer = None
-        _periodic_timer = None
 
         def _save_position():
             nonlocal _save_timer
@@ -174,32 +173,17 @@ def _run(width, height, x=None, y=None):
             if _save_timer is not None:
                 _save_timer.cancel()
             _save_timer = threading.Timer(0.5, _save_position)
+            _save_timer.daemon = True
             _save_timer.start()
-
-        def _start_periodic_save():
-            nonlocal _periodic_timer
-            _save_position()
-            _periodic_timer = threading.Timer(2.0, _start_periodic_save)
-            _periodic_timer.start()
-
-        def _stop_timers():
-            nonlocal _save_timer, _periodic_timer
-            if _save_timer is not None:
-                _save_timer.cancel()
-                _save_timer = None
-            if _periodic_timer is not None:
-                _periodic_timer.cancel()
-                _periodic_timer = None
 
         w.events.moved += _schedule_save
         w.events.resized += _schedule_save
         w.events.closing += _save_position
-        w.events.closed += _stop_timers
-        _start_periodic_save()
         webview.start(debug=False)
 
         # Fallback after the event loop ends.
-        _stop_timers()
+        if _save_timer is not None:
+            _save_timer.cancel()
         _save_position()
     except Exception:
         print("[panel] failed to open")
