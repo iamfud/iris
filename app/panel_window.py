@@ -9,7 +9,6 @@ import ctypes
 import logging
 import multiprocessing
 import os
-import threading
 
 log = logging.getLogger("iris.panel")
 
@@ -17,20 +16,36 @@ _html_dir = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "HTML"
 )
 
+_DEFAULT_WIDTH = 950
+_DEFAULT_HEIGHT = 680
+_MIN_WIDTH = 600
+_MIN_HEIGHT = 400
+
 _proc = None
 
 
 class _JSApi:
     """Exposed to JavaScript as window.pywebview.api."""
 
-    def __init__(self):
+    def __init__(self, state):
         self._window = None
+        self._state = state
 
     def move_window(self, dx, dy):
-        if self._window:
-            self._x = self._window.x + dx
-            self._y = self._window.y + dy
-            self._window.move(self._x, self._y)
+        if not self._window:
+            return
+        try:
+            x = self._state["x"]
+            y = self._state["y"]
+            if x is None or y is None:
+                return
+            nx = int(x + dx)
+            ny = int(y + dy)
+            self._window.move(nx, ny)
+            self._state["x"] = nx
+            self._state["y"] = ny
+        except Exception:
+            pass
 
     def close_panel(self):
         if self._window:
@@ -50,12 +65,12 @@ class _JSApi:
             return ""
 
 
-def open_panel(width=950, height=680):
+def open_panel(width=_DEFAULT_WIDTH, height=_DEFAULT_HEIGHT):
     """Open the settings panel. Reuses existing process if still alive."""
     global _proc
 
     if _proc is not None and _proc.is_alive():
-        log.info("[panel] already open, bringing to front")
+        log.info("[panel] already open")
         return
 
     try:
@@ -63,11 +78,20 @@ def open_panel(width=950, height=680):
         cfg = load_config()
         x = cfg.get("panel_window_x")
         y = cfg.get("panel_window_y")
-        w = cfg.get("panel_window_width", width)
-        h = cfg.get("panel_window_height", height)
+        w = int(cfg.get("panel_window_width") or width)
+        h = int(cfg.get("panel_window_height") or height)
     except Exception:
         x = y = None
         w, h = width, height
+
+    # Discard invalid/corrupt saved geometry.
+    if not _valid_size(w, h):
+        w, h = width, height
+    if x is not None and y is not None:
+        try:
+            x, y = int(x), int(y)
+        except (TypeError, ValueError):
+            x = y = None
 
     _proc = multiprocessing.Process(
         target=_run, args=(w, h, x, y), daemon=True, name="panel"
@@ -83,6 +107,20 @@ def close_panel():
         _proc.terminate()
         _proc.join(timeout=2)
     _proc = None
+
+
+def _valid_size(width, height):
+    try:
+        return (
+            width is not None
+            and height is not None
+            and int(width) >= _MIN_WIDTH
+            and int(height) >= _MIN_HEIGHT
+            and int(width) <= 4000
+            and int(height) <= 3000
+        )
+    except (TypeError, ValueError):
+        return False
 
 
 def _virtual_screen_bounds():
@@ -103,12 +141,34 @@ def _clamp_to_screen(x, y, width, height):
     """Keep the window at least 100x100 pixels on screen."""
     try:
         sx, sy, sw, sh = _virtual_screen_bounds()
-        # Ensure a reasonable portion of the window stays visible.
         x = max(sx - width + 100, min(x, sx + sw - 100))
         y = max(sy, min(y, sy + sh - 100))
-        return x, y
+        return int(x), int(y)
     except Exception:
-        return x, y
+        return int(x), int(y)
+
+
+def _save_geometry(state):
+    """Persist last known good geometry. Never reads w.x/w.y (those block 15s)."""
+    try:
+        x = state.get("x")
+        y = state.get("y")
+        width = state.get("width")
+        height = state.get("height")
+        if x is None or y is None:
+            return
+        if not _valid_size(width, height):
+            return
+        x, y = _clamp_to_screen(int(x), int(y), int(width), int(height))
+        from config import load_config, save_config
+        cfg = load_config()
+        cfg["panel_window_x"] = x
+        cfg["panel_window_y"] = y
+        cfg["panel_window_width"] = int(width)
+        cfg["panel_window_height"] = int(height)
+        save_config(cfg)
+    except Exception as e:
+        print("[panel] failed to save window position:", e)
 
 
 def _run(width, height, x=None, y=None):
@@ -118,13 +178,24 @@ def _run(width, height, x=None, y=None):
         print("[panel] pywebview not installed — pip install pywebview")
         return
 
-    api = _JSApi()
+    # Track geometry from events — never use w.x/w.y/w.width/w.height
+    # (those call shown.wait(15) and unpack None after the window is gone).
+    state = {
+        "x": x,
+        "y": y,
+        "width": width,
+        "height": height,
+    }
+
+    api = _JSApi(state)
     html_path = os.path.join(_html_dir, "index.html")
     file_url = "file:///" + html_path.replace("\\", "/")
     print(f"[panel] loading {file_url} ({width}x{height})")
     try:
         if x is not None and y is not None:
             x, y = _clamp_to_screen(x, y, width, height)
+            state["x"] = x
+            state["y"] = y
 
         create_kwargs = {
             "width": width,
@@ -133,9 +204,9 @@ def _run(width, height, x=None, y=None):
             "easy_drag": False,
             "background_color": "#0A0A0A",
             "js_api": api,
-            "min_size": (600, 400),
+            "min_size": (_MIN_WIDTH, _MIN_HEIGHT),
         }
-        # Only pass x/y when a position was saved; omitting them centres the window.
+        # Omit x/y on first launch so pywebview centres the window.
         if x is not None and y is not None:
             create_kwargs["x"] = x
             create_kwargs["y"] = y
@@ -143,48 +214,44 @@ def _run(width, height, x=None, y=None):
         w = webview.create_window("Iris", file_url, **create_kwargs)
         api._window = w
 
-        _save_timer = None
-
-        def _save_position():
-            nonlocal _save_timer
+        def _on_moved(mx, my):
             try:
-                x_save = w.x
-                y_save = w.y
-                w_save = w.width
-                h_save = w.height
-                if x_save is None or y_save is None:
-                    return
-                if x_save < -10000 or y_save < -10000:
-                    return
-                from config import load_config, save_config
-                cfg = load_config()
-                cfg["panel_window_x"] = x_save
-                cfg["panel_window_y"] = y_save
-                cfg["panel_window_width"] = w_save
-                cfg["panel_window_height"] = h_save
-                save_config(cfg)
-            except Exception as e:
-                print("[panel] failed to save window position:", e)
-            finally:
-                _save_timer = None
+                state["x"] = int(mx)
+                state["y"] = int(my)
+            except (TypeError, ValueError):
+                pass
 
-        def _schedule_save():
-            nonlocal _save_timer
-            if _save_timer is not None:
-                _save_timer.cancel()
-            _save_timer = threading.Timer(0.5, _save_position)
-            _save_timer.daemon = True
-            _save_timer.start()
+        def _on_resized(rw, rh):
+            try:
+                rw, rh = int(rw), int(rh)
+                if _valid_size(rw, rh):
+                    state["width"] = rw
+                    state["height"] = rh
+            except (TypeError, ValueError):
+                pass
 
-        w.events.moved += _schedule_save
-        w.events.resized += _schedule_save
-        w.events.closing += _save_position
+        def _on_shown():
+            # Capture centred position after first show if none was saved.
+            if state["x"] is None or state["y"] is None:
+                try:
+                    if w.gui is not None:
+                        pos = w.gui.get_position(w.uid)
+                        if pos:
+                            state["x"], state["y"] = int(pos[0]), int(pos[1])
+                except Exception:
+                    pass
+
+        def _on_closing():
+            _save_geometry(state)
+
+        w.events.moved += _on_moved
+        w.events.resized += _on_resized
+        w.events.shown += _on_shown
+        w.events.closing += _on_closing
         webview.start(debug=False)
 
-        # Fallback after the event loop ends.
-        if _save_timer is not None:
-            _save_timer.cancel()
-        _save_position()
+        # Fallback if closing event did not fire.
+        _save_geometry(state)
     except Exception:
         print("[panel] failed to open")
         import traceback
