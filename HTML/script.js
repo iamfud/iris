@@ -14,6 +14,17 @@
   const API_BASE = window.location.protocol === "file:" ? "http://localhost:15502" : window.location.origin;
   const POLL_MS = 1000;
 
+  // Auth token injected into the served document by ws_bridge. Every API
+  // request must carry it.
+  const IRIS_TOKEN = (document.querySelector('meta[name="iris-token"]') || {}).content || "";
+
+  function apiFetch(url, opts) {
+    opts = opts || {};
+    opts.headers = Object.assign({}, opts.headers || {});
+    if (IRIS_TOKEN) opts.headers["X-Iris-Token"] = IRIS_TOKEN;
+    return fetch(url, opts);
+  }
+
   let currentPage = "dashboard";
   let pluginState = {};
   let pollTimer = null;
@@ -27,6 +38,18 @@
   let pluginSnapshots = {};
   let alarmSaveTimer = null;
   let settingsRenderer = null;
+
+  let visionSensors = [];
+  let visionLive = null;
+  let visionTimer = null;
+  let visionInWizard = false;
+  let visionDraft = null;
+  let wizardStep = 1;
+  let wizardCapture = null;
+  let testTimer = null;
+
+  let volumeState = { app: null, volume: null };
+  let volumeTimer = null;
 
   const ALARM_SOUNDS = [
     { name: "remind",  label: "Remind",  icon: "notifications_active" },
@@ -43,12 +66,12 @@
     }
     stopPreview();
     previewingSound = name;
-    fetch(`${API_BASE}/api/sounds/preview/${encodeURIComponent(name)}`).catch(() => {});
+    apiFetch(`${API_BASE}/api/sounds/preview/${encodeURIComponent(name)}`).catch(() => {});
   }
 
   function stopPreview() {
     previewingSound = null;
-    fetch(`${API_BASE}/api/sounds/stop`).catch(() => {});
+    apiFetch(`${API_BASE}/api/sounds/stop`).catch(() => {});
   }
 
   // ── DOM refs ────────────────────────────────────────────────
@@ -71,8 +94,10 @@
         currentPage = page;
         selectedPlugin = null;
         renderPage();
-        if (page === "features" || page === "alarms") fetchConfig();
+        if (page === "features" || page === "alarms" || page === "network") fetchConfig();
         else if (page === "plugins") fetchPluginsConfig();
+        else if (page === "vision") fetchVision();
+        else { visionInWizard = false; stopTestPoll(); stopVolumePoll(); }
       }
       closeNav();
     });
@@ -146,23 +171,38 @@
 
   async function fetchState() {
     try {
-      const res = await fetch(`${API_BASE}/api/plugins/state`);
+      const res = await apiFetch(`${API_BASE}/api/plugins/state`);
       if (res.ok) {
         const next = await res.json();
-        const json = JSON.stringify(next);
-        const prev = JSON.stringify(pluginState);
+        const prev = pluginState;
         pluginState = next;
-        if (json !== prev) {
-          const section = document.querySelector(".content");
-          const scrollTop = section ? section.scrollTop : 0;
-          renderPage();
-          const newSection = document.querySelector(".content");
-          if (newSection) newSection.scrollTop = scrollTop;
+        // In-place live updates only — never rebuild the whole page from poll.
+        if (currentPage === "plugins" && selectedPlugin && settingsRenderer) {
+          var dataEl = main.querySelector(".plugin-data-container");
+          if (dataEl && next[selectedPlugin]) {
+            var snap = pluginSnapshots[selectedPlugin] || next[selectedPlugin];
+            dataEl.innerHTML = '<span class="plugin-edit-label">DATA</span>' +
+              settingsRenderer._renderPluginData(selectedPlugin, snap, next[selectedPlugin]);
+          }
+        } else if (currentPage === "dashboard") {
+          // Only rebuild dashboard when plugin availability/status cards would change.
+          var statusChanged = false;
+          var names = Object.keys(next);
+          for (var i = 0; i < names.length; i++) {
+            var n = names[i];
+            var a = (prev[n] && prev[n].available) || false;
+            var b = (next[n] && next[n].available) || false;
+            if (a !== b) { statusChanged = true; break; }
+          }
+          if (statusChanged || Object.keys(prev).length !== names.length) {
+            renderDashboard();
+          }
         }
       }
     } catch (_) {
       // server not running yet — silent fail
     }
+    pollTimer = setTimeout(fetchState, POLL_MS);
   }
 
   function startPolling() {
@@ -171,9 +211,6 @@
     fetchState();
     fetchPluginsConfig();
     fetchDeviceStatus();
-    pollTimer = setInterval(fetchState, POLL_MS);
-    setInterval(fetchPluginsConfig, 30000);
-    setInterval(fetchDeviceStatus, 5000);
   }
 
   // ── Page rendering ──────────────────────────────────────────
@@ -194,6 +231,10 @@
       renderDeclarativePage(currentPage);
     } else if (currentPage === "features") {
       renderFeatures();
+    } else if (currentPage === "vision") {
+      renderVision();
+    } else if (currentPage === "panel") {
+      renderPanel();
     } else {
       renderPlaceholder();
     }
@@ -217,7 +258,6 @@
           '</button>' +
           '<div>' +
             '<h1>' + esc(page.title) + '</h1>' +
-            '<p>' + esc(page.subtitle) + '</p>' +
           '</div>' +
         '</div>' +
         '<button class="done-btn" id="done-btn">Done</button>' +
@@ -260,22 +300,34 @@
 
   async function fetchConfig() {
     try {
-      const res = await fetch(`${API_BASE}/api/config`);
+      const res = await apiFetch(`${API_BASE}/api/config`);
       if (res.ok) {
         featureConfig = await res.json();
-        if (currentPage === "features" || currentPage === "alarms") renderPage();
+        if (currentPage === "features" || currentPage === "alarms" || currentPage === "network") renderPage();
       }
     } catch (_) {}
   }
 
   async function fetchDeviceStatus() {
     try {
-      const res = await fetch(`${API_BASE}/api/status`);
+      const res = await apiFetch(`${API_BASE}/api/status`);
       if (res.ok) {
-        deviceStatus = await res.json();
-        if (currentPage === "dashboard") renderDashboard();
+        const next = await res.json();
+        const prev = deviceStatus;
+        deviceStatus = next;
+        var changed = !prev
+          || prev.connected !== next.connected
+          || prev.port !== next.port
+          || prev.last_notification !== next.last_notification;
+        if (currentPage === "dashboard") {
+          if (changed) renderDashboard();
+        } else if (currentPage === "features") {
+          var prevConnected = prev ? prev.connected : undefined;
+          if (prevConnected !== next.connected) renderPage();
+        }
       }
     } catch (_) {}
+    setTimeout(fetchDeviceStatus, 5000);
   }
 
   function getClockMode() {
@@ -288,7 +340,7 @@
     Object.assign(featureConfig, patch);
     clearTimeout(featureSaveTimer);
     featureSaveTimer = setTimeout(() => {
-      fetch(`${API_BASE}/api/config`, {
+      apiFetch(`${API_BASE}/api/config`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(featureConfig),
@@ -308,7 +360,6 @@
           </button>
           <div>
             <h1>Pixel Clock</h1>
-            <p>Configure LED matrix</p>
           </div>
         </div>
         <button class="done-btn" id="done-btn">Done</button>
@@ -393,7 +444,7 @@
     clearTimeout(alarmSaveTimer);
     alarmSaveTimer = setTimeout(() => {
       featureConfig.alarms = alarms;
-      fetch(`${API_BASE}/api/config`, {
+      apiFetch(`${API_BASE}/api/config`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(featureConfig),
@@ -423,7 +474,6 @@
           </button>
           <div>
             <h1>Alarms</h1>
-            <p>${alarms.length} alarm${alarms.length !== 1 ? "s" : ""}</p>
           </div>
         </div>
         <button class="done-btn" id="done-btn">Done</button>
@@ -683,13 +733,19 @@
 
   async function fetchPluginsConfig() {
     try {
-      const res = await fetch(`${API_BASE}/api/plugins/config`);
+      const res = await apiFetch(`${API_BASE}/api/plugins/config`);
       if (res.ok) {
-        pluginsConfig = await res.json();
-        if (currentPage === "plugins") renderPage();
-        else if (currentPage === "dashboard") renderDashboard();
+        const next = await res.json();
+        const prevJson = JSON.stringify(pluginsConfig);
+        const nextJson = JSON.stringify(next);
+        pluginsConfig = next;
+        if (prevJson !== nextJson) {
+          if (currentPage === "plugins") renderPage();
+          else if (currentPage === "dashboard") renderDashboard();
+        }
       }
     } catch (_) {}
+    setTimeout(fetchPluginsConfig, 30000);
   }
 
   function renderPlugins() {
@@ -720,7 +776,6 @@
           </button>
           <div>
             <h1>Plugins</h1>
-            <p>${names.length} installed</p>
           </div>
         </div>
         <button class="done-btn" id="done-btn">Done</button>
@@ -741,9 +796,6 @@
 
   function renderPluginSettings(name) {
     var p = pluginsConfig[name] || {};
-    var icon = p.icon || "extension";
-    var color = STATUS_COLORS[p.status_code] || "var(--fg-dim)";
-    var statusLabel = p.status_label || "Unknown";
 
     var contentHtml = "";
     if (settingsRenderer) {
@@ -756,15 +808,14 @@
           '<button class="hamburger" id="hamburger" aria-label="Menu">' +
             '<span class="material-icons-outlined">menu</span>' +
           '</button>' +
-          '<button class="back-btn" id="back-btn">' +
-            '<span class="material-icons-outlined">arrow_back</span>' +
-          '</button>' +
           '<div>' +
             '<h1>' + esc(p.display_name || name) + '</h1>' +
-            '<p style="color:' + color + '">' + esc(statusLabel) + '</p>' +
           '</div>' +
         '</div>' +
-        '<button class="done-btn" id="done-btn">Done</button>' +
+        '<div style="display:flex;align-items:center;gap:8px">' +
+          '<button class="done-btn" id="back-btn">Back</button>' +
+          '<button class="done-btn" id="done-btn">Done</button>' +
+        '</div>' +
       '</header>' +
       contentHtml;
 
@@ -784,10 +835,9 @@
       }
     }
 
-    var hasLiveData = pluginState[name] && pluginState[name].state
-      && Object.keys(pluginState[name].state).length > 0;
-    if (!hasLiveData && !pluginSnapshots[name]) {
-      fetch(API_BASE + "/api/plugins/" + encodeURIComponent(name) + "/snapshot")
+    // Snapshot once for layout/debug fields; live poll stays lightweight.
+    if (!pluginSnapshots[name]) {
+      apiFetch(API_BASE + "/api/plugins/" + encodeURIComponent(name) + "/snapshot")
         .then(function (r) { return r.json(); })
         .then(function (snap) {
           pluginSnapshots[name] = snap;
@@ -817,11 +867,828 @@
   function savePluginField(name, field, value) {
     if (!pluginsConfig[name]) pluginsConfig[name] = {};
     pluginsConfig[name][field] = value;
-    fetch(`${API_BASE}/api/plugins/config/${name}`, {
+    apiFetch(`${API_BASE}/api/plugins/config/${name}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(pluginsConfig[name]),
     }).catch(() => {});
+  }
+
+  // ── Vision page ──────────────────────────────────────────────
+
+  const VISION_MODES = {
+    color_percentage: "Colour Percentage",
+    pixel_match: "Pixel Match",
+    average_brightness: "Average Brightness",
+  };
+
+  const VISION_WIZARD_STEPS = [
+    "Capture Region", "Pick Pixel", "App", "Configure", "Test",
+  ];
+
+  function defaultDraft() {
+    return {
+      name: "",
+      enabled: true,
+      mode: "color_percentage",
+      exe: "",
+      anchor: null,
+      region: null,
+      color: "#ff0000",
+      pixel: { x_pct: 50, y_pct: 50 },
+      tolerance: 40,
+      threshold: 30,
+      direction: "below",
+      poll_rate: 1.0,
+      cooldown_s: 10,
+      event_name: "",
+      event_message: "",
+      output_display: true,
+      flash_name: false,
+      require_foreground: false,
+    };
+  }
+
+  async function fetchVision() {
+    try {
+      const res = await apiFetch(`${API_BASE}/api/vision/sensors`);
+      if (res.ok) {
+        const data = await res.json();
+        const nextSensors = data.sensors || [];
+        const live = data.live || null;
+        if (currentPage === "vision" && !visionInWizard) {
+          if (sensorListChanged(visionSensors, nextSensors)) {
+            visionSensors = nextSensors;
+            visionLive = live;
+            renderVision();
+          } else {
+            visionSensors = nextSensors;
+            visionLive = live;
+            applyVisionLive();
+          }
+        } else {
+          visionSensors = nextSensors;
+          visionLive = live;
+        }
+      }
+    } catch (_) {}
+    clearTimeout(visionTimer);
+    if (currentPage === "vision" && !visionInWizard) {
+      visionTimer = setTimeout(fetchVision, 2000);
+    }
+  }
+
+  function sensorListChanged(a, b) {
+    if (!a || !b || a.length !== b.length) return true;
+    const sig = (arr) => arr.map((s) => s.id + ":" + (s.enabled ? "1" : "0")).join(",");
+    return sig(a) !== sig(b);
+  }
+
+  function applyVisionLive() {
+    if (!visionLive || !visionLive.sensors) return;
+    visionLive.sensors.forEach((live) => {
+      const card = document.querySelector(`.vision-card[data-id="${live.id}"]`);
+      if (!card) return;
+      const cfg = visionSensors.find((s) => s.id === live.id);
+      const disabled = cfg && !cfg.enabled;
+      const running = live.running;
+      const active = live.active;
+      const color = disabled ? "var(--fg-dim)"
+        : (active ? "var(--neon-grn)" : "var(--neon-red)");
+      const valEl = card.querySelector(".vision-card-value");
+      if (valEl) {
+        valEl.textContent = String(live.value);
+        valEl.style.color = color;
+      }
+      const statusEl = card.querySelector(".vision-card-status");
+      if (statusEl) {
+        statusEl.textContent = disabled ? "Disabled"
+          : (!running ? "App not running"
+            : (active ? "Triggered" : "Watching"));
+      }
+      const dotEl = card.querySelector(".vision-status-dot");
+      if (dotEl) dotEl.style.background = color;
+    });
+  }
+
+  function renderVision() {
+    if (visionInWizard) { renderVisionWizard(); return; }
+    main.innerHTML = `
+      <header>
+        <div class="header-left">
+          <button class="hamburger" id="hamburger" aria-label="Menu">
+            <span class="material-icons-outlined">menu</span>
+          </button>
+          <div>
+            <h1>Vision</h1>
+          </div>
+        </div>
+        <button class="done-btn" id="done-btn">Done</button>
+      </header>
+      <section class="content vision-content">
+        <div class="vision-toolbar">
+          <span class="vision-toolbar-title">Monitor screen regions and trigger events</span>
+          <button class="settings-btn vision-add-btn" id="vision-add-btn">
+            <span class="material-icons-outlined">add</span> Add Sensor
+          </button>
+        </div>
+        <div class="vision-grid">
+          ${visionSensors.length ? visionSensors.map(renderVisionCard).join("") : renderVisionEmpty()}
+        </div>
+      </section>`;
+    rebindHamburger();
+    const addBtn = document.getElementById("vision-add-btn");
+    if (addBtn) {
+      addBtn.addEventListener("click", () => {
+        visionDraft = defaultDraft();
+        wizardStep = 1;
+        wizardCapture = null;
+        visionInWizard = true;
+        renderVisionWizard();
+      });
+    }
+    document.querySelectorAll(".vision-card-toggle").forEach((el) => {
+      el.addEventListener("click", () => {
+        const id = el.dataset.id;
+        const on = el.classList.toggle("on");
+        const sensor = visionSensors.find((s) => s.id === id);
+        if (sensor) updateSensor(id, Object.assign({}, sensor, { enabled: on }), true);
+      });
+    });
+    document.querySelectorAll(".vision-card-test").forEach((el) => {
+      el.addEventListener("click", () => {
+        const sensor = visionSensors.find((s) => s.id === el.dataset.id);
+        if (!sensor) return;
+        testSensorNow(sensor);
+      });
+    });
+    document.querySelectorAll(".vision-card-edit").forEach((el) => {
+      el.addEventListener("click", () => {
+        const sensor = visionSensors.find((s) => s.id === el.dataset.id);
+        if (!sensor) return;
+        visionDraft = Object.assign(defaultDraft(), JSON.parse(JSON.stringify(sensor)));
+        wizardCapture = {
+          exe: sensor.exe || "",
+          anchor: sensor.anchor || null,
+          region: sensor.region || null,
+        };
+        wizardStep = 5;
+        visionInWizard = true;
+        renderVisionWizard();
+      });
+    });
+    document.querySelectorAll(".vision-card-del").forEach((el) => {
+      el.addEventListener("click", () => {
+        const id = el.dataset.id;
+        if (!confirm("Delete this sensor?")) return;
+        apiFetch(`${API_BASE}/api/vision/sensors/${encodeURIComponent(id)}/delete`, { method: "POST" })
+          .then((r) => r.json())
+          .then(() => fetchVision())
+          .catch(() => {});
+      });
+    });
+  }
+
+  function renderVisionEmpty() {
+    return `
+      <div class="vision-empty">
+        <span class="material-icons-outlined">visibility</span>
+        <p>No vision sensors yet.</p>
+        <p class="vision-empty-sub">Add a sensor to monitor a region of your screen.</p>
+      </div>`;
+  }
+
+  function renderVisionCard(s) {
+    const live = visionLive && visionLive.sensors
+      ? visionLive.sensors.find((x) => x.id === s.id) : null;
+    const running = live ? live.running : false;
+    const active = live ? live.active : false;
+    const value = live ? live.value : null;
+    const color = !s.enabled ? "var(--fg-dim)"
+      : (active ? "var(--neon-grn)" : "var(--neon-red)");
+    const statusLabel = !s.enabled ? "Disabled"
+      : (running ? (active ? "Triggered" : "Watching") : "App not running");
+    return `
+      <div class="vision-card" data-id="${esc(s.id)}">
+        <div class="vision-card-head">
+          <span class="vision-status-dot" style="background:${color}"></span>
+          <span class="vision-card-name">${esc(s.name || s.id)}</span>
+        </div>
+        <div class="vision-card-meta">
+          <span class="material-icons-outlined">apps</span>${esc(s.exe || "—")}
+        </div>
+        <div class="vision-card-mode">${esc(VISION_MODES[s.mode] || s.mode)}${s.require_foreground ? " · Focused" : ""}</div>
+        <div class="vision-card-value" style="color:${color}">${value !== null && value !== undefined ? esc(String(value)) : "—"}</div>
+        <div class="vision-card-status">${statusLabel}</div>
+        <div class="vision-card-actions">
+          <span class="vision-toggle-label">Enabled
+            <div class="settings-toggle ${s.enabled ? "on" : ""} vision-card-toggle" data-id="${esc(s.id)}">
+              <div class="settings-toggle-thumb"></div>
+            </div>
+          </span>
+          <button class="settings-btn vision-card-test" data-id="${esc(s.id)}">Test</button>
+          <button class="settings-btn vision-card-edit" data-id="${esc(s.id)}">Edit</button>
+          <button class="settings-btn vision-card-del danger" data-id="${esc(s.id)}">Delete</button>
+        </div>
+      </div>`;
+  }
+
+  function testSensorNow(sensor) {
+    const body = Object.assign({}, sensor);
+    if (!body.anchor) body.anchor = null;
+    apiFetch(`${API_BASE}/api/vision/test`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        alert(`Value: ${d.value}  —  ${d.active ? "Triggered" : "Not triggered"}`);
+      })
+      .catch(() => alert("Test failed"));
+  }
+
+  function updateSensor(id, sensor, silent) {
+    apiFetch(`${API_BASE}/api/vision/sensors/${encodeURIComponent(id)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(sensor),
+    })
+      .then((r) => r.json())
+      .then(() => { if (!silent) fetchVision(); })
+      .catch(() => { if (!silent) alert("Save failed"); });
+  }
+
+  // ── Vision wizard ────────────────────────────────────────────
+
+  function renderVisionWizard() {
+    const d = visionDraft || defaultDraft();
+    const editing = !!d.id;
+    main.innerHTML = `
+      <header>
+        <div class="header-left">
+          <button class="hamburger" id="hamburger" aria-label="Menu">
+            <span class="material-icons-outlined">menu</span>
+          </button>
+          <div>
+            <h1>${editing ? "Edit Sensor" : "New Sensor"}</h1>
+          </div>
+        </div>
+        <div class="header-actions">
+          ${editing ? '<button class="settings-btn" id="wizard-save-btn">Save Sensor</button>' : ""}
+          <button class="done-btn" id="wizard-cancel-btn">Cancel</button>
+        </div>
+      </header>
+      <section class="content vision-content vision-wizard-content">
+        ${editing ? renderVisionEditPane() : `
+        <div class="vision-stepper">
+          ${VISION_WIZARD_STEPS.map((label, i) => `
+            <div class="vision-step ${i + 1 <= wizardStep ? "done" : ""} ${i + 1 === wizardStep ? "active" : ""}"
+                 data-step="${i + 1}" ${i + 1 < wizardStep ? 'style="cursor:pointer"' : ""}>
+              <span class="vision-step-num">${i + 1}</span>
+              <span class="vision-step-label">${label}</span>
+            </div>`).join("")}
+        </div>
+        <div class="vision-wizard-body">
+          ${renderWizardStep1()}
+          ${renderWizardStep2()}
+          ${renderWizardStep3()}
+          ${renderWizardStep4()}
+          ${renderWizardStep5()}
+        </div>`}
+      </section>`;
+    rebindHamburger();
+    wireWizard();
+  }
+
+  function renderVisionEditPane() {
+    const d = visionDraft || defaultDraft();
+    return `
+      <div class="vision-wizard-body">
+        <div class="vision-wizard-pane" id="pane-5">
+          <h3>Test &amp; Configure</h3>
+          <p>Live reading — ${esc(d.exe || "any app")} must be running to sample.</p>
+          <div class="vision-test-readout" id="vision-test-readout">—</div>
+          <div class="vision-test-status" id="vision-test-status">Waiting…</div>
+          ${renderVisionConfigForm()}
+        </div>
+      </div>`;
+  }
+
+  function renderVisionConfigForm() {
+    const d = visionDraft || defaultDraft();
+    return `
+      <div class="vision-wizard-form">
+        <div class="settings-control">
+          <label class="settings-label">Sensor Name</label>
+          <input type="text" class="settings-input" id="wz-name" value="${esc(d.name || "")}">
+        </div>
+        <div class="settings-control">
+          <label class="settings-label">Event Message</label>
+          <input type="text" class="settings-input" id="wz-event-msg" value="${esc(d.event_message || "")}">
+        </div>
+        <div class="settings-control">
+          <label class="settings-label">Mode</label>
+          <select class="settings-select" id="wz-mode">
+            ${Object.keys(VISION_MODES).map((m) =>
+              `<option value="${m}" ${m === d.mode ? "selected" : ""}>${VISION_MODES[m]}</option>`).join("")}
+          </select>
+        </div>
+        <div class="settings-control">
+          <label class="settings-label">Colour</label>
+          <div class="vision-color-row">
+            <button type="button" class="settings-btn vision-recapture-btn" id="wz-recapture" title="Recapture screen region">
+              <span class="material-icons-outlined">center_focus_strong</span>
+            </button>
+            <input type="color" class="settings-color" id="wz-color" value="${esc(d.color || "#ff0000")}">
+            <input type="text" class="settings-input" id="wz-color-hex" value="${esc(d.color || "#ff0000")}" spellcheck="false">
+          </div>
+        </div>
+        <div class="settings-control">
+          <label class="settings-label">Tolerance (0-255)</label>
+          <input type="number" class="settings-input" id="wz-tolerance" value="${esc(String(d.tolerance))}" min="0" max="255">
+        </div>
+        <div class="settings-control">
+          <label class="settings-label">Threshold</label>
+          <input type="number" class="settings-input" id="wz-threshold" value="${esc(String(d.threshold))}" step="0.1">
+        </div>
+        <div class="settings-control">
+          <label class="settings-label">Direction</label>
+          <select class="settings-select" id="wz-direction">
+            <option value="below" ${d.direction !== "above" ? "selected" : ""}>Below threshold (colour present)</option>
+            <option value="above" ${d.direction === "above" ? "selected" : ""}>Above threshold</option>
+          </select>
+        </div>
+        <div class="settings-control">
+          <label class="settings-label">Poll Rate (Hz)</label>
+          <input type="number" class="settings-input" id="wz-poll-rate" value="${esc(String(d.poll_rate))}" min="0.1" max="10" step="0.1">
+        </div>
+        <div class="settings-control">
+          <label class="settings-label">Cooldown (seconds)</label>
+          <input type="number" class="settings-input" id="wz-cooldown" value="${esc(String(d.cooldown_s))}" min="0" step="1">
+        </div>
+        <div class="settings-toggle-row">
+          <span class="settings-toggle-label">Hardware Display</span>
+          <div class="settings-toggle ${d.output_display ? "on" : ""}" id="wz-output"><div class="settings-toggle-thumb"></div></div>
+        </div>
+        <div class="settings-toggle-row">
+          <span class="settings-toggle-label">Flash name</span>
+          <div class="settings-toggle ${d.flash_name ? "on" : ""}" id="wz-flash-name" title="Persistently flash the first 4 letters of the sensor name while the threshold is met"><div class="settings-toggle-thumb"></div></div>
+        </div>
+        <div class="settings-toggle-row">
+          <span class="settings-toggle-label">Only when focused</span>
+          <div class="settings-toggle ${d.require_foreground ? "on" : ""}" id="wz-require-fg" title="Only measure while the target app is the foreground window. Ignores background/menu windows."><div class="settings-toggle-thumb"></div></div>
+        </div>
+      </div>`;
+  }
+
+  function renderWizardStep1() {
+    if (wizardStep !== 1) return "";
+    return `
+      <div class="vision-wizard-pane" id="pane-1">
+        <h3>1. Capture Region</h3>
+        <p>Press capture, then drag a rectangle over the area of your screen to monitor.
+        The panel hides while you drag.</p>
+        <button class="settings-btn vision-capture-btn" id="capture-btn">
+          <span class="material-icons-outlined">center_focus_strong</span> Capture Region
+        </button>
+        <div class="vision-capture-status" id="capture-status"></div>
+      </div>`;
+  }
+
+  function renderWizardStep2() {
+    if (wizardStep !== 2 || !wizardCapture || !wizardCapture.screenshot_b64) return "";
+    return `
+      <div class="vision-wizard-pane" id="pane-2">
+        <h3>2. Pick Pixel</h3>
+        <p>Click on the preview to sample the colour to watch for.
+        <span class="vision-swatch" id="vision-swatch" style="background:${esc(visionDraft.color)}"></span>
+        <span id="vision-color-hex">${esc(visionDraft.color)}</span></p>
+        <canvas id="vision-preview-canvas" class="vision-preview-canvas"></canvas>
+        <div class="vision-wizard-nav">
+          <button class="settings-btn" id="wizard-back-btn">Back</button>
+          <button class="settings-btn" id="wizard-next-btn">Continue</button>
+        </div>
+      </div>`;
+  }
+
+  function renderWizardStep3() {
+    if (wizardStep !== 3) return "";
+    return `
+      <div class="vision-wizard-pane" id="pane-3">
+        <h3>3. Target App</h3>
+        <p>Sensor only runs while this app is open. Detected automatically from the region.</p>
+        <div class="settings-control">
+          <label class="settings-label">Executable</label>
+          <input type="text" class="settings-input" id="wizard-exe" value="${esc(visionDraft.exe || "")}" placeholder="AppName.exe">
+        </div>
+        <div class="vision-wizard-nav">
+          <button class="settings-btn" id="wizard-back-btn">Back</button>
+          <button class="settings-btn" id="wizard-next-btn">Continue</button>
+        </div>
+      </div>`;
+  }
+
+  function renderWizardStep4() {
+    if (wizardStep !== 4) return "";
+    return `
+      <div class="vision-wizard-pane" id="pane-4">
+        <h3>4. Configure</h3>
+        ${renderVisionConfigForm()}
+        <div class="vision-wizard-nav">
+          <button class="settings-btn" id="wizard-back-btn">Back</button>
+          <button class="settings-btn" id="wizard-next-btn">Continue</button>
+        </div>
+      </div>`;
+  }
+
+  function renderWizardStep5() {
+    if (wizardStep !== 5) return "";
+    return `
+      <div class="vision-wizard-pane" id="pane-5">
+        <h3>5. Test</h3>
+        <p>Live reading — ${esc(visionDraft.exe || "any app")} must be running to sample.</p>
+        <div class="vision-test-readout" id="vision-test-readout">—</div>
+        <div class="vision-test-status" id="vision-test-status">Waiting…</div>
+        <div class="vision-wizard-nav">
+          <button class="settings-btn" id="wizard-back-btn">Back</button>
+          <button class="settings-btn" id="wizard-save-btn">Save Sensor</button>
+        </div>
+      </div>`;
+  }
+
+  function testDraftBody() {
+    const d = visionDraft;
+    const body = Object.assign({}, d);
+    if (!body.anchor || !body.region) {
+      delete body.anchor;
+      delete body.region;
+    }
+    return body;
+  }
+
+  function startTestPoll() {
+    stopTestPoll();
+    testTimer = setInterval(() => {
+      apiFetch(`${API_BASE}/api/vision/test`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(testDraftBody()),
+      })
+        .then((r) => r.json())
+        .then((data) => {
+          const el = document.getElementById("vision-test-readout");
+          const st = document.getElementById("vision-test-status");
+          if (el) {
+            el.textContent = String(data.value);
+            el.style.color = data.active ? "var(--neon-grn)" : "var(--neon-red)";
+          }
+          if (st) st.textContent = data.active ? "Triggered" : "Not triggered";
+        })
+        .catch(() => {});
+    }, 500);
+  }
+
+  function stopTestPoll() {
+    if (testTimer) { clearInterval(testTimer); testTimer = null; }
+  }
+
+  // ── Panel page (active-app volume) ──────────────────────────
+
+  function renderPanel() {
+    main.innerHTML =
+      '<header>' +
+        '<div class="header-left">' +
+          '<button class="hamburger" id="hamburger" aria-label="Menu">' +
+            '<span class="material-icons-outlined">menu</span>' +
+          '</button>' +
+          '<div>' +
+            '<h1>Panel</h1>' +
+          '</div>' +
+        '</div>' +
+        '<button class="done-btn" id="done-btn">Done</button>' +
+      '</header>' +
+      '<section class="settings-content">' +
+        '<div class="settings-card vol-tile">' +
+          '<div class="vol-heading">' +
+            '<span class="material-icons-outlined vol-heading-icon">graphic_eq</span>' +
+            '<span>Active App Volume</span>' +
+          '</div>' +
+          '<div class="vol-app" id="vol-app">—</div>' +
+          '<div class="vol-slider-row">' +
+            '<input type="range" id="vol-slider" class="settings-slider" min="0" max="100" step="1" value="0" disabled>' +
+            '<span class="settings-slider-value" id="vol-value">0%</span>' +
+          '</div>' +
+        '</div>' +
+      '</section>';
+    rebindHamburger();
+    wireVolume();
+    startVolumePoll();
+  }
+
+  function wireVolume() {
+    const slider = document.getElementById("vol-slider");
+    if (!slider) return;
+    let saveTimer = null;
+    slider.addEventListener("input", () => {
+      const val = parseInt(slider.value, 10);
+      const valueEl = document.getElementById("vol-value");
+      if (valueEl) valueEl.textContent = val + "%";
+      if (saveTimer) clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => {
+        apiFetch(`${API_BASE}/api/volume`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ volume: val }),
+        }).catch(() => {});
+      }, 150);
+    });
+  }
+
+  function startVolumePoll() {
+    stopVolumePoll();
+    volumeTimer = setInterval(() => {
+      apiFetch(`${API_BASE}/api/volume`)
+        .then((r) => r.json())
+        .then((data) => {
+          if (!data || typeof data.volume !== "number") return;
+          volumeState = data;
+          updateVolumeUI();
+        })
+        .catch(() => {});
+    }, 1000);
+  }
+
+  function stopVolumePoll() {
+    if (volumeTimer) { clearInterval(volumeTimer); volumeTimer = null; }
+  }
+
+  function updateVolumeUI() {
+    const slider = document.getElementById("vol-slider");
+    const appEl = document.getElementById("vol-app");
+    const valueEl = document.getElementById("vol-value");
+    if (!slider || !appEl) return;
+    if (typeof volumeState.volume === "number") {
+      slider.value = String(volumeState.volume);
+      slider.disabled = false;
+      appEl.textContent = volumeState.app || "Application";
+      appEl.classList.remove("vol-app-none");
+      if (valueEl) valueEl.textContent = volumeState.volume + "%";
+    } else {
+      slider.value = "0";
+      slider.disabled = true;
+      appEl.textContent = volumeState.app ? (volumeState.app + " — no audio session") : "No audio session";
+      appEl.classList.add("vol-app-none");
+      if (valueEl) valueEl.textContent = "—";
+    }
+  }
+
+  function wireWizard() {
+    document.querySelectorAll(".vision-step").forEach((el) => {
+      if (el.style.cursor === "pointer") {
+        el.addEventListener("click", () => {
+          wizardStep = parseInt(el.dataset.step, 10);
+          renderVisionWizard();
+        });
+      }
+    });
+
+    const cancelBtn = document.getElementById("wizard-cancel-btn");
+    if (cancelBtn) cancelBtn.addEventListener("click", exitWizard);
+
+    const backBtn = document.getElementById("wizard-back-btn");
+    if (backBtn) {
+      backBtn.addEventListener("click", () => {
+        wizardStep = Math.max(1, wizardStep - 1);
+        renderVisionWizard();
+      });
+    }
+
+    const nextBtn = document.getElementById("wizard-next-btn");
+    if (nextBtn) {
+      nextBtn.addEventListener("click", () => {
+        if (!collectStep()) return;
+        wizardStep += 1;
+        renderVisionWizard();
+      });
+    }
+
+    const captureBtn = document.getElementById("capture-btn");
+    if (captureBtn) captureBtn.addEventListener("click", runCapture);
+
+    if (wizardStep === 2) initEyedropper();
+
+    const exeInput = document.getElementById("wizard-exe");
+    if (exeInput) {
+      exeInput.addEventListener("input", () => {
+        visionDraft.exe = exeInput.value.trim();
+      });
+    }
+
+    if (wizardStep === 4 || (wizardStep === 5 && visionDraft && visionDraft.id)) wireConfigureStep();
+
+    const saveBtn = document.getElementById("wizard-save-btn");
+    if (saveBtn) saveBtn.addEventListener("click", saveWizard);
+
+    if (wizardStep === 5) startTestPoll();
+  }
+
+  function collectStep() {
+    const nameInput = document.getElementById("wz-name");
+    if (nameInput) {
+      visionDraft.name = nameInput.value.trim();
+      visionDraft.event_name = visionDraft.name;
+    }
+    if (wizardStep === 1 && !wizardCapture) {
+      const st = document.getElementById("capture-status");
+      if (st) st.textContent = "Capture a region first.";
+      return false;
+    }
+    if (wizardStep === 3 && !visionDraft.exe) {
+      const exe = document.getElementById("wizard-exe");
+      if (exe) exe.focus();
+      return false;
+    }
+    return true;
+  }
+
+  function wireConfigureStep() {
+    const recaptureBtn = document.getElementById("wz-recapture");
+    if (recaptureBtn) recaptureBtn.addEventListener("click", () => runCapture({ preservePixel: true }));
+
+    const modeSel = document.getElementById("wz-mode");
+    if (modeSel) modeSel.addEventListener("change", () => {
+      visionDraft.mode = modeSel.value;
+    });
+    const colorInput = document.getElementById("wz-color");
+    const colorHex = document.getElementById("wz-color-hex");
+    if (colorInput) colorInput.addEventListener("input", () => {
+      visionDraft.color = colorInput.value;
+      if (colorHex) colorHex.value = colorInput.value;
+    });
+    if (colorHex) colorHex.addEventListener("input", () => {
+      visionDraft.color = colorHex.value;
+      if (colorInput) colorInput.value = colorHex.value;
+    });
+    const tol = document.getElementById("wz-tolerance");
+    if (tol) tol.addEventListener("input", () => {
+      visionDraft.tolerance = parseFloat(tol.value) || 0;
+    });
+    const thr = document.getElementById("wz-threshold");
+    if (thr) thr.addEventListener("input", () => {
+      visionDraft.threshold = parseFloat(thr.value) || 0;
+    });
+    const dir = document.getElementById("wz-direction");
+    if (dir) dir.addEventListener("change", () => {
+      visionDraft.direction = dir.value;
+    });
+    const rate = document.getElementById("wz-poll-rate");
+    if (rate) rate.addEventListener("input", () => {
+      visionDraft.poll_rate = parseFloat(rate.value) || 1;
+    });
+    const cool = document.getElementById("wz-cooldown");
+    if (cool) cool.addEventListener("input", () => {
+      visionDraft.cooldown_s = parseFloat(cool.value) || 0;
+    });
+    const en = document.getElementById("wz-name");
+    if (en) en.addEventListener("input", () => {
+      visionDraft.name = en.value.trim();
+      visionDraft.event_name = visionDraft.name;
+    });
+    const em = document.getElementById("wz-event-msg");
+    if (em) em.addEventListener("input", () => {
+      visionDraft.event_message = em.value.trim();
+    });
+    const out = document.getElementById("wz-output");
+    if (out) out.addEventListener("click", () => {
+      visionDraft.output_display = out.classList.toggle("on");
+    });
+    const fn = document.getElementById("wz-flash-name");
+    if (fn) fn.addEventListener("click", () => {
+      visionDraft.flash_name = fn.classList.toggle("on");
+    });
+    const fg = document.getElementById("wz-require-fg");
+    if (fg) fg.addEventListener("click", () => {
+      visionDraft.require_foreground = fg.classList.toggle("on");
+    });
+  }
+
+  function initEyedropper() {
+    const canvas = document.getElementById("vision-preview-canvas");
+    if (!canvas) return;
+    const img = new Image();
+    img.onload = function () {
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0);
+      canvas.addEventListener("click", (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = img.naturalWidth / rect.width;
+        const scaleY = img.naturalHeight / rect.height;
+        const x = Math.floor((e.clientX - rect.left) * scaleX);
+        const y = Math.floor((e.clientY - rect.top) * scaleY);
+        if (x < 0 || y < 0 || x >= img.naturalWidth || y >= img.naturalHeight) return;
+        const px = ctx.getImageData(x, y, 1, 1).data;
+        const hex = "#" + [px[0], px[1], px[2]].map((v) =>
+          v.toString(16).padStart(2, "0")).join("");
+        visionDraft.color = hex;
+        visionDraft.pixel = {
+          x_pct: Math.round((x / img.naturalWidth) * 1000) / 10,
+          y_pct: Math.round((y / img.naturalHeight) * 1000) / 10,
+        };
+        const swatch = document.getElementById("vision-swatch");
+        const hexEl = document.getElementById("vision-color-hex");
+        if (swatch) swatch.style.background = hex;
+        if (hexEl) hexEl.textContent = hex;
+      });
+    };
+    img.src = "data:image/png;base64," + wizardCapture.screenshot_b64;
+  }
+
+  async function runCapture(opts) {
+    if (window.pywebview && window.pywebview.api) {
+      try { await window.pywebview.api.hide_panel(); } catch (_) {}
+    }
+    const btn = document.getElementById("capture-btn");
+    const status = document.getElementById("capture-status");
+    if (btn) { btn.disabled = true; btn.textContent = "Drag a region on screen…"; }
+    if (status) status.textContent = "";
+    try {
+      const res = await apiFetch(`${API_BASE}/api/vision/capture`, { method: "POST" });
+      const data = await res.json();
+      if (data.cancelled) {
+        if (status) status.textContent = "Cancelled — try again.";
+      } else {
+        wizardCapture = data;
+        Object.assign(visionDraft, {
+          exe: data.exe || "",
+          anchor: data.anchor,
+          region: data.region,
+        });
+        if (!(opts && opts.preservePixel)) {
+          visionDraft.pixel = { x_pct: 50, y_pct: 50 };
+        }
+        if (visionDraft && visionDraft.id) {
+          renderVisionWizard();
+        } else {
+          wizardStep = 2;
+          renderVisionWizard();
+        }
+      }
+    } catch (_) {
+      if (status) status.textContent = "Capture failed — try again.";
+    } finally {
+      if (window.pywebview && window.pywebview.api) {
+        try { await window.pywebview.api.show_panel(); } catch (_) {}
+      }
+    }
+  }
+
+  function saveWizard() {
+    const nameInput = document.getElementById("wz-name");
+    if (nameInput) {
+      visionDraft.name = nameInput.value.trim();
+      visionDraft.event_name = visionDraft.name;
+    }
+    stopTestPoll();
+    const body = Object.assign({}, visionDraft);
+    if (!body.anchor || !body.region) {
+      alert("A captured region is required.");
+      wizardStep = 1;
+      renderVisionWizard();
+      return;
+    }
+    const done = () => {
+      visionInWizard = false;
+      visionDraft = null;
+      wizardCapture = null;
+      fetchVision();
+      renderPage();
+    };
+    const url = body.id
+      ? `${API_BASE}/api/vision/sensors/${encodeURIComponent(body.id)}`
+      : `${API_BASE}/api/vision/sensors`;
+    apiFetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        if (!d.ok) throw new Error("save failed");
+        done();
+      })
+      .catch(() => alert("Save failed"));
+  }
+
+  function exitWizard() {
+    stopTestPoll();
+    visionInWizard = false;
+    visionDraft = null;
+    wizardCapture = null;
+    fetchVision();
+    renderPage();
   }
 
   function renderDashboard() {
@@ -831,10 +1698,8 @@
       : "";
     const connected = deviceStatus.connected;
     const port = deviceStatus.port || "—";
-    const lastNotif = deviceStatus.last_notification || "";
 
     const plugins = Object.keys(pluginsConfig);
-    const active = plugins.some((p) => pluginState[p]);
     const pluginNames = {};
     const pluginIcons = {};
     plugins.forEach((p) => {
@@ -867,10 +1732,6 @@
           </button>
           <div>
             <h1>Dashboard</h1>
-            <p class="dash-status-line">
-              <span class="dash-status-dot" style="background:${connected ? "var(--neon-grn)" : "var(--neon-red)"}"></span>
-              Iris Device: ${connected ? "Online" : "Offline"} &bull; ${esc(port)}
-            </p>
           </div>
         </div>
         <button class="done-btn" id="done-btn">Done</button>
@@ -879,7 +1740,10 @@
         <div class="dash-hero">
           <div class="dash-hero-text">
             ${greeting}
-            <span class="dash-sub">Iris is ${active ? "active" : "idle"}${lastNotif ? " — " + esc(lastNotif) : ""}</span>
+            <span class="dash-status-line">
+              <span class="dash-status-dot" style="background:${connected ? "var(--neon-grn)" : "var(--neon-red)"}"></span>
+              Iris Device: ${connected ? "Online" : "Offline"} &bull; ${esc(port)}
+            </span>
           </div>
         </div>
         <div class="dash-plugins">
@@ -907,7 +1771,6 @@
           '</button>' +
           '<div>' +
             '<h1>' + esc(name) + '</h1>' +
-            '<p>' + esc(subtitle) + '</p>' +
           '</div>' +
         '</div>' +
         '<button class="done-btn" id="done-btn">Done</button>' +

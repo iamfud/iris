@@ -65,6 +65,34 @@ class BaseConnector:
         """
         raise NotImplementedError
 
+    # ── Settings definitions ─────────────────────────────────────
+
+    @classmethod
+    def get_settings(cls) -> list:
+        """Return the list of settings sections this connector exposes.
+
+        Each section is a dict:
+
+        .. code-block:: python
+
+            {
+                "title": "Temperature Limits",
+                "controls": [
+                    {"type": "toggle", "key": "enabled", "label": "Enabled"},
+                    {"type": "slider", "key": "cpu_temp_lim", "label": "CPU Limit",
+                     "min": 50, "max": 100, "step": 5, "unit": "°C"},
+                ]
+            }
+
+        These merge with (and override) the ``settings`` array in
+        ``plugin.json``.  Return an empty list if the connector has
+        no programmatically-defined settings.
+
+        This is a classmethod so discovery can enumerate settings
+        without instantiating the connector.
+        """
+        return []
+
     # ── Actions ──────────────────────────────────────────────────
 
     def handle(self, control_id: str, value=None):

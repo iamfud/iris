@@ -8,6 +8,7 @@ import time
 import pystray
 
 import ws_bridge
+from display_priority import PRIO_CORE_NOTIFY
 
 log = logging.getLogger("iris.notif")
 
@@ -132,7 +133,8 @@ class NotificationMirrorProvider:
                 "timestamp": time.time(),
             })
             if self.serial:
-                self.serial.send_notification("", msg)
+                self.serial.send_notification(
+                    "", msg, priority=PRIO_CORE_NOTIFY, key="core.mirror")
 
     def _get_app_name(self, n):
         try:

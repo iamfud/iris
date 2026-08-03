@@ -1,0 +1,36 @@
+{
+  "name": "vision",
+  "version": "1.0",
+  "display_name": "Vision",
+  "description": "Monitor screen regions and raise events when a condition is met",
+  "icon": "visibility",
+  "type": "service",
+  "message_not_running": "Vision is a service — sensors run while their target app is open.",
+
+  "capabilities": {
+    "status": true,
+    "configuration": false,
+    "outputs": true,
+    "live_data": true,
+    "actions": false,
+    "diagnostics": false
+  },
+
+  "labels": {
+    "outputs": "Output Routing"
+  },
+
+  "outputs": [
+    { "id": "display", "label": "Hardware Display", "enabled": true }
+  ],
+
+  "live_data": {
+    "title": "Sensors",
+    "fields": [
+      { "key": "sensor_count", "label": "Active Sensors", "type": "int" },
+      { "key": "active_events", "label": "Triggered Events", "type": "int" }
+    ]
+  },
+
+  "settings": []
+}

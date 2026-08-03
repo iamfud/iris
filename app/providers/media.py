@@ -8,6 +8,8 @@ import time
 
 import pystray
 
+from display_priority import PRIO_CORE_NOTIFY
+
 log = logging.getLogger("iris.media")
 
 SMTC_AVAILABLE = False
@@ -133,10 +135,13 @@ class MediaProvider:
             if track_key and track_key != self._last_notify_key and self.serial:
                 self._last_notify_key = track_key
                 msg = f"{self._artist} - {self._track}" if self._artist else self._track
-                self.serial.send_notification("Now Playing", msg)
+                self.serial.send_notification(
+                    "Now Playing", msg, priority=PRIO_CORE_NOTIFY, key="media.now")
             elif not track_key and self._last_notify_key:
                 if self.serial:
-                    self.serial.send_notification("Media", "Playback ended")
+                    self.serial.send_notification(
+                        "Media", "Playback ended",
+                        priority=PRIO_CORE_NOTIFY, key="media.now")
                 self._last_notify_key = ""
                 self._smtc_mgr = None
 

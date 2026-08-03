@@ -24,6 +24,7 @@ _instances = {}
 _manifests = {}
 _cfg = {}
 _serial_sender = None
+_overlays = None
 
 
 def _plugin_path(name):
@@ -44,6 +45,7 @@ def discover_plugins():
                 manifest.setdefault("name", entry)
                 manifest.setdefault("type", "service")
                 manifest.setdefault("message_not_running", "")
+                manifest.setdefault("settings", [])
                 try:
                     mod = importlib.import_module(f"plugins.{entry}.connector")
                     for name_in_mod in dir(mod):
@@ -52,6 +54,10 @@ def discover_plugins():
                             ctrl_list = obj.controls()
                             if ctrl_list:
                                 manifest["controls"] = ctrl_list
+                            if hasattr(obj, "get_settings"):
+                                conn_settings = obj.get_settings()
+                                if conn_settings:
+                                    _merge_settings(manifest, conn_settings)
                             break
                 except Exception:
                     pass
@@ -62,12 +68,34 @@ def discover_plugins():
     return result
 
 
+def _merge_settings(manifest, connector_settings):
+    """Merge connector-declared settings into plugin.json settings.
+
+    Connector settings override plugin.json settings with the same title.
+    If a section title from the connector matches an existing section,
+    its controls replace the existing ones.  New sections are appended.
+    """
+    existing = manifest.get("settings", [])
+    existing_titles = {s.get("title") for s in existing}
+    for section in connector_settings:
+        title = section.get("title")
+        if title in existing_titles:
+            for i, s in enumerate(existing):
+                if s.get("title") == title:
+                    existing[i] = section
+                    break
+        else:
+            existing.append(section)
+            existing_titles.add(title)
+    manifest["settings"] = existing
+
+
 def get_manifest(name):
     """Return the manifest dict for a named plugin."""
     return _manifests.get(name, {})
 
 
-def load_plugin(name, cfg, serial_sender=None):
+def load_plugin(name, cfg, serial_sender=None, overlays=None):
     """Import and instantiate a plugin by name. Returns None on failure."""
     try:
         mod = importlib.import_module(f"plugins.{name}.plugin")
@@ -75,17 +103,18 @@ def load_plugin(name, cfg, serial_sender=None):
         if cls is None:
             log.warning("[pm] %s has no Plugin class", name)
             return None
-        return cls(cfg, serial_sender)
+        return cls(cfg, serial_sender, overlays)
     except Exception as e:
         log.warning("[pm] failed to load %s: %s", name, e)
         return None
 
 
-def start_all(cfg, serial_sender=None):
+def start_all(cfg, serial_sender=None, overlays=None):
     """Discover, load, and start all plugins."""
-    global _cfg, _serial_sender
+    global _cfg, _serial_sender, _overlays
     _cfg = cfg
     _serial_sender = serial_sender
+    _overlays = overlays
     discover_plugins()
     check_plugins()
 
@@ -131,6 +160,23 @@ def on_tap(plugin_name, control_id, value=None):
         log.warning("[pm] %s.on_tap(%s) failed: %s", plugin_name, control_id, e)
 
 
+def invoke_action(plugin_name, action_id):
+    """Invoke a declarative action on a plugin (from settings UI)."""
+    inst = _instances.get(plugin_name)
+    if inst is None:
+        log.warning("[pm] action on unknown plugin %s", plugin_name)
+        return False
+    try:
+        if hasattr(inst, "on_action"):
+            inst.on_action(action_id)
+            return True
+        log.warning("[pm] %s has no on_action method", plugin_name)
+        return False
+    except Exception as e:
+        log.warning("[pm] %s.on_action(%s) failed: %s", plugin_name, action_id, e)
+        return False
+
+
 # ── Plugin config ──────────────────────────────────────────────
 
 def get_plugin_config(name):
@@ -150,6 +196,20 @@ def set_plugin_config(name, data):
 def is_running(name):
     """Check if a named plugin instance is currently active."""
     return name in _instances
+
+
+def get_plugin_outputs(name):
+    """Return current output routing for a plugin."""
+    pcfg = _cfg.get("plugins", {}).get(name, {})
+    return pcfg.get("outputs", {})
+
+
+def set_plugin_outputs(name, outputs):
+    """Save output routing for a plugin."""
+    pcfg = _cfg.setdefault("plugins", {}).setdefault(name, {})
+    pcfg["outputs"] = outputs
+    from config import save_config
+    save_config(_cfg)
 
 
 # ── Process detection ──────────────────────────────────────────
@@ -190,7 +250,7 @@ def _start_plugin(name):
     if name in _instances:
         return True
     try:
-        inst = load_plugin(name, _cfg, _serial_sender)
+        inst = load_plugin(name, _cfg, _serial_sender, _overlays)
         if inst is not None:
             inst.start()
             _instances[name] = inst
@@ -351,3 +411,10 @@ def get_plugin_status(name):
         "message": "",
         "requirements": [],
     }
+
+
+# ── Widget definitions ─────────────────────────────────────
+
+
+
+

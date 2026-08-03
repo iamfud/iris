@@ -11,3 +11,4 @@ websockets>=12.0
 pyinstaller>=6.0
 pywebview>=4.0
 pygetwindow>=0.0.9
+qrcode>=7.4

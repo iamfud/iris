@@ -28,8 +28,17 @@ const unsigned long ACCESSORY_OVERLAY_MS = 1500;
 const unsigned long TEMP_FLASH_OFF_MS   = 1000;   // 1s off
 const unsigned long TEMP_FLASH_CYCLE_MS = 11000;  // 1s off + 10s on
 
+const unsigned long VISION_FLASH_TOGGLE_MS  = 500;    // blink half-period (on/off)
+const unsigned long VISION_FLASH_PERSIST_MS = 60000;  // keep flashing until PC clears it or 60s elapse
+// ALERT: aliases the flash path (generic 4-letter bold); same timings.
+const unsigned long ALERT_TOGGLE_MS  = VISION_FLASH_TOGGLE_MS;
+const unsigned long ALERT_PERSIST_MS = VISION_FLASH_PERSIST_MS;
+#define STICKY_SETTLE_LEN 7   // letters held after sticky scroll completes
+
 const unsigned long SERIAL_TIMEOUT_MS = 300000;   // 5 min no serial → display off
 const unsigned long REINIT_INTERVAL_MS = 10000;   // re-init MAX7219 regs every 10s
+const unsigned long PROGRESS_TIMEOUT_MS = 5000;   // progress bar hides 5s after last update
+#define PROGRESS_SETTLE_LEN 7   // letters shown once a long progress name has scrolled once
 
 #define EYE_FRAME_MS         50
 #define EYE_IDLE_MIN_MS    60000

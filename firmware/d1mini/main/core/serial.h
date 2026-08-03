@@ -27,6 +27,17 @@ extern void renderCurrentScreen();
 extern void applyDisplayOn();
 extern void setBrightnessLevelFromIndex();
 extern String sanitizeScrollText(String msg);
+extern bool notifyScrollOverride;
+extern unsigned long notifyScrollUntilMs;
+extern bool visionFlashActive;
+extern String visionFlashText;
+extern int visionFlashOffset;
+extern unsigned long visionFlashUntilMs;
+extern bool alertBlink;
+extern bool stickyActive;
+extern bool bigScrollActive;
+extern void startStickyScroll(const String& msg);
+extern void startBigScroll(const String& msg);
 extern unsigned long bootMs;
 
 extern void saveLiveSettings();
@@ -38,6 +49,13 @@ extern uint8_t vuBars[12];
 extern unsigned long lastVuMs;
 extern uint8_t currentVolume;
 extern unsigned long lastVolumeMs;
+extern bool progressActive;
+extern String progressName;
+extern uint8_t progressPercent;
+extern unsigned long lastProgressMs;
+extern int progressScrollOffset;
+extern bool progressScrollDone;
+extern String sanitizeProgressName(String msg);
 
 static char _sBuf[320];
 static uint16_t _sBufLen = 0;
@@ -107,9 +125,129 @@ void processSerialLine(const char* raw) {
     String title=(sep>=0)?payload.substring(0,sep):"";
     String msg=(sep>=0)?payload.substring(sep+1):payload;
     title.trim(); msg.trim();
-    if (msg.length()==0) return;
-    String display=(title.length()>0)?(title+" - "+msg+" "):(msg+" ");
+    String display;
+    if (title.length()>0&&msg.length()>0) display=title+" - "+msg+" ";
+    else if (title.length()>0) display=title+" ";
+    else display=msg+" ";
+    if (display.length()==0) return;
+    notifyScrollOverride=false;
+    stickyActive=false;
     if (featureNotificationsEnabled) startNotificationScroll(display);
+    return;
+  }
+  if (line.startsWith("STICKY:")) {
+    String payload=line.substring(7); payload.trim();
+    if (payload.length()==0 || payload.equalsIgnoreCase("OFF") || payload.equalsIgnoreCase("CLEAR")) {
+      stickyActive=false;
+      renderCurrentScreen();
+      return;
+    }
+    int sep=payload.indexOf('|');
+    String title=(sep>=0)?payload.substring(0,sep):"";
+    String msg=(sep>=0)?payload.substring(sep+1):payload;
+    title.trim(); msg.trim();
+    String display;
+    if (title.length()>0&&msg.length()>0) display=title+" - "+msg+" ";
+    else if (title.length()>0) display=title+" ";
+    else display=msg+" ";
+    if (display.length()==0) return;
+    notifyScrollUntilMs=0;
+    startStickyScroll(display);
+    renderCurrentScreen();
+    return;
+  }
+  if (line.startsWith("ALERT:")) {
+    String payload=line.substring(6); payload.trim();
+    if (payload.length()==0 || payload.equalsIgnoreCase("OFF") || payload.equalsIgnoreCase("CLEAR")) {
+      visionFlashActive=false;
+      renderCurrentScreen();
+      return;
+    }
+    // ALERT:text or ALERT:text|blink|solid
+    int sep=payload.indexOf('|');
+    String txt=(sep>=0)?payload.substring(0,sep):payload;
+    String mode=(sep>=0)?payload.substring(sep+1):"blink";
+    txt.trim(); mode.trim(); mode.toLowerCase();
+    txt=sanitizeScrollText(txt);
+    if (txt.length()>4) txt=txt.substring(0,4);
+    if (txt.length()==0) txt="!!!!";
+    visionFlashText=txt;
+    visionFlashOffset=max(0,(32-(int)txt.length()*8)/2);
+    visionFlashUntilMs=millis()+ALERT_PERSIST_MS;
+    visionFlashActive=true;
+    alertBlink=!(mode.startsWith("solid"));
+    notifyScrollUntilMs=0;
+    stickyActive=false;
+    bigScrollActive=false;
+    renderCurrentScreen();
+    return;
+  }
+  if (line.startsWith("PROG:")) {
+    String payload=line.substring(5); payload.trim();
+    if (payload.length()==0 || payload.equalsIgnoreCase("OFF") || payload.equalsIgnoreCase("CLEAR")) {
+      progressActive=false; lastProgressMs=0; progressName="";
+      renderCurrentScreen();
+      return;
+    }
+    int sep=payload.indexOf('|');
+    String name=(sep>=0)?payload.substring(0,sep):payload;
+    String pct=(sep>=0)?payload.substring(sep+1):"0";
+    name.trim(); pct.trim();
+    String safe=sanitizeProgressName(name);
+    uint8_t pctVal=(uint8_t)constrain(pct.toInt(),0,100);
+    if (safe.length()==0) { progressActive=false; renderCurrentScreen(); return; }
+    if (progressActive && safe==progressName && pctVal==progressPercent) {
+      // Keepalive for the same claim: refresh the auto-hide timer but do
+      // NOT restart the name scroll.
+      lastProgressMs=millis();
+      return;
+    }
+    progressName=safe;
+    progressPercent=pctVal;
+    progressScrollOffset=32;
+    progressScrollDone=false;
+    progressActive=true;
+    lastProgressMs=millis();
+    renderCurrentScreen();
+    return;
+  }
+  if (line.startsWith("VISION:")) {
+    // Legacy alias for emphasis notify (8x8 big scroll).
+    String payload=line.substring(7);
+    int sep=payload.indexOf('|');
+    String title=(sep>=0)?payload.substring(0,sep):"";
+    String msg=(sep>=0)?payload.substring(sep+1):payload;
+    title.trim(); msg.trim();
+    String display;
+    if (title.length()>0&&msg.length()>0) display=title+" - "+msg+" ";
+    else if (title.length()>0) display=title+" ";
+    else display=msg+" ";
+    if (display.length()==0) return;
+    notifyScrollUntilMs=0;
+    stickyActive=false;
+    startBigScroll(display);
+    renderCurrentScreen();
+    return;
+  }
+  if (line.startsWith("VISIONFLASH:")) {
+    // Legacy alias for ALERT:text|blink
+    String payload=line.substring(12); payload.trim();
+    if (payload.length()==0 || payload.equalsIgnoreCase("OFF")) {
+      visionFlashActive=false;
+      renderCurrentScreen();
+      return;
+    }
+    String txt=sanitizeScrollText(payload);
+    if (txt.length()>4) txt=txt.substring(0,4);
+    if (txt.length()==0) txt="!!!!";
+    visionFlashText=txt;
+    visionFlashOffset=max(0,(32-(int)txt.length()*8)/2);
+    visionFlashUntilMs=millis()+ALERT_PERSIST_MS;
+    visionFlashActive=true;
+    alertBlink=true;
+    notifyScrollUntilMs=0;
+    stickyActive=false;
+    renderCurrentScreen();
     return;
   }
   if (line.startsWith("STATS:")) {
@@ -220,6 +358,11 @@ void processSerialLine(const char* raw) {
     j+="\"wifi\":0,\"ip\":\"\",\"portal\":0,\"mqtt_connected\":0,\"wifi_connected\":0";
     j+="}";
     Serial.println("CONFIG:"+j);
+    return;
+  }
+  if (line=="IDENT?") {
+    Serial.print(F("IDENT:d1mini_max7219_"));
+    Serial.println(MAX_DEVICES);
     return;
   }
   if (line=="STATUS?") { Serial.println(F("STATUS:device=d1mini,wifi=0,portal=0")); return; }

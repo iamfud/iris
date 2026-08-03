@@ -335,6 +335,15 @@ header::after{
     align-items:center;
 }
 
+.header-actions{
+
+    display:flex;
+
+    align-items:center;
+
+    gap:10px;
+}
+
 header h1{
 
     color:white;
@@ -670,7 +679,7 @@ header p{
         font-size:13px;
     }
 
-    .done-btn{
+    #done-btn{
         display:none;
     }
 
@@ -2087,6 +2096,99 @@ header p{
     padding-bottom:0;
 }
 
+/* Panel page — active app volume tile */
+
+.vol-tile{
+    max-width:520px;
+    gap:14px;
+}
+
+.vol-heading{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    font-size:14px;
+    font-weight:600;
+    text-transform:uppercase;
+    letter-spacing:.5px;
+    color:var(--neon);
+    padding:0 4px;
+}
+
+.vol-heading-icon{
+    font-size:20px;
+    color:var(--neon);
+}
+
+.vol-app{
+    font-size:16px;
+    font-weight:600;
+    color:var(--fg);
+    padding:0 4px;
+}
+
+.vol-app-none{
+    color:var(--fg-dim);
+    font-weight:400;
+}
+
+.vol-slider-row{
+    display:flex;
+    align-items:center;
+    gap:12px;
+    padding:0 4px;
+}
+
+.vol-slider-row .settings-slider{
+    flex:1;
+}
+
+.settings-slider:disabled{
+    cursor:not-allowed;
+    opacity:.45;
+}
+
+.vol-slider-row .settings-slider-value{
+    min-width:44px;
+    text-align:right;
+    font-variant-numeric:tabular-nums;
+}
+
+
+/* Device offline state (Companion Device page, no device connected) */
+
+.device-offline{
+    flex:1;
+    min-height:0;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:30px;
+}
+
+.device-offline-tile{
+    width:100%;
+    height:100%;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    background:var(--bg-card);
+    border:1px solid var(--border);
+    border-radius:var(--radius-card);
+}
+
+.device-offline-icon{
+    font-size:64px;
+    color:#c9c9c9;
+}
+
+.device-offline-msg{
+    margin-top:56px;
+    font-size:16px;
+    color:var(--fg-dim);
+}
+
 /* Controls */
 
 .settings-control{
@@ -2347,6 +2449,31 @@ header p{
     font-weight:500;
 }
 
+/* QR code */
+
+.settings-qr-wrap{
+    display:flex;
+    flex-direction:column;
+    align-items:flex-start;
+    gap:10px;
+    padding:10px;
+}
+
+.settings-qr{
+    width:190px;
+    height:190px;
+    image-rendering:pixelated;
+    border-radius:8px;
+    background:#fff;
+    padding:6px;
+}
+
+.settings-qr-url{
+    font-size:12px;
+    color:var(--fg-dim);
+    word-break:break-all;
+}
+
 /* File/Folder picker */
 
 .settings-picker-wrap{
@@ -2376,6 +2503,338 @@ header p{
 
 .settings-picker-btn .material-icons-outlined{
     font-size:20px;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   VISION
+   ═══════════════════════════════════════════════════════════════ */
+
+.vision-content{
+    grid-template-columns:1fr;
+    align-content:start;
+    gap:16px;
+}
+
+.vision-toolbar{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:16px;
+    flex-wrap:wrap;
+}
+
+.vision-toolbar-title{
+    font-size:14px;
+    color:var(--fg-dim);
+}
+
+.vision-add-btn{
+    padding:10px 18px;
+}
+
+.vision-grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
+    gap:16px;
+}
+
+.vision-card{
+    background:var(--bg-card);
+    border:1px solid var(--border);
+    border-radius:var(--radius-card);
+    padding:18px 20px;
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+}
+
+.vision-card-head{
+    display:flex;
+    align-items:center;
+    gap:8px;
+}
+
+.vision-status-dot{
+    width:8px;
+    height:8px;
+    border-radius:50%;
+    flex-shrink:0;
+}
+
+.vision-card-name{
+    font-size:15px;
+    font-weight:600;
+    color:var(--fg);
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+}
+
+.vision-card-meta{
+    display:flex;
+    align-items:center;
+    gap:6px;
+    font-size:12px;
+    color:var(--fg-dim);
+}
+
+.vision-card-meta .material-icons-outlined{
+    font-size:16px;
+}
+
+.vision-card-mode{
+    font-size:12px;
+    color:var(--neon);
+    text-transform:uppercase;
+    letter-spacing:.5px;
+}
+
+.vision-card-value{
+    font-size:34px;
+    font-weight:700;
+    font-family:Consolas,monospace;
+}
+
+.vision-card-status{
+    font-size:12px;
+    color:var(--fg-dim);
+}
+
+.vision-card-actions{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    flex-wrap:wrap;
+    margin-top:6px;
+}
+
+.vision-card-actions .settings-btn{
+    padding:8px 14px;
+    font-size:13px;
+}
+
+.vision-card-actions .settings-btn.danger{
+    background:rgba(255,51,85,.08);
+    border-color:rgba(255,51,85,.25);
+    color:var(--neon-red);
+}
+
+.vision-toggle-label{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    font-size:13px;
+    color:var(--fg-dim);
+}
+
+.vision-empty{
+    grid-column:1/-1;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    gap:10px;
+    padding:60px 20px;
+    color:var(--fg-dim);
+    background:var(--bg-card);
+    border:1px dashed var(--border);
+    border-radius:var(--radius-card);
+    text-align:center;
+}
+
+.vision-empty .material-icons-outlined{
+    font-size:48px;
+    opacity:.4;
+}
+
+.vision-empty-sub{
+    font-size:13px;
+}
+
+/* Wizard */
+
+.vision-stepper{
+    display:flex;
+    align-items:center;
+    gap:6px;
+    flex-wrap:wrap;
+    padding:14px 18px;
+    background:var(--bg-card);
+    border:1px solid var(--border);
+    border-radius:var(--radius-card);
+}
+
+.vision-step{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    padding:6px 12px;
+    border-radius:var(--radius-small);
+    color:var(--fg-dim);
+    font-size:13px;
+    user-select:none;
+}
+
+.vision-step-num{
+    width:22px;
+    height:22px;
+    border-radius:50%;
+    background:#1a1a1a;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-size:12px;
+    font-weight:600;
+}
+
+.vision-step.done .vision-step-num{
+    background:rgba(0,255,136,.15);
+    color:var(--neon-grn);
+}
+
+.vision-step.done{
+    color:var(--fg);
+}
+
+.vision-step.active{
+    color:var(--neon);
+}
+
+.vision-step.active .vision-step-num{
+    background:var(--neon);
+    color:white;
+}
+
+.vision-wizard-body{
+    background:var(--bg-card);
+    border:1px solid var(--border);
+    border-radius:var(--radius-card);
+    padding:26px 28px;
+}
+
+.vision-wizard-content{
+    display:flex;
+    flex-direction:column;
+}
+
+.vision-wizard-content .vision-wizard-body{
+    flex:1;
+}
+
+.vision-wizard-pane h3{
+    font-size:18px;
+    font-weight:600;
+    color:var(--fg);
+    margin-bottom:8px;
+}
+
+.vision-wizard-pane p{
+    font-size:14px;
+    color:var(--fg-dim);
+    margin-bottom:16px;
+}
+
+.vision-capture-btn{
+    min-width:220px;
+}
+
+.vision-capture-status{
+    margin-top:12px;
+    font-size:13px;
+    color:var(--neon-red);
+}
+
+.vision-swatch{
+    display:inline-block;
+    width:20px;
+    height:20px;
+    border-radius:4px;
+    border:1px solid var(--border);
+    vertical-align:middle;
+    margin-left:8px;
+}
+
+.vision-preview-canvas{
+    max-width:100%;
+    max-height:340px;
+    background:#000;
+    border:1px solid var(--border);
+    border-radius:var(--radius-small);
+    cursor:crosshair;
+    display:block;
+    margin-bottom:8px;
+}
+
+.vision-wizard-nav{
+    display:flex;
+    justify-content:flex-end;
+    gap:10px;
+    margin-top:20px;
+}
+
+.vision-wizard-nav .settings-btn{
+    min-width:120px;
+}
+
+.vision-wizard-form{
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(240px,1fr));
+    gap:4px 24px;
+}
+
+.vision-wizard-form .settings-control{
+    min-width:0;
+}
+
+.settings-color{
+    background:var(--main-bg);
+    border:1px solid var(--border);
+    border-radius:var(--radius-small);
+    padding:4px;
+    width:56px;
+    height:38px;
+    cursor:pointer;
+    flex-shrink:0;
+}
+
+.vision-color-row{
+    display:flex;
+    align-items:center;
+    gap:10px;
+}
+
+.vision-recapture-btn{
+    padding:0;
+    width:38px;
+    height:38px;
+    flex-shrink:0;
+    border-radius:var(--radius-small);
+}
+
+.vision-recapture-btn .material-icons-outlined{
+    font-size:20px;
+}
+
+.vision-color-row .settings-input{
+    flex:1;
+    font-family:Consolas,monospace;
+    text-transform:uppercase;
+    min-width:0;
+}
+
+.vision-test-readout{
+    font-size:64px;
+    font-weight:700;
+    font-family:Consolas,monospace;
+    color:var(--neon-red);
+    text-align:center;
+    padding:24px 0 8px;
+}
+
+.vision-test-status{
+    text-align:center;
+    font-size:14px;
+    color:var(--fg-dim);
 }
 
 /* ═══════════════════════════════════════════════════════════════

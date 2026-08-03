@@ -2,12 +2,50 @@
   "name": "elite_dangerous",
   "version": "1.0",
   "display_name": "Elite Dangerous",
-  "description": "Journal-based telemetry from Elite Dangerous",
+  "description": "",
   "icon": "videogame_asset",
-  "type": "app",
+  "type": "service",
   "exe_default": "EliteDangerous64.exe",
   "message_not_running": "Elite Dangerous is not running. The plugin will activate when the game is detected.",
-  "min_api_version": "1.0",
+  "min_api_version": "2.0",
+
+  "capabilities": {
+    "status": true,
+    "configuration": true,
+    "outputs": true,
+    "live_data": true,
+    "actions": false,
+    "diagnostics": false
+  },
+
+  "labels": {
+    "status": "CONNECTION",
+    "configuration": "GAME DETECTION",
+    "outputs": "OUTPUT ROUTING",
+    "live_data": "GAME STATE"
+  },
+
+  "status": [
+    { "key": "status_code", "label": "Status", "source": "lifecycle" },
+    { "key": "commander", "label": "Commander", "source": "plugin" },
+    { "key": "system", "label": "System", "source": "plugin" }
+  ],
+
+  "outputs": [
+    { "id": "overlay", "label": "Overlay", "enabled": true },
+    { "id": "dashboard", "label": "Dashboard", "enabled": true },
+    { "id": "display", "label": "Hardware Display", "enabled": false }
+  ],
+
+  "live_data": {
+    "title": "Telemetry",
+    "fields": [
+      { "key": "ship", "label": "Ship", "type": "string" },
+      { "key": "system", "label": "System", "type": "string" },
+      { "key": "fuel", "label": "Fuel", "type": "float" }
+    ]
+  },
+
   "settings": [
     {
       "title": "Game Detection",

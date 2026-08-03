@@ -2,8 +2,8 @@
   "pages": [
     {
       "id": "features",
-      "title": "Pixel Clock",
-      "subtitle": "Configure LED matrix",
+      "title": "Companion Device",
+      "subtitle": "Configure companion device",
       "icon": "widgets",
       "nav_group": "main",
       "sections": [
@@ -86,30 +86,6 @@
       ]
     },
     {
-      "id": "home_assistant",
-      "title": "Home Assistant",
-      "subtitle": "Coming soon",
-      "icon": "home",
-      "nav_group": "main",
-      "sections": []
-    },
-    {
-      "id": "derek",
-      "title": "Derek",
-      "subtitle": "Coming soon",
-      "icon": "memory",
-      "nav_group": "main",
-      "sections": []
-    },
-    {
-      "id": "rgb",
-      "title": "RGB",
-      "subtitle": "Coming soon",
-      "icon": "palette",
-      "nav_group": "main",
-      "sections": []
-    },
-    {
       "id": "notifications",
       "title": "Notifications",
       "subtitle": "Coming soon",
@@ -124,6 +100,58 @@
       "icon": "settings",
       "nav_group": "bottom",
       "sections": []
+    },
+    {
+      "id": "network",
+      "title": "Network",
+      "subtitle": "HTTP/WS bridge security",
+      "icon": "wifi",
+      "nav_group": "bottom",
+      "sections": [
+        {
+          "title": "Access",
+          "controls": [
+            {
+              "type": "toggle",
+              "key": "lan_access",
+              "label": "Allow LAN access",
+              "description": "Allow other devices on your network to reach the panel API. Restart required. All requests still require the auth token."
+            },
+            {
+              "type": "info",
+              "key": "_security_note",
+              "label": "",
+              "value": "The API is bound to localhost by default. Enabling LAN access binds to all interfaces but every request still needs the auth token below."
+            }
+          ]
+        },
+        {
+          "title": "Auth Token",
+          "controls": [
+            {
+              "type": "info",
+              "key": "http_token",
+              "label": "Token"
+            },
+            {
+              "type": "button",
+              "label": "Copy token",
+              "icon": "content_copy",
+              "action": "copy_token"
+            }
+          ]
+        },
+        {
+          "title": "LAN Panel",
+          "controls": [
+            {
+              "type": "qr",
+              "key": "lan_url",
+              "label": "Scan to open panel"
+            }
+          ]
+        }
+      ]
     }
   ],
   "control_types": {

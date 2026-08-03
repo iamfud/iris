@@ -58,29 +58,64 @@ const uint8_t* dayLetterGlyph(char c) {
 }
 
 const uint8_t TC6_A[6]={0b010,0b101,0b101,0b111,0b101,0b101};
+const uint8_t TC6_B[6]={0b110,0b101,0b110,0b101,0b101,0b110};
 const uint8_t TC6_C[6]={0b111,0b100,0b100,0b100,0b100,0b111};
 const uint8_t TC6_D[6]={0b110,0b101,0b101,0b101,0b101,0b110};
 const uint8_t TC6_E[6]={0b111,0b100,0b110,0b100,0b100,0b111};
 const uint8_t TC6_F[6]={0b111,0b100,0b110,0b100,0b100,0b100};
+const uint8_t TC6_G[6]={0b111,0b100,0b100,0b101,0b101,0b111};
 const uint8_t TC6_H[6]={0b101,0b101,0b111,0b101,0b101,0b101};
 const uint8_t TC6_I[6]={0b111,0b010,0b010,0b010,0b010,0b111};
+const uint8_t TC6_J[6]={0b011,0b001,0b001,0b001,0b101,0b111};
+const uint8_t TC6_K[6]={0b101,0b101,0b110,0b110,0b101,0b101};
+const uint8_t TC6_L[6]={0b100,0b100,0b100,0b100,0b100,0b111};
 const uint8_t TC6_M[6]={0b101,0b111,0b101,0b101,0b101,0b101};
 const uint8_t TC6_N[6]={0b101,0b101,0b111,0b101,0b101,0b101};
 const uint8_t TC6_O[6]={0b111,0b101,0b101,0b101,0b101,0b111};
+const uint8_t TC6_P[6]={0b110,0b101,0b110,0b100,0b100,0b100};
+const uint8_t TC6_Q[6]={0b111,0b101,0b101,0b101,0b101,0b011};
 const uint8_t TC6_R[6]={0b110,0b101,0b110,0b101,0b101,0b101};
 const uint8_t TC6_S[6]={0b111,0b100,0b111,0b001,0b001,0b111};
 const uint8_t TC6_T[6]={0b111,0b010,0b010,0b010,0b010,0b010};
 const uint8_t TC6_U[6]={0b101,0b101,0b101,0b101,0b101,0b111};
+const uint8_t TC6_V[6]={0b101,0b101,0b101,0b101,0b010,0b010};
 const uint8_t TC6_W[6]={0b101,0b101,0b101,0b111,0b111,0b101};
+const uint8_t TC6_X[6]={0b101,0b010,0b101,0b101,0b010,0b101};
+const uint8_t TC6_Y[6]={0b101,0b101,0b111,0b010,0b010,0b010};
+const uint8_t TC6_Z[6]={0b111,0b001,0b010,0b100,0b100,0b111};
+const uint8_t TC6_0[6]={0b111,0b101,0b101,0b101,0b101,0b111};
+const uint8_t TC6_1[6]={0b010,0b110,0b010,0b010,0b010,0b111};
+const uint8_t TC6_2[6]={0b111,0b001,0b001,0b111,0b100,0b111};
+const uint8_t TC6_3[6]={0b111,0b001,0b001,0b111,0b001,0b111};
+const uint8_t TC6_4[6]={0b101,0b101,0b111,0b001,0b001,0b001};
+const uint8_t TC6_5[6]={0b111,0b100,0b100,0b111,0b001,0b111};
+const uint8_t TC6_6[6]={0b111,0b100,0b100,0b111,0b101,0b111};
+const uint8_t TC6_7[6]={0b111,0b001,0b001,0b001,0b001,0b001};
+const uint8_t TC6_8[6]={0b111,0b101,0b101,0b111,0b101,0b111};
+const uint8_t TC6_9[6]={0b111,0b101,0b101,0b111,0b001,0b111};
 const uint8_t TC6_SPC[6]={0,0,0,0,0,0};
+const uint8_t TC6_DOT[6]={0,0,0,0,0,0b010};
+const uint8_t TC6_DASH[6]={0,0,0,0b111,0,0};
+const uint8_t TC6_UNDR[6]={0,0,0,0,0,0b111};
+const uint8_t TC6_EXCL[6]={0b010,0b010,0b010,0b010,0,0b010};
 
 const uint8_t* tc6Letter(char c) {
   switch (c) {
-    case 'A': return TC6_A; case 'C': return TC6_C; case 'D': return TC6_D;
-    case 'E': return TC6_E; case 'F': return TC6_F; case 'H': return TC6_H;
-    case 'I': return TC6_I; case 'M': return TC6_M; case 'N': return TC6_N;
-    case 'O': return TC6_O; case 'R': return TC6_R; case 'S': return TC6_S;
-    case 'T': return TC6_T; case 'U': return TC6_U; case 'W': return TC6_W;
+    case 'A': return TC6_A; case 'B': return TC6_B; case 'C': return TC6_C;
+    case 'D': return TC6_D; case 'E': return TC6_E; case 'F': return TC6_F;
+    case 'G': return TC6_G; case 'H': return TC6_H; case 'I': return TC6_I;
+    case 'J': return TC6_J; case 'K': return TC6_K; case 'L': return TC6_L;
+    case 'M': return TC6_M; case 'N': return TC6_N; case 'O': return TC6_O;
+    case 'P': return TC6_P; case 'Q': return TC6_Q; case 'R': return TC6_R;
+    case 'S': return TC6_S; case 'T': return TC6_T; case 'U': return TC6_U;
+    case 'V': return TC6_V; case 'W': return TC6_W; case 'X': return TC6_X;
+    case 'Y': return TC6_Y; case 'Z': return TC6_Z;
+    case '0': return TC6_0; case '1': return TC6_1; case '2': return TC6_2;
+    case '3': return TC6_3; case '4': return TC6_4; case '5': return TC6_5;
+    case '6': return TC6_6; case '7': return TC6_7; case '8': return TC6_8;
+    case '9': return TC6_9;
+    case ' ': return TC6_SPC; case '.': return TC6_DOT;
+    case '-': return TC6_DASH; case '_': return TC6_UNDR; case '!': return TC6_EXCL;
     default:  return TC6_SPC;
   }
 }
@@ -245,6 +280,109 @@ const uint8_t* scrollGlyph(char c) {
     case '_':  return SF_UNDR;  case '{': return SF_LBRC;
     case '}':  return SF_RBRC;  case '~': return SF_TILD;
     default:   return SF_SPC;
+  }
+}
+
+// ── 8x8 full-matrix font (one letter fills a whole MAX7219 matrix) ──
+// Each glyph is 8 bytes = 8 rows; bit 7 (0b1.......) is the leftmost column.
+const uint8_t GL8_A[8]={0b00011000,0b00100100,0b01000010,0b01000010,0b01111110,0b01000010,0b01000010,0b00000000};
+const uint8_t GL8_B[8]={0b01111000,0b01000100,0b01000100,0b01111000,0b01000100,0b01000100,0b01111000,0b00000000};
+const uint8_t GL8_C[8]={0b00111100,0b01000010,0b01000000,0b01000000,0b01000000,0b01000010,0b00111100,0b00000000};
+const uint8_t GL8_D[8]={0b01111000,0b01000100,0b01000010,0b01000010,0b01000010,0b01000100,0b01111000,0b00000000};
+const uint8_t GL8_E[8]={0b01111110,0b01000000,0b01000000,0b01111000,0b01000000,0b01000000,0b01111110,0b00000000};
+const uint8_t GL8_F[8]={0b01111110,0b01000000,0b01000000,0b01111000,0b01000000,0b01000000,0b01000000,0b00000000};
+const uint8_t GL8_G[8]={0b00111100,0b01000010,0b01000000,0b01001110,0b01000010,0b01000010,0b00111100,0b00000000};
+const uint8_t GL8_H[8]={0b01000010,0b01000010,0b01000010,0b01111110,0b01000010,0b01000010,0b01000010,0b00000000};
+const uint8_t GL8_I[8]={0b00111110,0b00001000,0b00001000,0b00001000,0b00001000,0b00001000,0b00111110,0b00000000};
+const uint8_t GL8_J[8]={0b00001110,0b00000100,0b00000100,0b00000100,0b00000100,0b01000100,0b00111000,0b00000000};
+const uint8_t GL8_K[8]={0b01000010,0b01000100,0b01001000,0b01110000,0b01001000,0b01000100,0b01000010,0b00000000};
+const uint8_t GL8_L[8]={0b01000000,0b01000000,0b01000000,0b01000000,0b01000000,0b01000000,0b01111110,0b00000000};
+const uint8_t GL8_M[8]={0b01000010,0b01100110,0b01011010,0b01000010,0b01000010,0b01000010,0b01000010,0b00000000};
+const uint8_t GL8_N[8]={0b01000010,0b01100010,0b01010010,0b01001010,0b01000110,0b01000010,0b01000010,0b00000000};
+const uint8_t GL8_O[8]={0b00111100,0b01000010,0b01000010,0b01000010,0b01000010,0b01000010,0b00111100,0b00000000};
+const uint8_t GL8_P[8]={0b01111000,0b01000100,0b01000100,0b01111000,0b01000000,0b01000000,0b01000000,0b00000000};
+const uint8_t GL8_Q[8]={0b00111100,0b01000010,0b01000010,0b01000010,0b01001010,0b01000100,0b00111010,0b00000000};
+const uint8_t GL8_R[8]={0b01111000,0b01000100,0b01000100,0b01111000,0b01001000,0b01000100,0b01000010,0b00000000};
+const uint8_t GL8_S[8]={0b00111100,0b01000010,0b01000000,0b00111100,0b00000010,0b01000010,0b00111100,0b00000000};
+const uint8_t GL8_T[8]={0b01111110,0b00001000,0b00001000,0b00001000,0b00001000,0b00001000,0b00001000,0b00000000};
+const uint8_t GL8_U[8]={0b01000010,0b01000010,0b01000010,0b01000010,0b01000010,0b01000010,0b00111100,0b00000000};
+const uint8_t GL8_V[8]={0b01000010,0b01000010,0b01000010,0b01000010,0b01000010,0b00100100,0b00011000,0b00000000};
+const uint8_t GL8_W[8]={0b01000010,0b01000010,0b01000010,0b01000010,0b01011010,0b01100110,0b01000010,0b00000000};
+const uint8_t GL8_X[8]={0b01000010,0b01000010,0b00100100,0b00011000,0b00100100,0b01000010,0b01000010,0b00000000};
+const uint8_t GL8_Y[8]={0b01000010,0b01000010,0b00100100,0b00011000,0b00011000,0b00011000,0b00011000,0b00000000};
+const uint8_t GL8_Z[8]={0b01111110,0b00000010,0b00000100,0b00001000,0b00010000,0b00100000,0b01111110,0b00000000};
+const uint8_t GL8_0[8]={0b00111100,0b01000010,0b01000110,0b01001010,0b01010010,0b01100010,0b00111100,0b00000000};
+const uint8_t GL8_1[8]={0b00001000,0b00011000,0b00101000,0b00001000,0b00001000,0b00001000,0b00111110,0b00000000};
+const uint8_t GL8_2[8]={0b00111100,0b01000010,0b00000010,0b00000100,0b00011000,0b00100000,0b01111110,0b00000000};
+const uint8_t GL8_3[8]={0b00111100,0b01000010,0b00000010,0b00111100,0b00000010,0b01000010,0b00111100,0b00000000};
+const uint8_t GL8_4[8]={0b00000100,0b00001100,0b00010100,0b00100100,0b01111110,0b00000100,0b00000100,0b00000000};
+const uint8_t GL8_5[8]={0b01111110,0b01000000,0b01111000,0b00000010,0b00000010,0b01000010,0b00111100,0b00000000};
+const uint8_t GL8_6[8]={0b00111100,0b01000000,0b01111000,0b01000100,0b01000010,0b01000010,0b00111100,0b00000000};
+const uint8_t GL8_7[8]={0b01111110,0b00000010,0b00000100,0b00001000,0b00010000,0b00010000,0b00010000,0b00000000};
+const uint8_t GL8_8[8]={0b00111100,0b01000010,0b01000010,0b00111100,0b01000010,0b01000010,0b00111100,0b00000000};
+const uint8_t GL8_9[8]={0b00111100,0b01000010,0b01000010,0b00111110,0b00000010,0b00000010,0b00111100,0b00000000};
+const uint8_t GL8_SPC[8]={0,0,0,0,0,0,0,0};
+const uint8_t GL8_EXCL[8]={0b00011000,0b00011000,0b00011000,0b00011000,0b00011000,0b00000000,0b00011000,0b00000000};
+const uint8_t GL8_DQUOT[8]={0b01000100,0b01000100,0b01000100,0,0,0,0,0};
+const uint8_t GL8_HASH[8]={0b00100100,0b00100100,0b11111110,0b00100100,0b11111110,0b00100100,0b00100100,0b00000000};
+const uint8_t GL8_DOLR[8]={0b00001000,0b00111110,0b01001000,0b00111100,0b00001010,0b01111100,0b00001000,0b00000000};
+const uint8_t GL8_PCNT[8]={0b01100010,0b00100100,0b00001000,0b00010000,0b00100000,0b01001000,0b10001100,0b00000000};
+const uint8_t GL8_AMP[8]={0b00110000,0b01001000,0b01001000,0b00110000,0b01001010,0b01000100,0b00111010,0b00000000};
+const uint8_t GL8_SQUOT[8]={0b00011000,0b00011000,0b00001000,0b00010000,0,0,0,0};
+const uint8_t GL8_LPAR[8]={0b00001100,0b00010000,0b00100000,0b00100000,0b00100000,0b00010000,0b00001100,0b00000000};
+const uint8_t GL8_RPAR[8]={0b00110000,0b00001000,0b00000100,0b00000100,0b00000100,0b00001000,0b00110000,0b00000000};
+const uint8_t GL8_STAR[8]={0,0b00100100,0b00011000,0b01111110,0b00011000,0b00100100,0,0};
+const uint8_t GL8_PLUS[8]={0,0b00001000,0b00001000,0b01111110,0b00001000,0b00001000,0,0};
+const uint8_t GL8_COMMA[8]={0,0,0,0,0,0b00011000,0b00011000,0b00001000};
+const uint8_t GL8_MINUS[8]={0,0,0,0b01111110,0,0,0,0};
+const uint8_t GL8_DOT[8]={0,0,0,0,0,0b00011000,0b00011000,0};
+const uint8_t GL8_SLASH[8]={0b00000010,0b00000100,0b00001000,0b00010000,0b00100000,0b01000000,0b10000000,0b00000000};
+const uint8_t GL8_COLON[8]={0,0b00011000,0b00011000,0,0b00011000,0b00011000,0,0};
+const uint8_t GL8_SEMI[8]={0,0b00011000,0b00011000,0,0b00011000,0b00011000,0b00001000,0b00010000};
+const uint8_t GL8_LT[8]={0b00000100,0b00001000,0b00010000,0b00100000,0b00010000,0b00001000,0b00000100,0b00000000};
+const uint8_t GL8_EQ[8]={0,0,0b01111110,0,0b01111110,0,0,0};
+const uint8_t GL8_GT[8]={0b00100000,0b00010000,0b00001000,0b00000100,0b00001000,0b00010000,0b00100000,0b00000000};
+const uint8_t GL8_QMARK[8]={0b00111100,0b01000010,0b00000010,0b00000100,0b00001000,0,0b00001000,0};
+const uint8_t GL8_AT[8]={0b00111100,0b01000010,0b01001010,0b01011010,0b01011000,0b01000000,0b00111100,0b00000000};
+const uint8_t GL8_LBRK[8]={0b00111100,0b00100000,0b00100000,0b00100000,0b00100000,0b00100000,0b00111100,0b00000000};
+const uint8_t GL8_RBRK[8]={0b00111100,0b00000100,0b00000100,0b00000100,0b00000100,0b00000100,0b00111100,0b00000000};
+const uint8_t GL8_CARET[8]={0b00001000,0b00010100,0b00100010,0,0,0,0,0};
+const uint8_t GL8_UNDR[8]={0,0,0,0,0,0,0b01111110,0};
+const uint8_t GL8_LBRC[8]={0b00001110,0b00001000,0b00001000,0b00110000,0b00001000,0b00001000,0b00001110,0b00000000};
+const uint8_t GL8_RBRC[8]={0b01110000,0b00010000,0b00010000,0b00001100,0b00010000,0b00010000,0b01110000,0b00000000};
+const uint8_t GL8_TILD[8]={0,0b00110010,0b01001100,0,0,0,0,0};
+
+const uint8_t* glyph8(char c) {
+  switch (c) {
+    case 'A': return GL8_A; case 'B': return GL8_B; case 'C': return GL8_C;
+    case 'D': return GL8_D; case 'E': return GL8_E; case 'F': return GL8_F;
+    case 'G': return GL8_G; case 'H': return GL8_H; case 'I': return GL8_I;
+    case 'J': return GL8_J; case 'K': return GL8_K; case 'L': return GL8_L;
+    case 'M': return GL8_M; case 'N': return GL8_N; case 'O': return GL8_O;
+    case 'P': return GL8_P; case 'Q': return GL8_Q; case 'R': return GL8_R;
+    case 'S': return GL8_S; case 'T': return GL8_T; case 'U': return GL8_U;
+    case 'V': return GL8_V; case 'W': return GL8_W; case 'X': return GL8_X;
+    case 'Y': return GL8_Y; case 'Z': return GL8_Z;
+    case '0': return GL8_0; case '1': return GL8_1; case '2': return GL8_2;
+    case '3': return GL8_3; case '4': return GL8_4; case '5': return GL8_5;
+    case '6': return GL8_6; case '7': return GL8_7; case '8': return GL8_8;
+    case '9': return GL8_9;
+    case ' ':  return GL8_SPC;  case '!':  return GL8_EXCL;
+    case '"':  return GL8_DQUOT; case '#': return GL8_HASH;
+    case '$':  return GL8_DOLR;  case '%': return GL8_PCNT;
+    case '&':  return GL8_AMP;   case '\'':return GL8_SQUOT;
+    case '(':  return GL8_LPAR;  case ')': return GL8_RPAR;
+    case '*':  return GL8_STAR;  case '+': return GL8_PLUS;
+    case ',':  return GL8_COMMA; case '-': return GL8_MINUS;
+    case '.':  return GL8_DOT;   case '/': return GL8_SLASH;
+    case ':':  return GL8_COLON; case ';': return GL8_SEMI;
+    case '<':  return GL8_LT;    case '=': return GL8_EQ;
+    case '>':  return GL8_GT;    case '?': return GL8_QMARK;
+    case '@':  return GL8_AT;    case '[': return GL8_LBRK;
+    case ']':  return GL8_RBRK;  case '^': return GL8_CARET;
+    case '_':  return GL8_UNDR;  case '{': return GL8_LBRC;
+    case '}':  return GL8_RBRC;  case '~': return GL8_TILD;
+    default:   return GL8_SPC;
   }
 }
 

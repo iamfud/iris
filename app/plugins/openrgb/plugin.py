@@ -7,9 +7,10 @@ class Plugin:
     name = "openrgb"
     display_name = "OpenRGB"
 
-    def __init__(self, cfg, serial_sender=None):
+    def __init__(self, cfg, serial_sender=None, overlays=None):
         self._cfg = cfg
         self._connector = OpenRGBConnector()
+        self.overlays = overlays
 
     def start(self):
         self._connector.connect()

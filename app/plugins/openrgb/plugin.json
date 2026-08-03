@@ -6,7 +6,50 @@
   "icon": "palette",
   "type": "service",
   "message_not_running": "OpenRGB SDK server is not running. Start OpenRGB with the SDK server enabled.",
-  "min_api_version": "1.0",
+  "min_api_version": "2.0",
+
+  "capabilities": {
+    "status": true,
+    "configuration": true,
+    "outputs": true,
+    "live_data": true,
+    "actions": true,
+    "diagnostics": false
+  },
+
+  "labels": {
+    "status": "CONNECTION",
+    "configuration": "RGB CONTROL",
+    "outputs": "OUTPUT ROUTING",
+    "live_data": "DEVICES",
+    "actions": "COMMANDS"
+  },
+
+  "status": [
+    { "key": "status_code", "label": "Status", "source": "lifecycle" },
+    { "key": "sdk_version", "label": "SDK Version", "source": "plugin" },
+    { "key": "device_count", "label": "Devices", "source": "plugin" }
+  ],
+
+  "outputs": [
+    { "id": "overlay", "label": "Overlay", "enabled": false },
+    { "id": "dashboard", "label": "Dashboard", "enabled": true },
+    { "id": "display", "label": "Hardware Display", "enabled": false }
+  ],
+
+  "live_data": {
+    "title": "RGB Devices",
+    "fields": [
+      { "key": "device_count", "label": "Connected devices", "type": "int" },
+      { "key": "active_profile", "label": "Active profile", "type": "string" }
+    ]
+  },
+
+  "actions": [
+    { "id": "refresh", "label": "Refresh", "icon": "refresh", "confirm": false },
+    { "id": "reconnect", "label": "Reconnect", "icon": "link", "confirm": false }
+  ],
+
   "settings": [
     {
       "title": "RGB Control",

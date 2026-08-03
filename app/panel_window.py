@@ -2,19 +2,14 @@
 
 Opens the settings HTML UI in a native window with no browser chrome.
 Uses multiprocessing so pywebview gets its own main thread (required by Edge/WebView2 on Windows).
-HTML loads from file:// for instant render; API data comes from HTTP (ws_bridge).
+HTML and API both load from the local HTTP bridge (same-origin) so no CORS is needed.
 """
 
 import ctypes
 import logging
 import multiprocessing
-import os
 
 log = logging.getLogger("iris.panel")
-
-_html_dir = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "HTML"
-)
 
 _DEFAULT_WIDTH = 950
 _DEFAULT_HEIGHT = 680
@@ -50,6 +45,20 @@ class _JSApi:
     def close_panel(self):
         if self._window:
             self._window.destroy()
+
+    def hide_panel(self):
+        if self._window:
+            try:
+                self._window.hide()
+            except Exception:
+                pass
+
+    def show_panel(self):
+        if self._window:
+            try:
+                self._window.show()
+            except Exception:
+                pass
 
     def browse_exe(self):
         if not self._window:
@@ -189,9 +198,8 @@ def _run(width, height, x=None, y=None):
     }
 
     api = _JSApi(state)
-    html_path = os.path.join(_html_dir, "index.html")
-    file_url = "file:///" + html_path.replace("\\", "/")
-    print(f"[panel] loading {file_url} ({width}x{height})")
+    panel_url = "http://127.0.0.1:15502/index.html"
+    print(f"[panel] loading {panel_url} ({width}x{height})")
     try:
         if x is not None and y is not None:
             x, y = _clamp_to_screen(x, y, width, height)
@@ -212,7 +220,7 @@ def _run(width, height, x=None, y=None):
             create_kwargs["x"] = x
             create_kwargs["y"] = y
 
-        w = webview.create_window("Iris", file_url, **create_kwargs)
+        w = webview.create_window("Iris", panel_url, **create_kwargs)
         api._window = w
 
         def _on_moved(mx, my):

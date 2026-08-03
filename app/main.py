@@ -27,10 +27,10 @@ from providers.openrgb import OpenRGBProvider
 import plugin_manager
 from plugin_manager import start_all as start_plugins, stop_all as stop_plugins, check_plugins
 import panel_window
-from settings_dialog import SettingsDialog
-from tray import make_icon_image, build_tray_menu
 from main_window import MainWindow
+from tray import make_icon_image, build_tray_menu
 from overlay_window import OverlayWindow
+from overlay_service import OverlayService
 from stopwatch import StopwatchOverlay
 
 if getattr(sys, "frozen", False):
@@ -59,6 +59,7 @@ class IrisApp:
         self._root = None
         self._main_win = None
         self._overlay = None
+        self._overlays = None
         self._stopwatch = None
         self._alarm_active = False
         self._alarm_silenced = False
@@ -67,7 +68,7 @@ class IrisApp:
         self.cfg[key] = value
         save_config(self.cfg)
 
-    def _setup_providers(self):
+    def _setup_providers(self, overlays=None):
         providers = [
             StatsProvider(self.cfg, serial_sender),
             HAProvider(self.cfg),
@@ -82,7 +83,7 @@ class IrisApp:
                 p.start()
             except Exception as e:
                 log.warning(f"[provider] {p.__class__.__name__} failed: {e}")
-        start_plugins(self.cfg, serial_sender)
+        start_plugins(self.cfg, serial_sender, overlays)
 
     def _poll_serial(self):
         while self._running:
@@ -157,26 +158,14 @@ class IrisApp:
             self._main_win.set_overlay_state(on)
 
     def sync_alarm_indicator(self):
-        if not hasattr(self, '_main_win') or not self._main_win:
+        if not self._main_win:
             return
         alarms = self.cfg.get("alarms", [])
         active = any(a.get("enabled", False) for a in alarms)
         self._main_win.set_alarm_indicator(active)
 
-    def _open_settings(self, tab=0):
-        self._root.after(0, lambda: self._open_settings_panel())
-
-    def _open_settings_panel(self):
+    def _open_settings(self):
         panel_window.open_panel()
-
-    def _run_settings(self, tab=0):
-        dlg = SettingsDialog(self._root, serial_sender, self.cfg, initial_tab=tab,
-                             on_hotkey_change=self._reregister_hotkey,
-                             on_factory_reset=lambda: self._root.after(100, self._open_settings))
-        self._root.wait_window(dlg._win)
-        self.sync_alarm_indicator()
-        if self._main_win:
-            self._main_win.refresh_buttons()
 
     def _quit(self):
         self._running = False
@@ -351,20 +340,22 @@ class IrisApp:
             log.warning("[safety] SAFETY:rebooting — repeated corruption, ESP restarting")
 
     def run(self):
+        self._root = tk.Tk()
+        self._root.withdraw()
+        self._overlays = OverlayService(self._root)
+
         serial_sender.set_port(self.cfg.get("serial_port", "auto"))
         serial_sender.add_line_callback(self._on_serial_line)
         saved_name = self.cfg.get("user_name", "").strip()
         if saved_name:
             serial_sender.queue_on_connect("user_name", saved_name)
-        self._setup_providers()
+        self._setup_providers(self._overlays)
         self._queue_defaults()
-        threading.Thread(target=ws_bridge.start, daemon=True, name="ws-bridge").start()
         ws_bridge.register_app(self)
-
-        self._root = tk.Tk()
-        self._root.withdraw()
+        threading.Thread(target=ws_bridge.start, daemon=True, name="ws-bridge").start()
 
         self._main_win = MainWindow(self._root, self, cfg=self.cfg)
+
         self._alarm_popup = AlarmPopup(
             self._root, self._alarm_dismiss, self._alarm_snooze)
         self.sync_alarm_indicator()

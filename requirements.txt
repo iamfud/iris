@@ -28,3 +28,6 @@ pyinstaller>=6.0
 
 # HTML settings panel
 pywebview>=4.0
+
+# LAN access QR code
+qrcode>=7.4

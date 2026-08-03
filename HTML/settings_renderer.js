@@ -6,6 +6,17 @@
 
 "use strict";
 
+var _escMap = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+
+var _IRIS_TOKEN = (document.querySelector('meta[name="iris-token"]') || {}).content || "";
+
+function apiFetch(url, opts) {
+  opts = opts || {};
+  opts.headers = Object.assign({}, opts.headers || {});
+  if (_IRIS_TOKEN) opts.headers["X-Iris-Token"] = _IRIS_TOKEN;
+  return fetch(url, opts);
+}
+
 class SettingsRenderer {
 
   constructor(apiBase) {
@@ -21,7 +32,7 @@ class SettingsRenderer {
   async loadPages() {
     if (this._pages) return this._pages;
     try {
-      const res = await fetch(this._apiBase + "/api/settings/pages");
+      const res = await apiFetch(this._apiBase + "/api/settings/pages");
       if (res.ok) {
         const data = await res.json();
         this._pages = data.pages || [];
@@ -54,6 +65,15 @@ class SettingsRenderer {
     var self = this;
     var html = "";
 
+    if (pageId === "features" && deviceStatus && typeof deviceStatus.connected === "boolean" && !deviceStatus.connected) {
+      return '<section class="device-offline">' +
+        '<div class="device-offline-tile">' +
+          '<span class="material-icons-outlined device-offline-icon">usb</span>' +
+          '<p class="device-offline-msg">Please connect your Iris device.</p>' +
+        "</div>" +
+      "</section>";
+    }
+
     if (page.sections && page.sections.length > 0) {
       html += '<section class="settings-content">';
       page.sections.forEach(function (section) {
@@ -76,7 +96,54 @@ class SettingsRenderer {
 
   renderPluginPage(name, pluginCfg, pluginData, pluginStateData) {
     var p = pluginCfg || {};
-    var icon = p.icon || "extension";
+    var capabilities = p.capabilities || {};
+    var hasCapabilities = Object.keys(capabilities).length > 0;
+
+    if (!hasCapabilities) {
+      return this._renderPluginPageLegacy(name, pluginCfg, pluginData, pluginStateData);
+    }
+
+    var LABEL_DEFAULTS = {
+      status: "Status",
+      configuration: "Configuration",
+      outputs: "Output Routing",
+      live_data: "Live Data",
+      actions: "Actions",
+      diagnostics: "Diagnostics",
+    };
+
+    var self = this;
+    var html = '<section class="settings-content">';
+
+    var sectionOrder = [
+      { key: "status",        render: "_renderPluginStatus" },
+      { key: "configuration", render: "_renderPluginConfig" },
+      { key: "outputs",       render: "_renderPluginOutputs" },
+      { key: "live_data",     render: "_renderPluginLiveData" },
+      { key: "actions",       render: "_renderPluginActions" },
+      { key: "diagnostics",   render: "_renderPluginDiagnostics" },
+    ];
+
+    sectionOrder.forEach(function (s) {
+      if (!capabilities[s.key]) return;
+      var content = self[s.render](name, p, pluginData, pluginStateData);
+      if (!content) return;
+      var label = (p.labels && p.labels[s.key]) || LABEL_DEFAULTS[s.key] || s.key;
+      html += '<div class="settings-section">';
+      html += '<h2 class="settings-section-title">' + self._esc(label) + '</h2>';
+      html += '<div class="settings-card">';
+      html += content;
+      html += '</div></div>';
+    });
+
+    html += "</section>";
+    return html;
+  }
+
+  /* ── Legacy renderer for plugins without capabilities ───────── */
+
+  _renderPluginPageLegacy(name, pluginCfg, pluginData, pluginStateData) {
+    var p = pluginCfg || {};
     var color = this._statusColor(p.status_code);
     var statusLabel = p.status_label || "Unknown";
     var message = p.message || "";
@@ -84,67 +151,222 @@ class SettingsRenderer {
     var requirements = p.requirements || [];
     var settings = p.settings || [];
 
-    var html = '<section class="settings-content plugin-settings-content">';
-    html += '<div class="plugin-edit-card">';
+    var self = this;
+    var html = '<section class="settings-content">';
 
-    /* Status section */
-    html += '<div class="plugin-edit-section">';
-    html += '<span class="plugin-edit-label">STATUS</span>';
-    html += this._detailRow("Type", ptype.charAt(0).toUpperCase() + ptype.slice(1));
-    html += this._detailRow("Status", statusLabel, color);
+    /* Status card */
+    html += '<div class="settings-section">';
+    html += '<h2 class="settings-section-title">Status</h2>';
+    html += '<div class="settings-card">';
+    html += '<div class="plugin-status-row">';
+    html += '<span class="plugin-status-dot" style="background:' + color + '"></span>';
+    html += '<span class="plugin-status-label" style="color:' + color + '">' + this._esc(statusLabel) + "</span>";
+    html += '<span class="plugin-status-type">' + this._esc(ptype.charAt(0).toUpperCase() + ptype.slice(1)) + "</span>";
+    html += "</div>";
     if (message) {
       html += '<div class="plugin-message">' + this._esc(message) + "</div>";
     }
     if (requirements.length) {
       html += this._renderRequirements(requirements);
     }
-    html += "</div>";
+    html += "</div></div>";
 
-    /* Plugin-defined settings sections from plugin.json */
+    /* Configuration card */
+    html += '<div class="settings-section">';
+    html += '<h2 class="settings-section-title">Configuration</h2>';
+    html += '<div class="settings-card">';
     if (settings.length > 0) {
-      var self = this;
+      var pluginCfg = p.config || {};
       settings.forEach(function (section) {
         if (!section.controls || !section.controls.length) return;
-        html += '<div class="plugin-edit-section">';
-        if (section.title) {
-          html += '<span class="plugin-edit-label">' + self._esc(section.title.toUpperCase()) + '</span>';
-        }
         section.controls.forEach(function (ctrl) {
-          /* For plugin controls, read values from plugin config (p) not feature config */
-          var pluginValues = {};
-          pluginValues[ctrl.key] = p[ctrl.key];
-          if (ctrl.key === "enabled") pluginValues[ctrl.key] = p.enabled !== false;
-          html += self._renderControl(ctrl, pluginValues);
+          var values = {};
+          values[ctrl.key] = pluginCfg[ctrl.key];
+          if (ctrl.key === "enabled") values[ctrl.key] = p.enabled !== false;
+          html += self._renderControl(ctrl, values);
         });
-        html += "</div>";
       });
     } else {
-      /* Fallback: generic enabled toggle when plugin has no settings defined */
-      html += '<div class="plugin-edit-section">';
-      html += '<span class="plugin-edit-label">CONFIGURATION</span>';
-      html += this._renderControl({
+      html += self._renderControl({
         type: "toggle",
         key: "_plugin_enabled_" + name,
         label: "Enabled",
       }, { _plugin_enabled: p.enabled !== false });
       if (ptype === "app") {
+        html += self._renderControl({
+          type: "folder_picker",
+          key: "_plugin_exe_" + name,
+          label: "Target executable",
+        }, { _plugin_exe: p.exe_path || p.exe_default || "" });
+      }
+    }
+    html += "</div></div>";
+
+    /* Data card */
+    html += '<div class="settings-section">';
+    html += '<h2 class="settings-section-title">Live Data</h2>';
+    html += '<div class="settings-card">';
+    html += this._renderPluginData(name, pluginData, pluginStateData);
+    html += "</div></div>";
+
+    html += "</section>";
+    return html;
+  }
+
+  /* ── Capability-based section renderers ─────────────────────── */
+
+  _renderPluginStatus(name, p, pluginData, pluginStateData) {
+    var html = "";
+
+    var statusCode = p.status_code;
+    var statusLabel = p.status_label || "Unknown";
+    var color = this._statusColor(statusCode);
+
+    html += '<div class="plugin-status-row">';
+    html += '<span class="plugin-status-dot" style="background:' + color + '"></span>';
+    html += '<span class="plugin-status-label" style="color:' + color + '">' + this._esc(statusLabel) + "</span>";
+    html += '<span class="plugin-status-type">' + this._esc((p.type || "service").charAt(0).toUpperCase() + (p.type || "service").slice(1)) + "</span>";
+    html += "</div>";
+
+    var fields = p.status_fields || [];
+    if (fields.length > 0) {
+      var self = this;
+      fields.forEach(function (f) {
+        if (f.key === "status_code") return;
+        var val;
+        if (f.source === "lifecycle") {
+          val = p[f.key];
+        } else {
+          var ps = pluginStateData || {};
+          var liveState = ps.state || {};
+          var liveStatus = ps.status || {};
+          val = liveState[f.key] !== undefined ? liveState[f.key] : liveStatus[f.key];
+        }
+        if (val === undefined || val === null) val = "—";
+        html += self._detailRow(f.label, String(val));
+      });
+    }
+
+    if (p.message) {
+      html += '<div class="plugin-message">' + this._esc(p.message) + "</div>";
+    }
+    if (p.requirements && p.requirements.length) {
+      html += this._renderRequirements(p.requirements);
+    }
+    return html;
+  }
+
+  _renderPluginConfig(name, p, pluginData, pluginStateData) {
+    var settings = p.settings || [];
+    if (settings.length === 0) {
+      var html = "";
+      html += this._renderControl({
+        type: "toggle",
+        key: "_plugin_enabled_" + name,
+        label: "Enabled",
+      }, { _plugin_enabled: p.enabled !== false });
+      if ((p.type || "service") === "app") {
         html += this._renderControl({
           type: "folder_picker",
           key: "_plugin_exe_" + name,
           label: "Target executable",
         }, { _plugin_exe: p.exe_path || p.exe_default || "" });
       }
-      html += "</div>";
+      return html;
     }
 
-    /* Data section */
-    html += '<div class="plugin-edit-section plugin-data-container">';
-    html += '<span class="plugin-edit-label">DATA</span>';
-    html += this._renderPluginData(name, pluginData, pluginStateData);
-    html += "</div>";
+    var self = this;
+    var pcfg = p.config || {};
+    var html = "";
+    settings.forEach(function (section) {
+      if (!section.controls || !section.controls.length) return;
+      section.controls.forEach(function (ctrl) {
+        var values = {};
+        values[ctrl.key] = pcfg[ctrl.key];
+        if (ctrl.key === "enabled") values[ctrl.key] = p.enabled !== false;
+        html += self._renderControl(ctrl, values);
+      });
+    });
+    return html;
+  }
+
+  _renderPluginOutputs(name, p, pluginData, pluginStateData) {
+    var outputDefs = p.outputs_def || [];
+    if (outputDefs.length === 0) return "";
+
+    var currentOutputs = p.outputs || {};
+    var self = this;
+    var html = '<div class="plugin-outputs-hint">Where can this plugin send data?</div>';
+
+    outputDefs.forEach(function (o) {
+      var on = currentOutputs[o.id] !== undefined ? currentOutputs[o.id] : (o.enabled !== false);
+      var cls = on ? "on" : "";
+      html += '<div class="settings-toggle-row plugin-output-row" data-output="' + self._esc(o.id) + '">';
+      html += '<span class="settings-toggle-label">' + self._esc(o.label) + "</span>";
+      html += '<div class="settings-toggle ' + cls + '" data-output="' + self._esc(o.id) + '">';
+      html += '<div class="settings-toggle-thumb"></div>';
+      html += "</div>";
+      html += "</div>";
+    });
+
+    return html;
+  }
+
+  _renderPluginLiveData(name, p, pluginData, pluginStateData) {
+    return this._renderPluginData(name, pluginData, pluginStateData);
+  }
+
+  _renderPluginActions(name, p, pluginData, pluginStateData) {
+    var actionDefs = p.actions_def || [];
+    if (actionDefs.length === 0) return "";
+
+    var self = this;
+    var html = '<div class="plugin-actions-row">';
+
+    actionDefs.forEach(function (a) {
+      html += '<button class="settings-btn plugin-action-btn" data-action-id="' + self._esc(a.id) + '"';
+      if (a.confirm) html += ' data-confirm="true"';
+      html += ">";
+      if (a.icon) html += '<span class="material-icons-outlined">' + self._esc(a.icon) + "</span> ";
+      html += self._esc(a.label || a.id);
+      html += "</button>";
+    });
 
     html += "</div>";
-    html += "</section>";
+    return html;
+  }
+
+  _renderPluginDiagnostics(name, p, pluginData, pluginStateData) {
+    var diagFields = p.diagnostics_def || [];
+    if (diagFields.length === 0) return "";
+
+    var self = this;
+    var html = "";
+
+    diagFields.forEach(function (f) {
+      var val;
+      if (f.source === "lifecycle") {
+        val = p[f.key];
+      } else {
+        var ps = pluginStateData || {};
+        var liveState = ps.state || {};
+        var liveStatus = ps.status || {};
+        val = liveState[f.key] !== undefined ? liveState[f.key] : liveStatus[f.key];
+      }
+      if (val === undefined || val === null) val = "—";
+      html += self._detailRow(f.label, String(val));
+    });
+
+    var rawEvents = ((pluginStateData || {}).state || {})._raw_events;
+    if (rawEvents && rawEvents.length > 0) {
+      html += '<div class="settings-collapsible raw-events">';
+      html += '<a href="#" class="collapse-toggle" onclick="return toggleCollapsible(this)">';
+      html += '&#9654; Raw Events (' + rawEvents.length + ')</a>';
+      html += '<div class="collapse-content" style="display:none">';
+      html += '<pre style="max-height:400px;overflow:auto;font-size:11px">';
+      html += this._esc(JSON.stringify(rawEvents, null, 2));
+      html += '</pre></div></div>';
+    }
 
     return html;
   }
@@ -188,6 +410,8 @@ class SettingsRenderer {
         return this._renderButton(ctrl, config);
       case "info":
         return this._renderInfo(ctrl, config);
+      case "qr":
+        return this._renderQr(ctrl, config);
       case "folder_picker":
         return this._renderFolderPicker(ctrl, config);
       case "file_picker":
@@ -353,6 +577,20 @@ class SettingsRenderer {
     return html;
   }
 
+  /* ── QR code ────────────────────────────────────────────────── */
+
+  _renderQr(ctrl, config) {
+    var url = ctrl.key ? config[ctrl.key] : (ctrl.value || "");
+    var html = '<div class="settings-control settings-qr-wrap">';
+    if (ctrl.label) {
+      html += '<label class="settings-label">' + this._esc(ctrl.label) + "</label>";
+    }
+    html += '<img class="settings-qr" data-qr-key="' + this._esc(ctrl.key || "") + '" alt="QR code" hidden>';
+    html += '<span class="settings-qr-url">' + this._esc(url || "") + "</span>";
+    html += "</div>";
+    return html;
+  }
+
   /* ── Folder picker ──────────────────────────────────────────── */
 
   _renderFolderPicker(ctrl, config) {
@@ -408,48 +646,104 @@ class SettingsRenderer {
     });
   }
 
-  bindPluginPage(container, name, pluginCfg, savePluginCallback) {
+  bindPluginPage(container, name, pluginCfg, savePluginCallback, outputsCallback, actionCallback) {
     var self = this;
     var p = pluginCfg || {};
     var settings = p.settings || [];
+    var pcfg = p.config || {};
+    var capabilities = p.capabilities || {};
+    var hasCapabilities = Object.keys(capabilities).length > 0;
 
-    if (settings.length > 0) {
-      /* Bind plugin-defined controls */
-      settings.forEach(function (section) {
-        if (!section.controls) return;
-        section.controls.forEach(function (ctrl) {
-          self._bindPluginControl(container, ctrl, name, p, savePluginCallback);
-        });
-      });
-    } else {
-      /* Fallback: generic enabled toggle */
-      var toggle = container.querySelector(".settings-toggle[data-key='_plugin_enabled_" + name + "']");
-      if (toggle) {
-        toggle.addEventListener("click", function () {
-          var on = this.classList.toggle("on");
-          savePluginCallback(name, "enabled", on);
-        });
+    if (hasCapabilities) {
+      /* Bind settings controls */
+      if (capabilities.configuration) {
+        if (settings.length > 0) {
+          settings.forEach(function (section) {
+            if (!section.controls) return;
+            section.controls.forEach(function (ctrl) {
+              self._bindPluginControl(container, ctrl, name, pcfg, savePluginCallback);
+            });
+          });
+        } else {
+          self._bindFallbackControls(container, name, p, savePluginCallback);
+        }
       }
-      /* Exe path (app type only) */
-      if ((p.type || "service") === "app") {
-        var input = container.querySelector(".settings-input[data-key='_plugin_exe_" + name + "']");
-        if (input) {
-          var exeTimer = null;
-          input.addEventListener("input", function () {
-            clearTimeout(exeTimer);
-            exeTimer = setTimeout(function () {
-              savePluginCallback(name, "exe_path", input.value.trim());
-            }, 400);
+
+      /* Bind outputs toggles */
+      if (capabilities.outputs) {
+        self._bindPluginOutputs(container, name, outputsCallback);
+      }
+
+      /* Bind action buttons */
+      if (capabilities.actions) {
+        self._bindPluginActions(container, name, p.actions_def, actionCallback);
+      }
+    } else {
+      /* Legacy: no capabilities declared */
+      if (settings.length > 0) {
+        settings.forEach(function (section) {
+          if (!section.controls) return;
+          section.controls.forEach(function (ctrl) {
+            self._bindPluginControl(container, ctrl, name, pcfg, savePluginCallback);
           });
-        }
-        var browseBtn = container.querySelector(".settings-picker-btn[data-target='_plugin_exe_" + name + "']");
-        if (browseBtn) {
-          browseBtn.addEventListener("click", function () {
-            self._browseExe(name, input, savePluginCallback);
-          });
-        }
+        });
+      } else {
+        self._bindFallbackControls(container, name, p, savePluginCallback);
       }
     }
+  }
+
+  _bindFallbackControls(container, name, p, savePluginCallback) {
+    var self = this;
+    var toggle = container.querySelector(".settings-toggle[data-key='_plugin_enabled_" + name + "']");
+    if (toggle) {
+      toggle.addEventListener("click", function () {
+        var on = this.classList.toggle("on");
+        savePluginCallback(name, "enabled", on);
+      });
+    }
+    if ((p.type || "service") === "app") {
+      var input = container.querySelector(".settings-input[data-key='_plugin_exe_" + name + "']");
+      if (input) {
+        var exeTimer = null;
+        input.addEventListener("input", function () {
+          clearTimeout(exeTimer);
+          exeTimer = setTimeout(function () {
+            savePluginCallback(name, "exe_path", input.value.trim());
+          }, 400);
+        });
+      }
+      var browseBtn = container.querySelector(".settings-picker-btn[data-target='_plugin_exe_" + name + "']");
+      if (browseBtn) {
+        browseBtn.addEventListener("click", function () {
+          self._browseExe(name, input, savePluginCallback);
+        });
+      }
+    }
+  }
+
+  _bindPluginOutputs(container, name, outputsCallback) {
+    if (!outputsCallback) return;
+    container.querySelectorAll(".settings-toggle[data-output]").forEach(function (el) {
+      el.addEventListener("click", function () {
+        var outputId = this.dataset.output;
+        var on = this.classList.toggle("on");
+        if (outputsCallback) outputsCallback(name, outputId, on);
+      });
+    });
+  }
+
+  _bindPluginActions(container, name, actionDefs, actionCallback) {
+    if (!actionCallback) return;
+    var self = this;
+    container.querySelectorAll(".plugin-action-btn").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var actionId = this.dataset.actionId;
+        var needsConfirm = this.dataset.confirm;
+        if (needsConfirm && !confirm("Run " + actionId + "?")) return;
+        if (actionCallback) actionCallback(name, actionId);
+      });
+    });
   }
 
   /* ── Plugin data display ────────────────────────────────────── */
@@ -466,7 +760,7 @@ class SettingsRenderer {
     var hasAnyData = Object.keys(s).length > 0 || Object.keys(st).length > 0;
 
     if (!hasAnyData) {
-      return '<div class="plugin-data-unavailable">No data available yet</div>';
+      return '<div class="plugin-data-unavailable">Waiting for telemetry...</div>';
     }
 
     if (layout) {
@@ -583,7 +877,7 @@ class SettingsRenderer {
         break;
 
       case "slider":
-        var sliderEl = container.querySelector(".settings-slider[data-key='" + ctrl.key + ""]');
+        var sliderEl = container.querySelector(".settings-slider[data-key='" + ctrl.key + "']");
         if (sliderEl) {
           var unit = ctrl.unit || "";
           sliderEl.addEventListener("input", function () {
@@ -643,6 +937,40 @@ class SettingsRenderer {
             }
           });
         }
+        break;
+
+      case "button":
+        var buttons = container.querySelectorAll(
+          ".settings-btn[data-action='" + ctrl.action + "']");
+        buttons.forEach(function (el) {
+          el.addEventListener("click", function () {
+            if (ctrl.action === "copy_token") {
+              var token = (document.querySelector('meta[name="iris-token"]') || {}).content || "";
+              if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(token).catch(function () {});
+              }
+              var old = el.textContent;
+              el.textContent = "Copied!";
+              setTimeout(function () { el.textContent = old; }, 1200);
+            }
+          });
+        });
+        break;
+
+      case "qr":
+        var imgs = container.querySelectorAll("img.settings-qr");
+        imgs.forEach(function (el) {
+          apiFetch(self._apiBase + "/api/network/qr")
+            .then(function (res) {
+              if (!res.ok) throw new Error("qr " + res.status);
+              return res.blob();
+            })
+            .then(function (blob) {
+              el.src = URL.createObjectURL(blob);
+              el.hidden = false;
+            })
+            .catch(function () {});
+        });
         break;
     }
   }
@@ -846,8 +1174,16 @@ class SettingsRenderer {
 
   _esc(s) {
     if (!s) return "";
-    var d = document.createElement("div");
-    d.textContent = String(s);
-    return d.innerHTML;
+    return String(s).replace(/[&<>"']/g, function (m) { return _escMap[m]; });
   }
+}
+
+/* global helper used by onclick attributes in rendered HTML */
+function toggleCollapsible(link) {
+  var content = link.nextElementSibling;
+  if (!content) return false;
+  var isHidden = content.style.display === "none";
+  content.style.display = isHidden ? "block" : "none";
+  link.innerHTML = (isHidden ? "&#9660;" : "&#9654;") + link.innerHTML.slice(1);
+  return false;
 }

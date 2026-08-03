@@ -110,7 +110,7 @@ def _set_round_rect(hwnd, w, h, r):
 
 class MainWindow:
     W = 220
-    H = 504
+    H = 568
     RADIUS = 24
     ALPHA = 0.9
 
@@ -383,7 +383,7 @@ class MainWindow:
             def _pl(e, b=plus_btn, n=plus_img): b.config(image=n)
             plus_btn.bind("<Enter>", _ph)
             plus_btn.bind("<Leave>", _pl)
-            plus_btn.bind("<Button-1>", lambda e: self.app._open_settings(tab=2))
+            plus_btn.bind("<Button-1>", lambda e: self.app._open_settings())
             plus_btn.bind("<MouseWheel>", self._on_btn_wheel)
             plus_tip = tk.Label(self._btn_inner, text="Add",
                                 font=("Segoe UI", 6), fg=FG, bg=BG)
@@ -944,6 +944,33 @@ class MainWindow:
         if self.app:
             self.app._set_brightness(self._brightness_var.get())
 
+    def _on_volume_change(self):
+        if not getattr(self, "_volume_enabled", False):
+            return
+        try:
+            import win_volume
+            win_volume.set_active_app_volume(self._volume_var.get())
+        except Exception:
+            pass
+
+    def _refresh_volume_ui(self):
+        try:
+            import win_volume
+            state = win_volume.get_active_app_state()
+        except Exception:
+            state = {"app": None, "volume": None}
+        vol = state.get("volume")
+        app = state.get("app")
+        if isinstance(vol, int):
+            self._volume_enabled = True
+            if self._volume_var.get() != vol:
+                self._volume_var.set(vol)
+            self._lbl_volume_app.config(text=app or "Application", fg=FG_DIM)
+        else:
+            self._volume_enabled = False
+            label = (f"{app} — no audio") if app else "No audio session"
+            self._lbl_volume_app.config(text=label, fg=FG_DIM)
+
     # ── Media control helpers ───────────────────────────────────────
     @staticmethod
     def _send_media_key(vk):
@@ -979,12 +1006,32 @@ class MainWindow:
         _BY = self.H - 30 - _T      # tile top (30px from bottom to clear corner)
 
         # ════════════════════════════════════════════════════════════
-        #  Display panel (top separator → title → slider)
+        #  Volume + Display (top separator → app volume → brightness)
         # ════════════════════════════════════════════════════════════
 
-        # ── Display top separator ──
+        # ── Top separator ──
         tk.Frame(self._win, bg=BG_CARD, height=1).place(
-            x=_X, y=_BY - 148, width=_W)
+            x=_X, y=_BY - 212, width=_W)
+
+        # ── Title "App Volume" ──
+        tk.Label(self._win, text="App Volume", font=("Segoe UI", 10),
+                 fg=NEON, bg=BG, anchor="w").place(
+            x=_X + 2, y=_BY - 207, width=_W - 2, height=16)
+
+        # ── Active app name ──
+        self._lbl_volume_app = tk.Label(
+            self._win, text="No audio session", font=("Segoe UI", 8),
+            fg=FG_DIM, bg=BG, anchor="w")
+        self._lbl_volume_app.place(x=_X + 2, y=_BY - 190, width=_W - 2, height=14)
+
+        # ── App volume slider (0–100) ──
+        self._volume_enabled = False
+        self._volume_var = tk.IntVar(value=0)
+        self._slider_volume = StepSlider(
+            self._win, list(range(101)), self._volume_var,
+            on_change=self._on_volume_change,
+        )
+        self._slider_volume.place(x=_X, y=_BY - 173, width=_W)
 
         # ── Title "Display Brightness" ──
         tk.Label(self._win, text="Display Brightness", font=("Segoe UI", 10),
@@ -1134,17 +1181,36 @@ class MainWindow:
         self._btn_mic.bind("<ButtonPress-1>", _press_mic)
         self._btn_mic.bind("<ButtonRelease-1>", _release_mic)
 
-        # ── Tile 3: Exit (static) ──
-        t3 = self._make_tile_set("tray-arrow-down", icon_scale=0.52)
-        prs3 = self._make_tile_photo("tray-arrow-down", _prs_fill, icon_scale=0.52)
+        # ── Tile 3: Settings ──
+        t3 = self._make_tile_set("cog", icon_scale=0.52)
+        prs3 = self._make_tile_photo("cog", _prs_fill, icon_scale=0.52)
         self._tile_refs.append(prs3)
-        self._btn_exit = tk.Label(_tile_frame, image=t3[0], bg=BG, cursor="hand2",
-                                  padx=0, pady=0, borderwidth=0)
-        self._btn_exit.place(x=3 * (_T + _GAP), y=0)
-        self._btn_exit.bind("<Enter>", lambda e: self._btn_exit.config(image=t3[1]))
-        self._btn_exit.bind("<Leave>", lambda e: self._btn_exit.config(image=t3[0]))
-        self._btn_exit.bind("<ButtonPress-1>", lambda e: self._btn_exit.config(image=prs3))
-        self._btn_exit.bind("<ButtonRelease-1>", lambda e: (self._btn_exit.config(image=t3[0]), self._on_power(e)))
+        self._btn_settings = tk.Label(_tile_frame, image=t3[0], bg=BG, cursor="hand2",
+                                       padx=0, pady=0, borderwidth=0)
+        self._btn_settings.place(x=3 * (_T + _GAP), y=0)
+        self._btn_settings.bind("<Enter>", lambda e: self._btn_settings.config(image=t3[1]))
+        self._btn_settings.bind("<Leave>", lambda e: self._btn_settings.config(image=t3[0]))
+        self._btn_settings.bind("<ButtonPress-1>", lambda e: self._btn_settings.config(image=prs3))
+        self._btn_settings.bind("<ButtonRelease-1>", lambda e: (
+            self._btn_settings.config(image=t3[0]),
+            self.app._open_settings(),
+        ))
+
+        # ── TEMP: hero overlay test button ──
+        hero_btn = tk.Label(self._win, text="SHOW HERO", bg=NEON, fg=BG,
+                            font=("Segoe UI", 7, "bold"), cursor="hand2")
+        hero_btn.place(relx=0.5, y=self.H - 24, anchor=tk.CENTER, width=80, height=18)
+        hero_btn.bind("<Button-1>", lambda e: self.app._overlays.hero(
+            title="SOL",
+            subtitle="Population: 24.3 Billion",
+            fields=[
+                ("Economy", "High Tech / Refinery"),
+                ("Government", "Democracy"),
+                ("Security", "High"),
+                ("Allegiance", "Federation"),
+            ],
+            duration=6,
+        ))
 
     def _on_gauge_click(self, e):
         if not self._overlay_on:
@@ -1172,6 +1238,9 @@ class MainWindow:
                     pass
                 break
 
+        if self._visible:
+            self._refresh_volume_ui()
+
         self._win.after(1000, self._update_status)
 
     def toggle(self):
@@ -1197,6 +1266,7 @@ class MainWindow:
         self._win.lift()
         self._win.focus_force()
         self._visible = True
+        self._refresh_volume_ui()
         # Snap mouse cursor to center of panel
         px = self._win.winfo_x()
         py = self._win.winfo_y()

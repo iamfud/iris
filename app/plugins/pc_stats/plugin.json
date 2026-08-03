@@ -10,7 +10,42 @@
     {"name": "Afterburner", "exe": "MSIAfterburner.exe", "description": "MSI Afterburner"}
   ],
   "message_not_running": "PC Stats requires RTSS and MSI Afterburner to be running.",
-  "min_api_version": "1.0",
+  "min_api_version": "2.0",
+
+  "capabilities": {
+    "status": true,
+    "configuration": true,
+    "outputs": true,
+    "live_data": true,
+    "actions": true,
+    "diagnostics": false
+  },
+
+  "labels": {
+    "outputs": "OUTPUT ROUTING",
+    "actions": "COMMANDS"
+  },
+
+  "status": [
+    { "key": "status_code", "label": "Status", "source": "lifecycle" },
+    { "key": "type", "label": "Type", "source": "lifecycle" }
+  ],
+
+  "outputs": [
+    { "id": "overlay", "label": "Overlay", "enabled": true },
+    { "id": "dashboard", "label": "Dashboard", "enabled": true },
+    { "id": "display", "label": "Hardware Display", "enabled": true }
+  ],
+
+  "live_data": {
+    "title": "Hardware Stats",
+    "fields": [
+      { "key": "cpu_temp", "label": "CPU Temperature", "type": "float" },
+      { "key": "gpu_temp", "label": "GPU Temperature", "type": "float" },
+      { "key": "fps", "label": "FPS", "type": "int" }
+    ]
+  },
+
   "settings": [
     {
       "title": "Temperature Limits",

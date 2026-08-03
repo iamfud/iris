@@ -35,7 +35,14 @@ extern bool _failsafeActive;
 extern uint16_t _litPixelCount;
 
 inline void beginFrame() { mx.control(MD_MAX72XX::UPDATE, MD_MAX72XX::OFF); }
-inline void endFrame()   { mx.control(MD_MAX72XX::UPDATE, MD_MAX72XX::ON); mx.update(); }
+inline void endFrame()   {
+  mx.control(MD_MAX72XX::UPDATE, MD_MAX72XX::ON);
+  uint16_t px = 0; uint8_t buf[MAX_DEVICES * 8];
+  mx.getBuffer(0, MAX_DEVICES * 8, buf);
+  for (int i = 0; i < MAX_DEVICES * 8; i++) { uint8_t v = buf[i]; while (v) { px += v & 1; v >>= 1; } }
+  if (px > 160) { Serial.print("FB_HOT:"); Serial.println(px); }
+  mx.update();
+}
 inline void clearDisplay() { mx.clear(); }
 
 inline void drawPixel(int x, int y, bool on) {
@@ -63,6 +70,11 @@ inline void drawBitmap5x8(int x, int y, const uint8_t* g) {
   for (int col=0;col<5;col++)
     for (int row=0;row<8;row++)
       drawPixel(x+col, y+row, (g[row]>>(4-col))&1);
+}
+inline void drawBitmap8x8(int x, int y, const uint8_t* g) {
+  for (int col=0;col<8;col++)
+    for (int row=0;row<8;row++)
+      drawPixel(x+col, y+row, (g[row]>>(7-col))&1);
 }
 inline void drawDigit3x5(int x, int y, int d) {
   if (d<0||d>9) return;

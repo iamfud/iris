@@ -34,6 +34,7 @@ DEFAULT_CONFIG = {
     "media_enabled": True,
     "mirror_enabled": True,
     "media_player_path": "",
+    "lan_access": True,
     "alarms": [],
     "panel_board": [],
     "user_name": "",

@@ -191,6 +191,8 @@ def _load_meta():
         pass
 
 
+
+
 def get_char(name: str) -> str | None:
     """Return the Unicode character for an MDI icon name, or None."""
     key = name.lower().replace("mdi:", "").replace("mdi-", "")

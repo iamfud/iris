@@ -3,6 +3,7 @@
 // USB-only PC companion.  Serial protocol from PC tray app.
 // All rendering lives in core/*.h headers.
 // ============================================================
+#include <ESP8266WiFi.h>
 #include "core/core.h"
 
 // ── Hardware ───────────────────────────────────────────────────
@@ -68,6 +69,32 @@ String        notifyScrollMessage = "";
 int           notifyScrollOffset  = 32;
 unsigned long notifyScrollUntilMs = 0;
 bool          notifyScrollStatic  = false;
+bool          notifyScrollOverride = false;   // true when a VISION alert forces the scroll on
+
+// ── Alert flash (4-letter bold; ALERT: / VISIONFLASH:) ────────
+bool          visionFlashActive   = false;
+String        visionFlashText     = "";
+int           visionFlashOffset   = 4;
+unsigned long visionFlashUntilMs  = 0;
+unsigned long lastVisionFlashTick = 0;
+bool          alertBlink          = true;   // false = solid hold
+
+// ── Vision full-size (8x8) scroll ─────────────────────────────
+bool          bigScrollActive     = false;
+String        bigScrollText       = "";
+int           bigScrollOffset     = 32;
+unsigned long bigScrollUntilMs    = 0;
+bool          bigScrollStatic     = false;
+unsigned long lastBigScrollTick   = 0;
+
+// ── Sticky message (scroll once, then settle) ─────────────────
+bool          stickyActive        = false;
+String        stickyMessage       = "";
+int           stickyOffset        = 32;
+bool          stickyScrollDone    = true;
+bool          stickyStatic        = false;
+unsigned long lastStickyTick      = 0;
+unsigned long stickyUntilMs       = 0;  // safety cap from PC/firmware
 
 // ── Alarm ─────────────────────────────────────────────────────
 bool   alarmEnabled   = false;
@@ -104,6 +131,15 @@ unsigned long lastVuMs     = 0;
 // ── Volume display ────────────────────────────────────────────
 uint8_t       currentVolume    = 0;
 unsigned long lastVolumeMs     = 0;
+
+// ── Progress bar ──────────────────────────────────────────────
+bool          progressActive   = false;
+String        progressName     = "";
+uint8_t       progressPercent  = 0;
+unsigned long lastProgressMs   = 0;
+int           progressScrollOffset = 32;
+bool          progressScrollDone   = true;
+unsigned long lastProgressScrollTick = 0;
 
 // ── Greeting ──────────────────────────────────────────────────
 bool   greetingActive      = false;
@@ -165,6 +201,7 @@ void updateEyeEngine() {
 
 // ── Failsafe helpers ──────────────────────────────────────────
 void reinitMAX7219() {
+  Serial.println("REINIT");
   mx.control(MD_MAX72XX::TEST, MD_MAX72XX::OFF);
   mx.control(MD_MAX72XX::DECODE, 0);
   mx.control(MD_MAX72XX::SCANLIMIT, 7);
@@ -209,7 +246,15 @@ void checkFailsafeRestore() {
 
 // ============================================================
 void setup() {
+  // RF modem is ON by default on ESP8266 even when unused — its background
+  // activity can glitch HSPI transactions to the MAX7219. Kill it first.
+  WiFi.persistent(false);   // don't write mode to flash
+  WiFi.mode(WIFI_OFF);
+  WiFi.forceSleepBegin();   // modem sleep, effective immediately
+  delay(1);
+
   Serial.begin(115200); Serial.setTimeout(10);
+  Serial.print("BOOT:reset="); Serial.println(ESP.getResetReason());
   mx.begin();
 
   // Boot self-test: prove SPI works before entering normal operation
@@ -240,6 +285,7 @@ void loop() {
   handleSerial();
   unsigned long nowMs = millis();
   bool dirty = false;
+  { static unsigned long _hb; if (nowMs - _hb >= 30000) { _hb = nowMs; Serial.print("HB:"); Serial.println(nowMs); } }
 
   if (!_failsafeActive && displayOn && _lastSerialCmdMs > 0
       && (nowMs - _lastSerialCmdMs) > SERIAL_TIMEOUT_MS) {
@@ -270,12 +316,65 @@ void loop() {
     } return;
   }
 
-  if (featureNotificationsEnabled&&notifyScrollUntilMs>nowMs&&nowMs-lastNotifyScrollTick>=TEXT_SCROLL_STEP_MS) {
+  if (notifyScrollActive(nowMs)&&nowMs-lastNotifyScrollTick>=TEXT_SCROLL_STEP_MS) {
     lastNotifyScrollTick=nowMs;
     if (!notifyScrollStatic) {
       notifyScrollOffset--;
       if (notifyScrollOffset<-(int)(notifyScrollMessage.length()*6)) { notifyScrollUntilMs=0; renderCurrentScreen(); return; }
     } dirty=true;
+  }
+
+  if (stickyActiveNow(nowMs) && !stickyScrollDone
+      && nowMs-lastStickyTick>=TEXT_SCROLL_STEP_MS) {
+    lastStickyTick=nowMs;
+    if (!stickyStatic) {
+      stickyOffset--;
+      if (stickyOffset < -(int)(stickyMessage.length()*6)) {
+        stickyScrollDone=true;  // scroll once, then settle
+      }
+    }
+    dirty=true;
+  }
+  if (stickyActive && stickyUntilMs > 0 && nowMs >= stickyUntilMs) {
+    stickyActive=false;
+    dirty=true;
+  }
+
+  if (progressActive && !progressScrollDone
+      && nowMs-lastProgressScrollTick>=TEXT_SCROLL_STEP_MS) {
+    lastProgressScrollTick=nowMs;
+    progressScrollOffset--;
+    if (progressScrollOffset < -(int)(progressName.length()*4)) {
+      progressScrollDone=true;  // scroll once, then settle on first letters
+    }
+    dirty=true;
+  }
+
+  if (visionFlashActive && nowMs >= visionFlashUntilMs) {
+    visionFlashActive = false;
+    dirty = true;
+  }
+  if (visionFlashActiveNow() && alertBlink
+      && nowMs - lastVisionFlashTick >= ALERT_TOGGLE_MS) {
+    lastVisionFlashTick = nowMs;
+    dirty = true;
+  }
+
+  if (bigScrollActive && nowMs >= bigScrollUntilMs) {
+    bigScrollActive = false;
+    dirty = true;
+  }
+  if (bigScrollActiveNow(nowMs) && nowMs-lastBigScrollTick>=TEXT_SCROLL_STEP_MS) {
+    lastBigScrollTick=nowMs;
+    if (!bigScrollStatic) {
+      bigScrollOffset--;
+      if (bigScrollOffset<-(int)(bigScrollText.length()*8)) { bigScrollUntilMs=0; renderCurrentScreen(); return; }
+    } dirty=true;
+  }
+
+  if (progressActive && nowMs-lastProgressMs >= PROGRESS_TIMEOUT_MS) {
+    progressActive = false;
+    dirty = true;
   }
 
   if (alarmActive&&!alarmShowEyes&&nowMs-lastNotifyScrollTick>=TEXT_SCROLL_STEP_MS) {
@@ -293,23 +392,23 @@ void loop() {
   bool vuActive=featureAudioVizEnabled&&lastVuMs>0&&(nowMs-lastVuMs)<1500;
 
   if (timeReady&&featureTimeEnabled&&!vuActive&&!pcOverlayActive()&&!showDateMode&&!eyeOverlayMode&&
-      !alarmActive&&!(featureNotificationsEnabled&&notifyScrollUntilMs>nowMs)&&
+      !alarmActive&&!(notifyScrollActive(nowMs))&&!stickyActiveNow(nowMs)&&
       nowMs-lastBlinkTick>=500) {
     lastBlinkTick+=500; colonVisible=!colonVisible;
     if (!dirty) updateColonOnly(colonVisible);
   }
 
   if (vuActive&&featureTimeEnabled&&!pcOverlayActive()&&!showDateMode&&!eyeOverlayMode&&
-      !alarmActive&&!(featureNotificationsEnabled&&notifyScrollUntilMs>nowMs)&&
+      !alarmActive&&!(notifyScrollActive(nowMs))&&!stickyActiveNow(nowMs)&&
       nowMs-lastBlinkTick>=500) {
     lastBlinkTick+=500; colonVisible=!colonVisible; dirty=true;
   }
   if (!vuActive&&featureTimeEnabled&&featureMinuteBarEnabled&&!featureLargeClockEnabled&&!featureDayClockEnabled&&
       !showDateMode&&!eyeOverlayMode&&!alarmActive&&
-      !(featureNotificationsEnabled&&notifyScrollUntilMs>nowMs)) dirty|=tickMinuteBar();
+      !(notifyScrollActive(nowMs))&&!stickyActiveNow(nowMs)&&!progressBarActive()) dirty|=tickMinuteBar();
   if (!vuActive&&featureTimeEnabled&&featureDayClockEnabled&&featureMinuteBarEnabled&&
       !showDateMode&&!eyeOverlayMode&&!alarmActive&&
-      !(featureNotificationsEnabled&&notifyScrollUntilMs>nowMs)) { setBarGeometry(0,0,11); dirty|=tickMinuteBar(); }
+      !(notifyScrollActive(nowMs))) { setBarGeometry(0,0,11); dirty|=tickMinuteBar(); }
 
   if (accessoryOverlayUntilMs>nowMs&&nowMs-lastAccFlashMs>=167) { lastAccFlashMs=nowMs; accFlashOn=!accFlashOn; dirty=true; }
 
@@ -326,7 +425,7 @@ void loop() {
     }
   }
 
-  if (!alarmActive&&!(featureNotificationsEnabled&&notifyScrollUntilMs>nowMs)&&
+  if (!alarmActive&&!(notifyScrollActive(nowMs))&&
       accessoryOverlayUntilMs<=nowMs&&!eyeOverlayMode) {
     if (featureTimeEnabled&&featureDateEnabled) {
       if (!showDateMode&&nowMs-lastModeSwitch>=TIME_MODE_MS) { showDateMode=true; lastModeSwitch=nowMs; dirty=true; }
