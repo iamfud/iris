@@ -133,8 +133,15 @@ class MainWindow:
 
         sw = self._win.winfo_screenwidth()
         sh = self._win.winfo_screenheight()
-        x = self._cfg.get("panel_x") or sw - self.W - 100
-        y = self._cfg.get("panel_y") or sh - self.H - 100
+        _m = 20  # fresh-install default: bottom-right with small margin
+        x = self._cfg.get("panel_x")
+        y = self._cfg.get("panel_y")
+        if x is None:
+            x = sw - self.W - _m
+        if y is None:
+            y = sh - self.H - _m
+        self._panel_x = int(x)
+        self._panel_y = int(y)
         self._win.geometry(f"{self.W}x{self.H}+{x}+{y}")
 
         hwnd = int(self._win.winfo_id())
@@ -204,6 +211,7 @@ class MainWindow:
 
         gauge_size = 60
         gf = tk.Frame(self._win, bg=BG)
+        self._gauge_frame = gf
         gf.place(x=15, y=36, width=190, height=gauge_size + 10)
         gf.columnconfigure(0, weight=1)
         gf.columnconfigure(1, weight=1)
@@ -222,11 +230,11 @@ class MainWindow:
         for w in gf.winfo_children():
             w.bind("<Button-1>", self._on_gauge_click)
 
-        tk.Frame(self._win, bg=BG_CARD, height=1).place(
-            x=15, y=36 + gauge_size + 10 + 5, width=190)
+        self._sep_gauges = tk.Frame(self._win, bg=BG_CARD, height=1)
 
         self._build_button_panel()
         self._build_tiles()
+        self._reflow_panel()
         self._update_status()
 
         # Drag window only from the status bar
@@ -269,8 +277,10 @@ class MainWindow:
 
     def _sb_drag_end(self, e):
         self._drag_x = self._drag_y = self._drag_ox = self._drag_oy = None
-        self._cfg["panel_x"] = self._win.winfo_x()
-        self._cfg["panel_y"] = self._win.winfo_y()
+        self._panel_x = self._win.winfo_x()
+        self._panel_y = self._win.winfo_y()
+        self._cfg["panel_x"] = self._panel_x
+        self._cfg["panel_y"] = self._panel_y
         from config import save_config
         save_config(self._cfg)
 
@@ -336,10 +346,242 @@ class MainWindow:
     def refresh_buttons(self):
         self._render_buttons()
 
+    def rebuild_panel(self):
+        """Re-apply panel config (buttons + utility) after settings save."""
+        try:
+            from panel_actions import ensure_panel_defaults
+            ensure_panel_defaults(self.app.cfg)
+        except Exception:
+            pass
+        self._btn_nav = []
+        self._render_buttons()
+        self._render_utility_row()
+        self._reflow_panel()
+
+    def _render_utility_row(self):
+        """Build the 4 utility tiles from panel_utility config (placement via reflow)."""
+        frame = getattr(self, "_utility_frame", None)
+        if frame is None:
+            return
+        for w in frame.winfo_children():
+            w.destroy()
+        self._utility_tile_refs = []
+        _T, _GAP = 40, 10
+        slots = self.app.cfg.get("panel_utility") or []
+        for i in range(4):
+            slot = slots[i] if i < len(slots) else {"type": "EMPTY", "icon": "border-none-variant"}
+            if slot.get("type") == "EMPTY":
+                continue
+            icon = slot.get("icon") or "help-circle"
+            fill = slot.get("color") or BG_CARD
+            if not fill or fill == "RAINBOW":
+                fill = BG_CARD
+            imgs = [
+                self._make_tile_photo(icon, fill, icon_scale=0.52),
+                self._make_tile_photo(icon, self._adjust_hex(fill, 20), icon_scale=0.52),
+            ]
+            prs = self._make_tile_photo(icon, self._adjust_hex(fill, -20), icon_scale=0.52)
+            self._utility_tile_refs.extend(imgs + [prs])
+            btn = tk.Label(frame, image=imgs[0], bg=BG, cursor="hand2",
+                           padx=0, pady=0, borderwidth=0)
+            btn.place(x=i * (_T + _GAP), y=0)
+            btn.bind("<Enter>", lambda e, imgs_=imgs, b=btn: b.config(image=imgs_[1]))
+            btn.bind("<Leave>", lambda e, imgs_=imgs, b=btn: b.config(image=imgs_[0]))
+            btn.bind("<ButtonPress-1>", lambda e, p=prs, b=btn: b.config(image=p))
+            btn.bind("<ButtonRelease-1>",
+                     lambda e, s=slot, imgs_=imgs, b=btn: (b.config(image=imgs_[0]), self._on_button_action(s)))
+            name = slot.get("name") or ""
+            if name:
+                ToolTip(btn, name)
+
+    @staticmethod
+    def _place_or_forget(widget, show, **kw):
+        if widget is None:
+            return
+        if show:
+            widget.place(**kw)
+        else:
+            widget.place_forget()
+
+    def _hardware_connected(self):
+        """True when Iris hardware is on the serial link."""
+        try:
+            from serial_comm import serial_sender
+            if serial_sender.connected_port() is not None:
+                return True
+        except Exception:
+            pass
+        try:
+            return bool(getattr(self.app, "_online", False))
+        except Exception:
+            return False
+
+    def _panel_section_flags(self):
+        """(gauges, button_box, volume, brightness, mixer, utility) from cfg."""
+        try:
+            from panel_actions import (
+                layout_enabled, slider_enabled, ensure_panel_defaults)
+            ensure_panel_defaults(self.app.cfg)
+            gauges = layout_enabled(self.app.cfg, "gauges")
+            gcfg = self.app.cfg.get("panel_gauges") or {}
+            if isinstance(gcfg, dict) and gcfg.get("enabled") is False:
+                gauges = False
+            box = layout_enabled(self.app.cfg, "button_box")
+            sliders = layout_enabled(self.app.cfg, "sliders")
+            vol = sliders and slider_enabled(self.app.cfg, "app_volume")
+            # Brightness only when hardware is present (controls the device LEDs)
+            bri = (sliders and slider_enabled(self.app.cfg, "brightness")
+                   and self._hardware_connected())
+            mix = sliders and slider_enabled(self.app.cfg, "app_mixer")
+            util = layout_enabled(self.app.cfg, "utility")
+            return gauges, box, vol, bri, mix, util
+        except Exception:
+            return True, True, True, False, True, True
+
+    def _reflow_panel(self):
+        """Stack visible sections top-down and shrink the window to fit."""
+        gauges, box, vol, bri, mix, util = self._panel_section_flags()
+        _W, _T, _GAP = 190, 40, 10
+        _X = (self.W - _W) // 2
+        GAUGE_H, BTN_H, SLIDER_H = 70, 150, 28
+        TITLE_H, APP_H, SEP, BOTTOM = 16, 14, 1, 24
+
+        y = 28 + 8
+
+        self._place_or_forget(
+            getattr(self, "_gauge_frame", None), gauges,
+            x=_X, y=y, width=_W, height=GAUGE_H)
+        if gauges:
+            y += GAUGE_H + 5
+            self._place_or_forget(
+                getattr(self, "_sep_gauges", None), True, x=_X, y=y, width=_W)
+            y += SEP + 10
+        else:
+            self._place_or_forget(getattr(self, "_sep_gauges", None), False)
+
+        self._place_or_forget(
+            getattr(self, "_btn_panel", None), box,
+            x=_X, y=y, width=_W, height=BTN_H)
+        if box:
+            y += BTN_H + 10
+
+        any_sl = vol or bri
+        self._place_or_forget(
+            getattr(self, "_sep_sliders", None), any_sl, x=_X, y=y, width=_W)
+        if any_sl:
+            y += SEP + 5
+
+        if vol:
+            self._place_or_forget(
+                getattr(self, "_lbl_volume_title", None), True,
+                x=_X + 2, y=y, width=_W - 2, height=TITLE_H)
+            y += TITLE_H + 1
+            self._place_or_forget(
+                getattr(self, "_lbl_volume_app", None), True,
+                x=_X + 2, y=y, width=_W - 2, height=APP_H)
+            y += APP_H + 1
+            self._place_or_forget(
+                getattr(self, "_slider_volume", None), True, x=_X, y=y, width=_W)
+            y += SLIDER_H + 8
+        else:
+            self._place_or_forget(getattr(self, "_lbl_volume_title", None), False)
+            self._place_or_forget(getattr(self, "_lbl_volume_app", None), False)
+            self._place_or_forget(getattr(self, "_slider_volume", None), False)
+
+        if bri:
+            self._place_or_forget(
+                getattr(self, "_lbl_brightness_title", None), True,
+                x=_X + 2, y=y, width=_W - 2, height=TITLE_H)
+            y += TITLE_H + 1
+            self._place_or_forget(
+                getattr(self, "_slider_brightness", None), True, x=_X, y=y, width=_W)
+            y += SLIDER_H + 8
+        else:
+            self._place_or_forget(getattr(self, "_lbl_brightness_title", None), False)
+            self._place_or_forget(getattr(self, "_slider_brightness", None), False)
+
+        self._mixer_enabled = bool(mix)
+        if mix:
+            mixer_h = max(getattr(self, "_mixer_h", 0) or 0, 1)
+            self._place_or_forget(
+                getattr(self, "_lbl_mixer_title", None), True,
+                x=_X + 2, y=y, width=_W - 2, height=TITLE_H)
+            y += TITLE_H + 1
+            self._place_or_forget(
+                getattr(self, "_mixer_frame", None), True,
+                x=_X, y=y, width=_W, height=mixer_h)
+            y += mixer_h + 8
+        else:
+            self._place_or_forget(getattr(self, "_lbl_mixer_title", None), False)
+            self._place_or_forget(getattr(self, "_mixer_frame", None), False)
+
+        self._place_or_forget(
+            getattr(self, "_sep_utility", None), util, x=_X, y=y, width=_W)
+        if util:
+            y += SEP + 10
+            self._place_or_forget(
+                getattr(self, "_utility_frame", None), True,
+                x=_X, y=y, width=4 * _T + 3 * _GAP, height=_T)
+            y += _T + 10
+        else:
+            self._place_or_forget(getattr(self, "_utility_frame", None), False)
+
+        self._place_or_forget(
+            getattr(self, "_sep_core", None), True, x=_X, y=y, width=_W)
+        y += SEP + 12
+        self._place_or_forget(
+            getattr(self, "_core_frame", None), True,
+            x=_X, y=y, width=4 * _T + 3 * _GAP, height=_T)
+        y += _T + BOTTOM
+
+        hero = getattr(self, "_hero_btn", None)
+        if hero is not None:
+            self._place_or_forget(hero, True, relx=0.5, y=y - 20, anchor=tk.CENTER, width=80, height=18)
+
+        new_h = max(int(y), 28 + _T + BOTTOM)
+        old_h = getattr(self, "_panel_h", None)
+        if old_h is None:
+            try:
+                wh = int(self._win.winfo_height())
+                old_h = wh if wh > 1 else self.H
+            except Exception:
+                old_h = self.H
+        self._panel_h = new_h
+
+        try:
+            x = int(self._panel_x)
+            wy = int(self._panel_y)
+        except Exception:
+            x, wy = 0, 0
+        # Keep bottom edge fixed (panel usually sits near screen bottom)
+        new_y = wy + old_h - new_h
+        try:
+            sw = int(self._win.winfo_screenwidth())
+            sh = int(self._win.winfo_screenheight())
+            if new_y < 0:
+                new_y = 0
+            if new_y + new_h > sh:
+                new_y = max(0, sh - new_h)
+            # Keep the panel fully on screen horizontally as well.
+            if x < 0:
+                x = 0
+            if x + self.W > sw:
+                x = max(0, sw - self.W)
+        except Exception:
+            pass
+        self._win.geometry(f"{self.W}x{new_h}+{x}+{new_y}")
+        self._panel_x = x
+        self._panel_y = new_y
+        try:
+            self._win.update_idletasks()
+            self._apply_region()
+        except Exception:
+            pass
+
     def _current_buttons(self):
         """Return the list of buttons to render at the current nav level."""
         if not self._btn_nav:
-            return self.app.cfg.get("ha_board") or []
+            return self.app.cfg.get("panel_board") or []
         return (self._btn_nav[-1].get("children") or [])
 
     def _render_buttons(self):
@@ -499,6 +741,27 @@ class MainWindow:
             self._do_audio_output_action(slot)
         elif btype == "STOPWATCH":
             self.app._toggle_stopwatch()
+        elif btype == "MEDIA_PREV":
+            self._media_prev()
+        elif btype == "MEDIA_PLAY":
+            self._media_play_pause()
+        elif btype == "MEDIA_NEXT":
+            self._media_next()
+        elif btype == "MEDIA_EJECT":
+            self._media_eject()
+        elif btype == "EMPTY":
+            pass
+        elif btype.startswith("PLUGIN:"):
+            parts = btype.split(":", 2)
+            if len(parts) >= 3:
+                pname, cid = parts[1], parts[2]
+                try:
+                    from plugin_manager import on_tap
+                    # Pass type-specific value fields if present (e.g. profile)
+                    val = slot.get(cid) or slot.get("value")
+                    on_tap(pname, cid, val)
+                except Exception as ex:
+                    log.warning("PLUGIN tap failed: %s", ex)
 
     def _do_rest_action(self, slot):
         entity = slot.get("entity_id", "").strip()
@@ -971,6 +1234,59 @@ class MainWindow:
             label = (f"{app} — no audio") if app else "No audio session"
             self._lbl_volume_app.config(text=label, fg=FG_DIM)
 
+    def _refresh_mixer_ui(self):
+        """Refresh per-app volume rows from win_volume.list_sessions()."""
+        if not getattr(self, "_mixer_enabled", False):
+            return
+        frame = getattr(self, "_mixer_frame", None)
+        if frame is None:
+            return
+        try:
+            import win_volume
+            sessions = win_volume.list_sessions()
+        except Exception:
+            sessions = []
+        key = tuple((s.get("pid"), s.get("volume"), s.get("name")) for s in sessions)
+        if key == self._mixer_sig:
+            return
+        self._mixer_sig = key
+        for w in frame.winfo_children():
+            w.destroy()
+        self._mixer_rows = []
+
+        _LABEL_H, _SLIDER_H = 14, 26
+        y = 0
+        for s in sessions[:10]:
+            pid = s.get("pid")
+            name = s.get("name") or "Application"
+            vol = s.get("volume")
+            var = tk.IntVar(value=vol if isinstance(vol, int) else 0)
+            lbl = tk.Label(frame, text=name, font=("Segoe UI", 8),
+                           fg=FG_DIM, bg=BG, anchor="w")
+            lbl.place(x=0, y=y, width=180, height=_LABEL_H)
+            y += _LABEL_H
+            sl = StepSlider(frame, list(range(101)), var,
+                            on_change=lambda p=pid, v=var: self._set_mixer_volume(p, v.get()))
+            sl.place(x=0, y=y, width=180, height=_SLIDER_H)
+            y += _SLIDER_H + 6
+            self._mixer_rows.append({"pid": pid, "var": var, "slider": sl, "label": lbl})
+
+        if not self._mixer_rows:
+            empty = tk.Label(frame, text="No apps playing", font=("Segoe UI", 8),
+                             fg=FG_DIM, bg=BG, anchor="w")
+            empty.place(x=0, y=0, width=180, height=_LABEL_H)
+            y = _LABEL_H + 8
+
+        self._mixer_h = y
+        self._reflow_panel()
+
+    def _set_mixer_volume(self, pid, value):
+        try:
+            import win_volume
+            win_volume.set_session_volume(pid, max(0, min(100, value)))
+        except Exception:
+            pass
+
     # ── Media control helpers ───────────────────────────────────────
     @staticmethod
     def _send_media_key(vk):
@@ -999,98 +1315,55 @@ class MainWindow:
 
     def _build_tiles(self):
         self._tile_refs = []
-        _W = 190                     # uniform content width
-        _X = (self.W - _W) // 2      # left margin (15)
+        _W = 190
+        _X = (self.W - _W) // 2
         _T, _GAP = 40, 10
-        _TOTAL = 4 * _T + 3 * _GAP  # 190 — exactly matches _W
-        _BY = self.H - 30 - _T      # tile top (30px from bottom to clear corner)
+        _TOTAL = 4 * _T + 3 * _GAP
 
-        # ════════════════════════════════════════════════════════════
-        #  Volume + Display (top separator → app volume → brightness)
-        # ════════════════════════════════════════════════════════════
+        # Widgets created here; _reflow_panel places them and sets height.
+        self._sep_sliders = tk.Frame(self._win, bg=BG_CARD, height=1)
 
-        # ── Top separator ──
-        tk.Frame(self._win, bg=BG_CARD, height=1).place(
-            x=_X, y=_BY - 212, width=_W)
-
-        # ── Title "App Volume" ──
-        tk.Label(self._win, text="App Volume", font=("Segoe UI", 10),
-                 fg=NEON, bg=BG, anchor="w").place(
-            x=_X + 2, y=_BY - 207, width=_W - 2, height=16)
-
-        # ── Active app name ──
+        self._lbl_volume_title = tk.Label(
+            self._win, text="App Volume", font=("Segoe UI", 10),
+            fg=NEON, bg=BG, anchor="w")
         self._lbl_volume_app = tk.Label(
             self._win, text="No audio session", font=("Segoe UI", 8),
             fg=FG_DIM, bg=BG, anchor="w")
-        self._lbl_volume_app.place(x=_X + 2, y=_BY - 190, width=_W - 2, height=14)
-
-        # ── App volume slider (0–100) ──
         self._volume_enabled = False
         self._volume_var = tk.IntVar(value=0)
         self._slider_volume = StepSlider(
             self._win, list(range(101)), self._volume_var,
             on_change=self._on_volume_change,
         )
-        self._slider_volume.place(x=_X, y=_BY - 173, width=_W)
 
-        # ── Title "Display Brightness" ──
-        tk.Label(self._win, text="Display Brightness", font=("Segoe UI", 10),
-                 fg=NEON, bg=BG, anchor="w").place(
-            x=_X + 2, y=_BY - 143, width=_W - 2, height=16)
-
-        # ── Brightness slider (5 steps via StepSlider) ──
+        self._lbl_brightness_title = tk.Label(
+            self._win, text="Display Brightness", font=("Segoe UI", 10),
+            fg=NEON, bg=BG, anchor="w")
         self._brightness_var = tk.IntVar(value=self.app.cfg.get("brightness", DEFAULT_BRIGHTNESS))
         self._slider_brightness = StepSlider(
             self._win, list(range(5)), self._brightness_var,
             on_change=self._on_brightness_change,
         )
-        self._slider_brightness.place(x=_X, y=_BY - 123, width=_W)
 
-        # ════════════════════════════════════════════════════════════
-        #  Separator B — above media tiles (15px padding each side)
-        # ════════════════════════════════════════════════════════════
-        tk.Frame(self._win, bg=BG_CARD, height=1).place(
-            x=_X, y=_BY - 80, width=_W)
+        self._mixer_enabled = False
+        self._mixer_h = 0
+        self._mixer_sig = None
+        self._mixer_rows = []
+        self._lbl_mixer_title = tk.Label(
+            self._win, text="App Mixer", font=("Segoe UI", 10),
+            fg=NEON, bg=BG, anchor="w")
+        self._mixer_frame = tk.Frame(self._win, bg=BG)
 
-        # ════════════════════════════════════════════════════════════
-        #  Media controls row (back, play/pause, forward, eject)
-        # ════════════════════════════════════════════════════════════
+        self._sep_utility = tk.Frame(self._win, bg=BG_CARD, height=1)
+        self._utility_frame = tk.Frame(self._win, bg=BG, width=_TOTAL, height=_T)
+        self._utility_frame.pack_propagate(False)
+        self._utility_tile_refs = []
+        self._render_utility_row()
 
-        _media_frame = tk.Frame(self._win, bg=BG, width=_TOTAL, height=_T)
-        _media_frame.place(x=_X, y=_BY - 65)
-        _media_frame.pack_propagate(False)
-
-        _media_specs = [
-            ("skip-previous", self._media_prev),
-            ("play-pause",    self._media_play_pause),
-            ("skip-next",     self._media_next),
-            ("eject",         self._media_eject),
-        ]
-
-        for i, (icon, cb) in enumerate(_media_specs):
-            imgs = self._make_tile_set(icon, icon_scale=0.52)
-            prs = self._make_tile_photo(icon, self._adjust_hex(BG_CARD, -20), icon_scale=0.52)
-            self._tile_refs.extend(imgs + [prs])
-            btn = tk.Label(_media_frame, image=imgs[0], bg=BG, cursor="hand2",
-                           padx=0, pady=0, borderwidth=0)
-            btn.place(x=i * (_T + _GAP), y=0)
-            btn.bind("<Enter>", lambda e, imgs_=imgs, b=btn: b.config(image=imgs_[1]))
-            btn.bind("<Leave>", lambda e, imgs_=imgs, b=btn: b.config(image=imgs_[0]))
-            btn.bind("<ButtonPress-1>", lambda e, p=prs, b=btn: b.config(image=p))
-            btn.bind("<ButtonRelease-1>", lambda e, c=cb, imgs_=imgs, b=btn: (b.config(image=imgs_[0]), c()))
-
-        # ════════════════════════════════════════════════════════════
-        #  Separator A — between media & bottom tiles (15px each side)
-        # ════════════════════════════════════════════════════════════
-        tk.Frame(self._win, bg=BG_CARD, height=1).place(
-            x=_X, y=_BY - 12, width=_W)
-
-        # ════════════════════════════════════════════════════════════
-        #  Bottom tile row (display toggle, overlay, settings, exit)
-        # ════════════════════════════════════════════════════════════
-        _tile_frame = tk.Frame(self._win, bg=BG, width=_TOTAL, height=_T)
-        _tile_frame.place(x=_X, y=_BY)
-        _tile_frame.pack_propagate(False)
+        self._sep_core = tk.Frame(self._win, bg=BG_CARD, height=1)
+        self._core_frame = tk.Frame(self._win, bg=BG, width=_TOTAL, height=_T)
+        self._core_frame.pack_propagate(False)
+        _tile_frame = self._core_frame
 
         self._pc_display_on = self.app.cfg.get("pc_stats_manual", False)
         self._overlay_on = False
@@ -1197,10 +1470,9 @@ class MainWindow:
         ))
 
         # ── TEMP: hero overlay test button ──
-        hero_btn = tk.Label(self._win, text="SHOW HERO", bg=NEON, fg=BG,
+        self._hero_btn = tk.Label(self._win, text="SHOW HERO", bg=NEON, fg=BG,
                             font=("Segoe UI", 7, "bold"), cursor="hand2")
-        hero_btn.place(relx=0.5, y=self.H - 24, anchor=tk.CENTER, width=80, height=18)
-        hero_btn.bind("<Button-1>", lambda e: self.app._overlays.hero(
+        self._hero_btn.bind("<Button-1>", lambda e: self.app._overlays.hero(
             title="SOL",
             subtitle="Population: 24.3 Billion",
             fields=[
@@ -1240,6 +1512,7 @@ class MainWindow:
 
         if self._visible:
             self._refresh_volume_ui()
+            self._refresh_mixer_ui()
 
         self._win.after(1000, self._update_status)
 
@@ -1260,6 +1533,7 @@ class MainWindow:
             self._saved_foreground_title = buf.value
         else:
             self._saved_foreground_title = ""
+        self._reflow_panel()
         self._win.deiconify()
         self._win.update_idletasks()
         self._apply_region()
@@ -1267,6 +1541,7 @@ class MainWindow:
         self._win.focus_force()
         self._visible = True
         self._refresh_volume_ui()
+        self._refresh_mixer_ui()
         # Snap mouse cursor to center of panel
         px = self._win.winfo_x()
         py = self._win.winfo_y()

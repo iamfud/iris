@@ -8,13 +8,28 @@
 
 var _escMap = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 
-var _IRIS_TOKEN = (document.querySelector('meta[name="iris-token"]') || {}).content || "";
+// Auth is carried by the loopback peer or the login session cookie; the
+// access token is never embedded in the page any more.
+var _IRIS_TOKEN = "";
+
+// True only inside the desktop app's panel window (pywebview). App-only
+// settings sections (e.g. Network security) are hidden from phone/browser.
+function _isApp() {
+  return !!(window.pywebview && window.pywebview.api);
+}
 
 function apiFetch(url, opts) {
   opts = opts || {};
   opts.headers = Object.assign({}, opts.headers || {});
   if (_IRIS_TOKEN) opts.headers["X-Iris-Token"] = _IRIS_TOKEN;
-  return fetch(url, opts);
+  return fetch(url, opts).then(function (res) {
+    if (res.status === 401) {
+      // Session expired or unauthenticated remote access -> back to login.
+      window.location.href = "/login";
+      throw new Error("unauthorized");
+    }
+    return res;
+  });
 }
 
 class SettingsRenderer {
@@ -75,8 +90,10 @@ class SettingsRenderer {
     }
 
     if (page.sections && page.sections.length > 0) {
+      var isApp = _isApp();
       html += '<section class="settings-content">';
       page.sections.forEach(function (section) {
+        if (section.app_only && !isApp) return;
         html += self._renderSection(section, config);
       });
       html += "</section>";
@@ -360,7 +377,7 @@ class SettingsRenderer {
     var rawEvents = ((pluginStateData || {}).state || {})._raw_events;
     if (rawEvents && rawEvents.length > 0) {
       html += '<div class="settings-collapsible raw-events">';
-      html += '<a href="#" class="collapse-toggle" onclick="return toggleCollapsible(this)">';
+      html += '<a href="#" class="collapse-toggle">';
       html += '&#9654; Raw Events (' + rawEvents.length + ')</a>';
       html += '<div class="collapse-content" style="display:none">';
       html += '<pre style="max-height:400px;overflow:auto;font-size:11px">';
@@ -379,12 +396,36 @@ class SettingsRenderer {
     if (section.title) {
       html += '<h2 class="settings-section-title">' + this._esc(section.title) + "</h2>";
     }
-    html += '<div class="settings-card">';
-    if (section.controls) {
-      section.controls.forEach(function (ctrl) {
-        html += self._renderControl(ctrl, config);
-      });
+    var cardClass = "settings-card";
+    if (section.qr_top_right) cardClass += " settings-card-net";
+    html += '<div class="' + cardClass + '">';
+
+    var controls = (section.controls && section.controls.length) ? section.controls : [];
+    var qr = null;
+    if (section.qr_top_right) {
+      for (var i = 0; i < controls.length; i++) {
+        if (controls[i].type === "qr") { qr = controls[i]; break; }
+      }
     }
+
+    if (qr) {
+      html += '<div class="settings-qr-fr">' + self._renderControl(qr, config) + "</div>";
+    }
+
+    if (section.instructions) {
+      html += '<div class="settings-instructions">';
+      var items = Array.isArray(section.instructions) ? section.instructions : [section.instructions];
+      items.forEach(function (li) {
+        html += "<p>" + self._esc(li) + "</p>";
+      });
+      html += "</div>";
+    }
+
+    controls.forEach(function (ctrl) {
+      if (qr && ctrl === qr) return;
+      html += self._renderControl(ctrl, config);
+    });
+
     html += "</div>";
     html += "</div>";
     return html;
@@ -412,6 +453,8 @@ class SettingsRenderer {
         return this._renderInfo(ctrl, config);
       case "qr":
         return this._renderQr(ctrl, config);
+      case "devices":
+        return this._renderDevices(ctrl, config);
       case "folder_picker":
         return this._renderFolderPicker(ctrl, config);
       case "file_picker":
@@ -591,10 +634,28 @@ class SettingsRenderer {
     return html;
   }
 
+  /* ── Paired devices list ────────────────────────────────────── */
+
+  _renderDevices(ctrl, config) {
+    var html = '<div class="settings-control">';
+    if (ctrl.label) {
+      html += '<label class="settings-label">' + this._esc(ctrl.label) + "</label>";
+    }
+    if (ctrl.description) {
+      html += '<div class="settings-hint">' + this._esc(ctrl.description) + "</div>";
+    }
+    html += '<div class="settings-devices" data-devices>';
+    html += '<div class="settings-devices-empty">Loading…</div>';
+    html += "</div>";
+    html += '<button class="settings-btn settings-devices-refresh">';
+    html += '<span class="material-icons-outlined">refresh</span> Refresh</button>';
+    html += "</div>";
+    return html;
+  }
+
   /* ── Folder picker ──────────────────────────────────────────── */
 
-  _renderFolderPicker(ctrl, config) {
-    var val = config[ctrl.key] || "";
+  _renderFolderPicker(ctrl, config) {    var val = config[ctrl.key] || "";
     var html = '<div class="settings-control">';
     if (ctrl.label) {
       html += '<label class="settings-label">' + this._esc(ctrl.label) + "</label>";
@@ -638,7 +699,9 @@ class SettingsRenderer {
     var page = this.getPage(pageId);
     if (!page || !page.sections) return;
 
+    var isApp = _isApp();
     page.sections.forEach(function (section) {
+      if (section.app_only && !isApp) return;
       if (!section.controls) return;
       section.controls.forEach(function (ctrl) {
         self._bindControl(container, ctrl, config, saveCallback);
@@ -945,10 +1008,15 @@ class SettingsRenderer {
         buttons.forEach(function (el) {
           el.addEventListener("click", function () {
             if (ctrl.action === "copy_token") {
-              var token = (document.querySelector('meta[name="iris-token"]') || {}).content || "";
-              if (navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText(token).catch(function () {});
-              }
+              apiFetch(self._apiBase + "/api/config")
+                .then(function (res) { return res.ok ? res.json() : {}; })
+                .then(function (data) {
+                  var token = data.http_token || "";
+                  if (token && navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(token).catch(function () {});
+                  }
+                })
+                .catch(function () {});
               var old = el.textContent;
               el.textContent = "Copied!";
               setTimeout(function () { el.textContent = old; }, 1200);
@@ -971,6 +1039,66 @@ class SettingsRenderer {
             })
             .catch(function () {});
         });
+        break;
+
+      case "devices":
+        var devBox = container.querySelector("[data-devices]");
+        var devRefresh = container.querySelector(".settings-devices-refresh");
+        if (!devBox) break;
+
+        function renderDeviceRows(devices) {
+          if (!devices || !devices.length) {
+            devBox.innerHTML =
+              '<div class="settings-devices-empty">No devices have paired yet.</div>';
+            return;
+          }
+          var html = "";
+          devices.forEach(function (d) {
+            html += '<div class="settings-device-row" data-device-id="' + self._esc(d.id) + '">';
+            html += '<div class="settings-device-meta">';
+            html += '<span class="settings-device-name">' + self._esc(d.name) + "</span>";
+            if (d.ua) {
+              html += '<span class="settings-device-ua">' + self._esc(d.ua) + "</span>";
+            }
+            if (d.last_seen) {
+              try {
+                html += '<span class="settings-device-seen">Last seen ' +
+                  new Date(d.last_seen * 1000).toLocaleString() + "</span>";
+              } catch (_) {}
+            }
+            html += "</div>";
+            html += '<button class="settings-btn settings-btn-danger device-revoke" data-dev="' +
+              self._esc(d.id) + '">Revoke</button>';
+            html += "</div>";
+          });
+          devBox.innerHTML = html;
+          devBox.querySelectorAll(".device-revoke").forEach(function (rev) {
+            rev.addEventListener("click", function () {
+              apiFetch(self._apiBase + "/api/devices/revoke", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id: rev.dataset.dev }),
+              })
+                .then(function (res) { return res.json(); })
+                .then(function (data) { if (data && data.ok) loadDeviceRows(); })
+                .catch(function () {});
+            });
+          });
+        }
+
+        function loadDeviceRows() {
+          devBox.innerHTML = '<div class="settings-devices-empty">Loading…</div>';
+          apiFetch(self._apiBase + "/api/devices")
+            .then(function (res) { return res.ok ? res.json() : { ok: false, devices: [] }; })
+            .then(function (data) { renderDeviceRows((data && data.devices) || []); })
+            .catch(function () {
+              devBox.innerHTML =
+                '<div class="settings-devices-empty">Could not load devices.</div>';
+            });
+        }
+
+        loadDeviceRows();
+        if (devRefresh) devRefresh.addEventListener("click", loadDeviceRows);
         break;
     }
   }
@@ -1178,7 +1306,7 @@ class SettingsRenderer {
   }
 }
 
-/* global helper used by onclick attributes in rendered HTML */
+/* global helper used by collapse toggles */
 function toggleCollapsible(link) {
   var content = link.nextElementSibling;
   if (!content) return false;
@@ -1187,3 +1315,13 @@ function toggleCollapsible(link) {
   link.innerHTML = (isHidden ? "&#9660;" : "&#9654;") + link.innerHTML.slice(1);
   return false;
 }
+
+/* Delegated click handling (CSP: no inline onclick handlers). */
+document.addEventListener("click", function (e) {
+  var t = e.target;
+  var link = t && t.closest ? t.closest(".collapse-toggle") : null;
+  if (link) {
+    e.preventDefault();
+    toggleCollapsible(link);
+  }
+});

@@ -22,6 +22,15 @@ def load_config():
         # Migrate old key names
         if "ha_board" in raw and "panel_board" not in raw:
             raw["panel_board"] = raw.pop("ha_board")
+        # Password auth was removed (QR pairing is the only remote path).
+        for stale in ("panel_password", "panel_password_salt",
+                      "panel_password_hash"):
+            raw.pop(stale, None)
+        try:
+            from panel_actions import ensure_panel_defaults
+            ensure_panel_defaults(raw)
+        except Exception:
+            pass
         return {**DEFAULT_CONFIG, **raw}
     except Exception:
         return dict(DEFAULT_CONFIG)

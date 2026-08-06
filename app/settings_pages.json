@@ -99,55 +99,33 @@
       "subtitle": "Application settings",
       "icon": "settings",
       "nav_group": "bottom",
-      "sections": []
-    },
-    {
-      "id": "network",
-      "title": "Network",
-      "subtitle": "HTTP/WS bridge security",
-      "icon": "wifi",
-      "nav_group": "bottom",
       "sections": [
         {
-          "title": "Access",
+          "title": "Network",
+          "app_only": true,
+          "qr_top_right": true,
+          "instructions": [
+            "The panel binds to localhost by default, so no login is needed on this PC.",
+            "To reach it from your phone, turn on Allow LAN access, then scan the QR code at the top right. The QR carries the access token — scanning pairs your phone with this panel. The code is only ever shown on this PC, so it can't be fetched over the network.",
+            "A paired phone stays connected until you revoke it in the list below."
+          ],
           "controls": [
             {
               "type": "toggle",
               "key": "lan_access",
               "label": "Allow LAN access",
-              "description": "Allow other devices on your network to reach the panel API. Restart required. All requests still require the auth token."
+              "description": "Allow devices on your network to reach the panel. Restart required. Remote devices must pair by scanning the QR code."
             },
-            {
-              "type": "info",
-              "key": "_security_note",
-              "label": "",
-              "value": "The API is bound to localhost by default. Enabling LAN access binds to all interfaces but every request still needs the auth token below."
-            }
-          ]
-        },
-        {
-          "title": "Auth Token",
-          "controls": [
-            {
-              "type": "info",
-              "key": "http_token",
-              "label": "Token"
-            },
-            {
-              "type": "button",
-              "label": "Copy token",
-              "icon": "content_copy",
-              "action": "copy_token"
-            }
-          ]
-        },
-        {
-          "title": "LAN Panel",
-          "controls": [
             {
               "type": "qr",
               "key": "lan_url",
-              "label": "Scan to open panel"
+              "label": "Scan to pair",
+              "description": "Scan from your phone to connect once — no password needed. The QR carries the access token and is only ever shown on this PC."
+            },
+            {
+              "type": "devices",
+              "label": "Paired devices",
+              "description": "Devices that have scanned the QR to pair. Revoke any you no longer trust — the phone is signed out immediately."
             }
           ]
         }
@@ -161,10 +139,6 @@
     },
     "text": {
       "description": "Text input field",
-      "fields": ["key", "label", "placeholder", "save_debounce_ms"]
-    },
-    "password": {
-      "description": "Password input with show/hide toggle",
       "fields": ["key", "label", "placeholder", "save_debounce_ms"]
     },
     "select": {

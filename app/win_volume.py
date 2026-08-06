@@ -13,6 +13,8 @@ import sys
 import threading
 import time
 
+import win_resolver
+
 log = logging.getLogger("iris.volume")
 
 # Foreground PIDs of Iris-owned processes are ignored (panel/WebView2/app).
@@ -160,7 +162,7 @@ def find_session(pid, name=None):
 
 
 def get_active_app_state():
-    """Return {"app": <exe name or None>, "volume": <int 0-100 or None>}."""
+    """Return {"app": <friendly name or None>, "volume": <int 0-100 or None>}."""
     _refresh_target()
     with _TARGET_LOCK:
         pid = _target["pid"]
@@ -168,16 +170,20 @@ def get_active_app_state():
     if pid is None:
         return {"app": None, "volume": None}
     session = find_session(pid, name)
+    exe_path = _exe_path_for(pid)
+    resolved = win_resolver.resolve(session=session, pid=pid,
+                                    exe_path=exe_path, exe_name=name)
+    friendly = resolved["name"]
     if session is None:
-        return {"app": name, "volume": None}
+        return {"app": friendly, "volume": None}
     try:
         sav = session.SimpleAudioVolume
         if sav is None:
-            return {"app": name, "volume": None}
-        return {"app": name, "volume": round(sav.GetMasterVolume() * 100)}
+            return {"app": friendly, "volume": None}
+        return {"app": friendly, "volume": round(sav.GetMasterVolume() * 100)}
     except Exception as e:
         log.debug("[volume] get volume: %s", e)
-        return {"app": name, "volume": None}
+        return {"app": friendly, "volume": None}
 
 
 def set_active_app_volume(value):
@@ -203,4 +209,173 @@ def set_active_app_volume(value):
         return True
     except Exception as e:
         log.debug("[volume] set volume: %s", e)
+        return False
+
+
+def list_sessions():
+    """Return all open render audio sessions (skipping Iris/self + expired).
+
+    Each dict: {"pid": int, "name": str, "volume": int 0-100 | None,
+    "mute": bool | None, "active": bool}.  ``name`` is the friendly display
+    name from win_resolver (e.g. "Chrome" for chrome.exe).  ``active`` is
+    True when the session's State is Active, i.e. the app is audibly playing
+    right now.
+    """
+    sessions = []
+    try:
+        import comtypes
+        from pycaw.utils import AudioUtilities
+        from pycaw.constants import AudioSessionState
+        comtypes.CoInitialize()
+        all_sessions = AudioUtilities.GetAllSessions()
+    except Exception as e:
+        log.debug("[volume] list_sessions enumerate: %s", e)
+        return sessions
+
+    for s in all_sessions:
+        try:
+            pid = s.ProcessId
+            if not pid or _is_self_pid(pid):
+                continue
+            if getattr(s, "State", None) == AudioSessionState.Expired:
+                continue
+            exe_path = _exe_path_for(pid)
+            name = win_resolver.resolve(
+                session=s, pid=pid, exe_path=exe_path,
+                exe_name=os.path.basename(exe_path) if exe_path else None,
+            )["name"]
+            vol, mute = None, None
+            active = False
+            try:
+                state = s.State
+                active = (state == AudioSessionState.Active)
+            except Exception:
+                pass
+            try:
+                sav = s.SimpleAudioVolume
+                if sav is not None:
+                    vol = round(sav.GetMasterVolume() * 100)
+                    mute = bool(sav.GetMute())
+            except Exception:
+                pass
+            sessions.append({
+                "pid": pid,
+                "name": name,
+                "volume": vol,
+                "mute": mute,
+                "active": active,
+            })
+        except Exception:
+            continue
+    return sessions
+
+
+def _exe_path_for(pid):
+    """Executable path for a pid (best-effort), or None."""
+    if not pid:
+        return None
+    try:
+        import psutil
+        return psutil.Process(pid).exe()
+    except Exception:
+        return None
+
+
+def _is_self_pid(pid):
+    """Return True if *pid* belongs to an Iris-owned process."""
+    if not pid:
+        return False
+    try:
+        import psutil
+        exe = psutil.Process(pid).exe()
+    except Exception:
+        return False
+    return _is_self_exe(exe)
+
+
+def _find_session_by_pid(pid):
+    """Return the pycaw AudioSession for *pid*, or None."""
+    if not pid:
+        return None
+    try:
+        import comtypes
+        from pycaw.utils import AudioUtilities
+        comtypes.CoInitialize()
+        for s in AudioUtilities.GetAllSessions():
+            try:
+                if s.ProcessId == pid:
+                    return s
+            except Exception:
+                continue
+    except Exception as e:
+        log.debug("[volume] find_session_by_pid: %s", e)
+    return None
+
+
+def set_session_volume(pid, value):
+    """Set a specific session's volume (0-100). Returns True/False."""
+    session = _find_session_by_pid(pid)
+    if session is None:
+        return False
+    try:
+        sav = session.SimpleAudioVolume
+        if sav is None:
+            return False
+        sav.SetMasterVolume(max(0.0, min(1.0, value / 100.0)), None)
+        return True
+    except Exception as e:
+        log.debug("[volume] set session volume: %s", e)
+        return False
+
+
+def set_session_mute(pid, mute):
+    """Mute/unmute a specific session. Returns True/False."""
+    session = _find_session_by_pid(pid)
+    if session is None:
+        return False
+    try:
+        sav = session.SimpleAudioVolume
+        if sav is None:
+            return False
+        sav.SetMute(bool(mute), None)
+        return True
+    except Exception as e:
+        log.debug("[volume] set session mute: %s", e)
+        return False
+
+
+def get_master_state():
+    """Return {"volume": <int 0-100 or None>} for the default render device."""
+    try:
+        import comtypes
+        from pycaw.utils import AudioUtilities
+        comtypes.CoInitialize()
+        speakers = AudioUtilities.GetSpeakers()
+        if speakers is None:
+            return {"volume": None}
+        epv = speakers.EndpointVolume
+        if epv is None:
+            return {"volume": None}
+        return {"volume": round(epv.GetMasterVolumeLevelScalar() * 100)}
+    except Exception as e:
+        log.debug("[volume] get master: %s", e)
+        return {"volume": None}
+
+
+def set_master_volume(value):
+    """Set the default render device volume (0-100). Returns True/False."""
+    try:
+        import comtypes
+        from pycaw.utils import AudioUtilities
+        comtypes.CoInitialize()
+        speakers = AudioUtilities.GetSpeakers()
+        if speakers is None:
+            return False
+        epv = speakers.EndpointVolume
+        if epv is None:
+            return False
+        epv.SetMasterVolumeLevelScalar(max(0.0, min(1.0, value / 100.0)), None)
+        return True
+    except Exception as e:
+        log.debug("[volume] set master: %s", e)
         return False

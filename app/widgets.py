@@ -55,6 +55,9 @@ class StepSlider:
     def place(self, **kw):
         self._cv.place(**kw)
 
+    def place_forget(self):
+        self._cv.place_forget()
+
     def _idx(self):
         val = self._var.get()
         try:

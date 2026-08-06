@@ -132,17 +132,19 @@ def _extract_via_ps(icon_path, size=64):
 
         env = os.environ.copy()
         env["IRIS_ICON_PATH"] = icon_path
+        env["IRIS_ICON_OUT"] = tmp
 
-        # Only the temp path (which we control) is interpolated — user input
-        # is supplied through the environment variable.
+        # Both paths are supplied through environment variables — user input
+        # is never interpolated into the command.
         ps = (
             'Add-Type -AssemblyName System.Drawing; '
             '$p = $env:IRIS_ICON_PATH; '
+            '$o = $env:IRIS_ICON_OUT; '
             'try { '
             '  $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($p); '
-            '  if ($icon) { $icon.ToBitmap().Save("{}", [System.Drawing.Imaging.ImageFormat]::Png); } '
+            '  if ($icon) { $icon.ToBitmap().Save($o, [System.Drawing.Imaging.ImageFormat]::Png); } '
             '} catch { exit 1 }'
-        ).format(tmp.replace("\\", "\\\\"))
+        )
 
         subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],

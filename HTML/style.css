@@ -4,6 +4,12 @@
     box-sizing:border-box;
 }
 
+@font-face{
+    font-family:"Material Design Icons";
+    src:url("/api/mdi/font") format("truetype");
+    font-display:swap;
+}
+
 :root{
     --neon:#48B2E9;
     --neon-dim:#555555;
@@ -21,6 +27,12 @@
     --radius-card:8px;
     --radius-control:8px;
     --radius-small:6px;
+}
+
+/* Paint the app colour behind the mobile status bar.  body's background
+   alone doesn't extend under it on iOS browsers other than Safari. */
+html{
+    background-color:var(--bg);
 }
 
 [data-theme="ios"]{
@@ -2096,6 +2108,12 @@ header p{
     padding-bottom:0;
 }
 
+.settings-hint{
+    font-size:12px;
+    color:var(--fg-dim);
+    padding:4px 0;
+}
+
 /* Panel page — active app volume tile */
 
 .vol-tile{
@@ -2120,39 +2138,631 @@ header p{
     color:var(--neon);
 }
 
-.vol-app{
-    font-size:16px;
+/* Panel customizer page — uses settings-content template, preview on right */
+
+.done-btn-dirty{
+    background:var(--neon)!important;
+    color:#0a0a0a!important;
+    border-color:var(--neon)!important;
+    font-weight:700;
+}
+
+.settings-content.panel-page{
+    display:flex;
+    flex-direction:row;
+    align-items:flex-start;
+    gap:24px;
+    grid-template-columns:unset;
+}
+
+.panel-editor-col{
+    flex:1 1 0;
+    min-width:0;
+    display:flex;
+    flex-direction:column;
+    gap:24px;
+}
+
+.panel-editor-col > .settings-section{
+    max-width:none;
+}
+
+.panel-preview-col{
+    flex:0 0 220px;
+    position:sticky;
+    top:0;
+    align-self:flex-start;
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+}
+
+[data-theme="ios"] .panel-preview-col{
+    display:none;
+}
+
+.panel-preview-title{
+    font-size:11px;
     font-weight:600;
-    color:var(--fg);
+    text-transform:uppercase;
+    letter-spacing:.5px;
+    color:var(--neon);
     padding:0 4px;
 }
 
-.vol-app-none{
-    color:var(--fg-dim);
-    font-weight:400;
+.panel-phone{
+    width:220px;
+    min-height:420px;
+    background:var(--main-bg);
+    border-radius:var(--radius-screen);
+    border:1px solid var(--border);
+    box-shadow:0 8px 32px rgba(0,0,0,.45);
+    padding:10px 15px 16px;
+    display:flex;
+    flex-direction:column;
+    gap:10px;
 }
 
-.vol-slider-row{
+.panel-phone-sb{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    background:var(--bg-card);
+    border-radius:var(--radius-small);
+    padding:4px 8px;
+    font-size:11px;
+    color:var(--fg-dim);
+    font-family:Consolas,monospace;
+}
+
+.panel-phone-gauges{
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:6px;
+}
+.panel-phone-gauges .pg{
+    width:54px;height:54px;border-radius:50%;
+    border:2px solid var(--neon);opacity:.55;
+    transform:rotate(45deg);
+}
+
+.panel-phone-grid,.panel-phone-util,.panel-phone-core{
+    display:grid;
+    grid-template-columns:repeat(4,34px);
+    gap:18px;
+    justify-content:center;
+}
+
+.ppt{
+    width:34px;height:34px;border-radius:var(--radius-card);
+    background:var(--bg-card);
+    border:1px solid var(--border);
+    transform:rotate(45deg);
+}
+.ppt.empty{ opacity:.25; border-style:dashed; }
+.ppt.locked{ opacity:.4; border-color:var(--neon); }
+
+.panel-phone-sliders{ display:flex; flex-direction:column; gap:4px; }
+.pps-lab{ font-size:11px; color:var(--neon); text-transform:uppercase; letter-spacing:.5px; }
+.pps-bar{ height:6px; border-radius:3px; background:linear-gradient(90deg,var(--neon) 40%,var(--border) 40%); }
+
+.panel-preview-hint{
+    margin-top:2px;
+    font-size:12px;
+    color:var(--fg-dim);
+    text-align:center;
+    width:220px;
+}
+
+.panel-slot-list{ display:flex; flex-direction:column; gap:8px; margin-top:8px; min-width:0; }
+.panel-slot-tile{
+    width:100%;
     display:flex;
     align-items:center;
-    gap:12px;
-    padding:0 4px;
+    justify-content:space-between;
+    gap:8px;
+    padding:10px 12px;
+    background:rgba(0,0,0,.2);
+    border:1px solid var(--border);
+    border-radius:8px;
+    cursor:pointer;
+    text-align:left;
+    color:var(--fg);
+    font-family:inherit;
+    transition:border-color .2s;
+}
+.panel-slot-tile:hover{ border-color:var(--neon); }
+.panel-slot-tile .panel-slot-text{ display:flex; flex-direction:column; min-width:0; }
+.panel-slot-name{ display:block; font-weight:600; font-size:14px; color:var(--fg); }
+.panel-slot-type{ display:block; font-size:12px; color:var(--fg-dim); }
+.panel-slot-chev{ font-size:20px; color:var(--fg-dim); flex-shrink:0; }
+.panel-slot-children{ margin-left:10px; border-left:2px solid var(--border); padding-left:8px; min-width:0; }
+.panel-add-btn{ margin-top:4px; width:100%; }
+
+.panel-util-grid{
+    display:grid;
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:10px;
+    margin-top:8px;
+}
+.panel-util-tile{
+    display:flex;
+    flex-direction:column;
+    align-items:flex-start;
+    gap:2px;
+    padding:10px;
+    background:rgba(0,0,0,.2);
+    border:1px solid var(--border);
+    border-radius:8px;
+    cursor:pointer;
+    text-align:left;
+    color:var(--fg);
+    font-family:inherit;
+    min-width:0;
+    transition:border-color .2s;
+}
+.panel-util-tile:hover{ border-color:var(--neon); }
+.panel-util-label{ font-size:11px; color:var(--neon); text-transform:uppercase; letter-spacing:.5px; margin-bottom:2px; }
+.panel-modal-sub{ display:flex; gap:8px; margin-right:auto; flex-wrap:wrap; }
+#pe-delete{ color:#ff6b6b; border-color:rgba(255,107,107,.4); }
+
+.panel-modal-backdrop{
+    position:fixed; inset:0; background:rgba(0,0,0,.65);
+    display:flex; align-items:center; justify-content:center;
+    z-index:2000; padding:16px;
+}
+.panel-modal{
+    background:var(--bg-card,#2b2b2b);
+    border:1px solid var(--border,#333);
+    border-radius:12px;
+    padding:20px;
+    width:min(420px,100%);
+    max-height:90vh;
+    overflow:auto;
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+}
+.panel-modal h3{ margin:0 0 4px; color:var(--neon); }
+.panel-modal-actions{ display:flex; justify-content:flex-end; gap:8px; margin-top:8px; flex-wrap:wrap; }
+.settings-btn-primary{
+    background:var(--neon)!important;
+    color:#0a0a0a!important;
+    border-color:var(--neon)!important;
+}
+.settings-picker-row{ display:flex; gap:8px; }
+.settings-picker-row .settings-input{ flex:1; }
+.settings-appicon-row{ display:flex; align-items:center; gap:10px; }
+.settings-appicon-preview{
+    width:44px;
+    height:44px;
+    object-fit:contain;
+    border-radius:8px;
+    background:var(--bg-card);
+    border:1px solid var(--border);
+    padding:3px;
+}
+.header-sub{ margin:0; font-size:12px; color:var(--fg-dim); font-weight:400; }
+
+/* Panel view — live device screen on the web portal */
+
+.pdev-gauges{ display:flex; justify-content:space-around; align-items:flex-start; }
+.pdev-gauge{
+    position:relative;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:2px;
+}
+.pdev-gsvg{ width:68px; height:68px; }
+.pdev-gtrack{ fill:none; stroke:var(--border); stroke-width:3; }
+.pdev-garc{
+    fill:none;
+    stroke:var(--neon);
+    stroke-width:3;
+    stroke-linecap:round;
+    transform-box:view-box;
+    transform-origin:center;
+    transform:rotate(90deg);
+    transition:stroke-dasharray .4s ease;
+}
+.pdev-gval{
+    position:absolute;
+    top:34px;
+    left:50%;
+    transform:translate(-50%,-50%);
+    font-size:15px;
+    font-weight:700;
+    color:var(--fg);
+    white-space:nowrap;
+}
+.pdev-gunit{ font-size:9px; font-weight:600; color:var(--fg-dim); margin-left:1px; }
+.pdev-glabel{ font-size:10px; color:var(--fg-dim); text-transform:uppercase; letter-spacing:.5px; }
+
+.pdev-grid{
+    display:grid;
+    grid-template-columns:repeat(4,minmax(0,1fr));
+    gap:10px;
+}
+.pdev-tile{
+    position:relative;
+    aspect-ratio:1/1;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    gap:2px;
+    background:var(--bg-card);
+    border:1px solid var(--border);
+    border-radius:var(--radius-card,10px);
+    color:var(--fg);
+    cursor:pointer;
+    font-family:inherit;
+    padding:0;
+    overflow:hidden;
+    transition:border-color .15s, transform .1s;
+}
+@media (hover: hover){
+    .pdev-tile:hover{ border-color:var(--neon); }
+}
+.pdev-tile:active{ transform:scale(.94); }
+.pdev-tile .material-icons-outlined{ font-size:26px; }
+.pdev-tile .md{ font-size:26px; }
+.pdev-tile .pdev-iapp{
+    width:100%;
+    height:100%;
+    object-fit:cover;
+    border-radius:inherit;
+    filter:drop-shadow(0 1px 2px rgba(0,0,0,.4));
+}
+.pdev-tile.pdev-group{ border-color:var(--neon); box-shadow:0 0 8px rgba(72,178,233,.25); }
+.pdev-tile.pdev-active{ border-color:var(--neon); box-shadow:0 0 10px rgba(72,178,233,.4); }
+.pdev-tile.pdev-muted{ border-color:var(--neon-red); box-shadow:0 0 10px rgba(255,51,85,.4); }
+.pdev-tile.pdev-back{ border-color:var(--neon); color:#48B2E9; }
+.pdev-tile.pdev-empty-tile{ border-style:dashed; opacity:.3; cursor:default; }
+.pdev-tname{
+    font-size:9px;
+    line-height:1.1;
+    color:var(--fg-dim);
+    max-width:100%;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+    padding:0 2px;
+}
+.pdev-core-tile .material-icons-outlined{ font-size:24px; }
+.pdev-core-tile .md{ font-size:24px; }
+.pdev-empty{ grid-column:1/-1; text-align:center; font-size:12px; color:var(--fg-dim); padding:10px 0; }
+
+.pdev-sliders{ display:flex; flex-direction:column; gap:12px; }
+.pdev-slider{ display:flex; flex-direction:column; gap:4px; }
+.pdev-slab{ display:flex; align-items:baseline; gap:8px; }
+.pdev-sname{ font-size:12px; color:var(--neon); text-transform:uppercase; letter-spacing:.5px; font-weight:600; }
+.pdev-sapp{ font-size:11px; color:var(--fg-dim); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pdev-sval{ font-size:12px; font-weight:700; color:var(--fg); font-variant-numeric:tabular-nums; }
+.pdev-range{
+    width:100%;
+    height:6px;
+    -webkit-appearance:none;
+    appearance:none;
+    background:var(--bg-card);
+    border-radius:3px;
+    outline:none;
+    accent-color:var(--neon);
+}
+.pdev-range::-webkit-slider-thumb{
+    -webkit-appearance:none;
+    appearance:none;
+    width:18px;
+    height:18px;
+    border-radius:50%;
+    background:var(--neon);
+    border:2px solid var(--main-bg);
+    cursor:pointer;
+}
+.pdev-range::-moz-range-thumb{
+    width:18px;
+    height:18px;
+    border-radius:50%;
+    background:var(--neon);
+    border:2px solid var(--main-bg);
+    cursor:pointer;
 }
 
-.vol-slider-row .settings-slider{
-    flex:1;
+/* Panel view — fullscreen phone-style overlay, Dynamic-Island safe */
+
+.panel-view-overlay{
+    position:fixed;
+    inset:0;
+    z-index:3000;
+    background:
+        radial-gradient(ellipse 120% 80% at 50% -10%, rgba(72,178,233,.12), transparent 60%),
+        linear-gradient(180deg,#0d1117 0%,#0a0d12 100%);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    overflow:hidden;
 }
 
-.settings-slider:disabled{
-    cursor:not-allowed;
-    opacity:.45;
+.panel-view-overlay .pv-screen{
+    position:relative;
+    width:100%;
+    height:100%;
+    max-width:560px;
+    padding:calc(env(safe-area-inset-top, 0px) + 5px) 16px 0;
+    display:flex;
+    flex-direction:column;
+    gap:0;
+    overflow:hidden;
 }
 
-.vol-slider-row .settings-slider-value{
-    min-width:44px;
-    text-align:right;
-    font-variant-numeric:tabular-nums;
+.panel-view-overlay .pv-scroll{
+    flex:1 1 auto;
+    min-height:0;
+    overflow-y:auto;
+    -webkit-overflow-scrolling:touch;
+    display:flex;
+    flex-direction:column;
+    gap:16px;
+    padding-bottom:16px;
 }
+
+.panel-view-overlay .pv-scroll::-webkit-scrollbar{ display:none; }
+
+.panel-view-overlay .pv-gauges{
+    flex-shrink:0;
+    display:flex;
+    flex-direction:row;
+    justify-content:space-around;
+    align-items:flex-start;
+    gap:10px;
+}
+.panel-view-overlay .pv-box{
+    flex-shrink:0;
+    display:flex;
+    justify-content:center;
+    margin-bottom:3px;
+}
+.panel-view-overlay .pv-box .pdev-grid{
+    width:min(100%, 380px);
+}
+.panel-view-overlay .pv-side{ flex-shrink:0; display:flex; flex-direction:column; gap:16px; }
+
+/* Invisible grouping frame around the button box + sliders. In landscape it
+   becomes the horizontal scroll container (portrait: plain stacked column). */
+.panel-view-overlay .pv-frame{
+    flex-shrink:0;
+    display:flex;
+    flex-direction:column;
+    gap:16px;
+    min-width:0;
+}
+
+.panel-view-overlay .pv-core{
+    flex-shrink:0;
+    display:flex;
+    justify-content:center;
+    padding:10px 0 calc(env(safe-area-inset-bottom, 0px) + 16px);
+}
+.panel-view-overlay .pv-core .pdev-grid{
+    width:min(100%, 380px);
+}
+
+/* Utility row pinned just above the core buttons (bottom dock). */
+.panel-view-overlay .pv-util{
+    flex-shrink:0;
+    display:flex;
+    justify-content:center;
+    padding:8px 0 0;
+}
+.panel-view-overlay .pv-util .pdev-grid{
+    width:min(100%, 380px);
+}
+
+/* Sliders: bigger, in a transparent grey box like the Tk panel. */
+.panel-view-overlay .pv-sliders{
+    display:flex;
+    flex-direction:column;
+    gap:28px;
+    background:rgba(255,255,255,.045);
+    border:1px solid rgba(255,255,255,.06);
+    border-radius:18px;
+    padding:18px 18px 20px;
+}
+.panel-view-overlay .pv-sliders .pdev-sname{ font-size:11px; }
+.panel-view-overlay .pv-sliders .pdev-range{
+    height:12px;
+    border-radius:6px;
+    background:linear-gradient(90deg, #B23AF6 0%, #79E8FC var(--fill, 0%), var(--neon-dim, #555555) var(--fill, 0%));
+}
+.panel-view-overlay .pv-sliders .pdev-range::-webkit-slider-thumb{
+    width:30px;
+    height:30px;
+    background:#3c3c3c;
+    border:3px solid var(--neon);
+    box-shadow:0 0 12px rgba(72,178,233,.45);
+}
+.panel-view-overlay .pv-sliders .pdev-range::-moz-range-thumb{
+    width:30px;
+    height:30px;
+    background:#3c3c3c;
+    border:3px solid var(--neon);
+    box-shadow:0 0 12px rgba(72,178,233,.45);
+}
+.panel-view-overlay .pv-sliders .pdev-range::-moz-range-track{
+    height:12px;
+    border-radius:6px;
+    background:var(--neon-dim, #555555);
+}
+.panel-view-overlay .pv-sliders .pdev-mixer-empty{
+    opacity:.55;
+    font-style:italic;
+}
+.panel-view-overlay .pv-sliders .pdev-slider[data-slider^="sess_"]{
+    gap:2px;
+}
+
+.panel-view-overlay .md{
+    font-family:"Material Design Icons", monospace;
+    font-style:normal;
+    font-weight:normal;
+    line-height:1;
+    -webkit-font-smoothing:antialiased;
+}
+
+.panel-view-overlay .pdev-gauges{ gap:10px; }
+.panel-view-overlay .pdev-gsvg{ width:80px; height:80px; }
+.panel-view-overlay .pdev-gval{ top:40px; font-size:17px; }
+.panel-view-overlay .pdev-gunit{ font-size:10px; }
+
+/* Compact sizing so the whole panel fits vertically on small phones.
+   Portrait-only: in landscape, buttons/components keep their full
+   (portrait) size and the panel scrolls vertically instead of shrinking. */
+@media (max-height: 740px) and (orientation: portrait){
+    .panel-view-overlay .pv-scroll{ gap:10px; padding-bottom:6px; }
+    .panel-view-overlay .pv-side{ gap:10px; }
+    .panel-view-overlay .pv-gauges{ gap:6px; }
+    .panel-view-overlay .pdev-gsvg{ width:80px; height:80px; }
+    .panel-view-overlay .pdev-gval{ top:40px; font-size:17px; }
+    .panel-view-overlay .pdev-gunit{ font-size:10px; }
+    .panel-view-overlay .pdev-glabel{ font-size:9px; }
+    .panel-view-overlay .pv-box .pdev-grid{ width:min(100%, 300px); }
+    .panel-view-overlay .pv-box .md{ font-size:20px; }
+    .panel-view-overlay .pv-box .pdev-tname{ font-size:8px; }
+    .panel-view-overlay .pv-util .pdev-grid{ width:min(100%, 300px); }
+    .panel-view-overlay .pv-core .pdev-grid{ width:min(100%, 300px); }
+    .panel-view-overlay .pv-sliders{ gap:20px; padding:12px 12px 20px; border-radius:14px; }
+    .panel-view-overlay .pv-sliders .pdev-sname{ font-size:10px; }
+    .panel-view-overlay .pv-sliders .pdev-sapp{ font-size:11px; }
+    .panel-view-overlay .pv-sliders .pdev-sval{ font-size:13px; }
+    .panel-view-overlay .pv-sliders .pdev-range{ height:10px; }
+    .panel-view-overlay .pv-sliders .pdev-range::-webkit-slider-thumb{ width:24px; height:24px; }
+    .panel-view-overlay .pv-sliders .pdev-range::-moz-range-thumb{ width:24px; height:24px; }
+}
+
+@media (max-width: 768px) and (orientation: landscape){
+    /* 5 vertical columns: gauges | button grid | sliders | utility | core.
+       All widgets stay upright/readable. Button grid becomes 3 across × 4 tall,
+       fixed 64px tiles; sliders become vertical mixing-desk faders. */
+    .panel-view-overlay{
+        justify-content:flex-start;
+    }
+    .panel-view-overlay .pv-screen{
+        flex-direction:row;
+        align-items:stretch;
+        gap:12px;
+        max-width:none;
+        padding:calc(env(safe-area-inset-top, 0px) + 12px) max(16px, env(safe-area-inset-left, 0px)) calc(env(safe-area-inset-bottom, 0px) + 12px) max(16px, env(safe-area-inset-right, 0px));
+        overflow-y:auto;
+    }
+    .panel-view-overlay .pv-scroll{
+        flex:1 1 auto;
+        min-width:0;
+        flex-direction:row;
+        align-items:flex-start;
+        overflow:visible;
+        padding-bottom:0;
+        gap:12px;
+    }
+    .panel-view-overlay .pv-frame{
+        flex:1 1 auto;
+        min-width:0;
+        align-self:stretch;
+        flex-direction:row;
+        align-items:flex-start;
+        gap:12px;
+        overflow-x:auto;
+        overflow-y:hidden;
+        -webkit-overflow-scrolling:touch;
+        padding-bottom:4px;
+    }
+    .panel-view-overlay .pv-frame::-webkit-scrollbar{ display:none; }
+    .panel-view-overlay .pv-gauges{
+        flex:0 0 auto;
+        flex-direction:column;
+        justify-content:flex-start;
+        align-items:center;
+        gap:10px;
+    }
+    .panel-view-overlay .pv-box{
+        flex:0 0 auto;
+        margin:0;
+    }
+    .panel-view-overlay .pv-side{
+        position:relative;
+        flex:0 0 auto;
+        align-self:stretch;
+        gap:0;
+        width:120px;
+    }
+    .panel-view-overlay .pv-util,
+    .panel-view-overlay .pv-core{
+        flex:0 0 auto;
+        align-items:center;
+        padding:0;
+    }
+
+    /* Fixed upright 64px tiles. Button grid 3×4; utility/core are
+       single vertical columns on the right. */
+    .panel-view-overlay .pv-box .pdev-grid{
+        width:auto;
+        grid-template-columns:repeat(3, 64px);
+    }
+    .panel-view-overlay .pv-util .pdev-grid,
+    .panel-view-overlay .pv-core .pdev-grid{
+        width:auto;
+        grid-template-columns:64px;
+        grid-auto-rows:64px;
+    }
+    .panel-view-overlay .pdev-tile{
+        width:64px;
+        height:64px;
+    }
+
+    /* Sliders: the portrait card is rotated -90° (counterclockwise) as a
+       single unit so max is at the top (push up = increase). JS sizes the
+       .pv-side column to the card's portrait height so the gap to the
+       neighbours matches the 8px column gap. Title matches the compact
+       portrait size. */
+    .panel-view-overlay .pv-side .pv-sliders{
+        position:absolute;
+        top:50%;
+        left:50%;
+        width:calc(min(100dvh, 560px) - 32px);
+        margin:0;
+        transform:translate(-50%,-50%) rotate(-90deg);
+        transform-origin:center;
+    }
+    .panel-view-overlay .pv-side .pv-sliders .pdev-sname{ font-size:10px; }
+}
+
+/* Portrait (and desktop) single vertical column, matching the Tk panel:
+   gauges row → 3×4 button grid → sliders → utility → core.
+   Landscape mobile rearranges this into 5 columns (see media query above). */
+
+/* Tk-style rounded-square tiles: fixed 20% corner radius (like _make_tile_photo
+   R=8px on a 40px tile), plus a matte vertical gradient (Tk's white gloss fades
+   from 62/255 alpha at the top to 0 at 45% — smooth, no hard edge). */
+.panel-view-overlay .pdev-tile{
+    border-radius:20%;
+    background-clip:padding-box;
+}
+.panel-view-overlay .pdev-tile:not(.pdev-empty-tile)::before{
+    content:"";
+    position:absolute;
+    inset:0;
+    border-radius:inherit;
+    pointer-events:none;
+    background:linear-gradient(180deg, rgba(255,255,255,.24) 0%, rgba(255,255,255,0) 45%);
+}
+.panel-view-overlay .pdev-tile.pdev-group::before{ background:transparent; }
+.panel-view-overlay .pdev-tile.pdev-back::before{ background:transparent; }
+
+/* Gauges: horizontal row in portrait, vertical stack in landscape. */
+
+
+
 
 
 /* Device offline state (Companion Device page, no device connected) */
@@ -2472,6 +3082,114 @@ header p{
     font-size:12px;
     color:var(--fg-dim);
     word-break:break-all;
+}
+
+/* Network card — QR floated top-right, instructions + controls beside it */
+.settings-card-net{
+    display:block;
+    overflow:hidden;
+}
+
+.settings-card.settings-card-net > :first-child{
+    padding-top:10px;
+}
+
+.settings-card-net .settings-qr-fr{
+    float:right;
+    margin:2px 0 12px 20px;
+    padding:10px;
+    text-align:center;
+    background:var(--bg-card);
+    border:1px solid var(--border);
+    border-radius:var(--radius-card);
+}
+
+.settings-card-net .settings-qr-fr .settings-qr{
+    width:160px;
+    height:160px;
+}
+
+.settings-card-net .settings-qr-fr .settings-qr-url{
+    display:block;
+    margin-top:8px;
+    max-width:160px;
+}
+
+.settings-instructions{
+    font-size:12px;
+    line-height:1.55;
+    color:var(--fg-dim);
+    padding:2px 4px 10px;
+}
+
+.settings-instructions p{
+    margin:0 0 8px;
+}
+
+.settings-instructions p:last-child{
+    margin-bottom:0;
+}
+
+/* Paired devices list */
+.settings-devices{
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+    margin:10px 0 6px;
+}
+
+.settings-devices-empty{
+    font-size:12px;
+    color:var(--fg-dim);
+    padding:6px 0;
+}
+
+.settings-device-row{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:12px;
+    padding:10px 12px;
+    border:1px solid var(--border);
+    border-radius:var(--radius-card);
+    background:var(--bg-card);
+}
+
+.settings-device-meta{
+    display:flex;
+    flex-direction:column;
+    gap:2px;
+    min-width:0;
+}
+
+.settings-device-name{
+    font-size:13px;
+    font-weight:600;
+    color:var(--neon);
+}
+
+.settings-device-ua{
+    font-size:11px;
+    color:var(--fg-dim);
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+    max-width:280px;
+}
+
+.settings-device-seen{
+    font-size:11px;
+    color:var(--fg-dim);
+}
+
+.settings-devices .settings-btn-danger{
+    flex-shrink:0;
+    color:#ff6b6b;
+    border-color:rgba(255,107,107,.35);
+}
+
+.settings-devices .settings-btn-danger:hover{
+    background:rgba(255,107,107,.12);
 }
 
 /* File/Folder picker */
@@ -2847,11 +3565,35 @@ header p{
         grid-template-columns:1fr;
         gap:14px;
     }
+    .settings-content.panel-page{
+        flex-direction:column;
+        gap:14px;
+    }
+    .panel-editor-col{
+        gap:14px;
+    }
+    .panel-preview-col{
+        display:none;
+    }
+    .panel-editor-col{
+        align-items:center;
+    }
+    .panel-editor-col > .settings-section{
+        width:100%;
+        max-width:520px;
+        min-width:0;
+    }
 }
 
 @media (max-width: 480px) {
     .settings-content{
         padding:12px;
+        gap:10px;
+    }
+    .settings-content.panel-page{
+        gap:10px;
+    }
+    .panel-editor-col{
         gap:10px;
     }
 }

@@ -4,12 +4,16 @@ Also runs an HTTP server to serve the settings HTML UI and plugin API.
 """
 
 import asyncio
+import hashlib
+import hmac
 import json
 import logging
 import os
+import re
 import secrets
 import socket
 import threading
+import time
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from functools import partial
 
@@ -23,10 +27,123 @@ CLIENTS = set()
 _loop = None
 _app = None
 
+# per-path app icon PNG bytes (extracted once, served to the web panel fast)
+_APP_ICON_CACHE = {}
+
 # Per-process auth token. Generated once at import (fresh each launch) and
-# required on every /api/* request. Injected into the served panel HTML so
-# the same-origin page can read it without any cross-process secret passing.
+# required on every /api/* request from non-local peers. It is carried by
+# the QR pairing URL: scanning it authorizes a phone to become a paired
+# device. It is only ever embedded in the loopback-served QR image, never in
+# API JSON responses or the static pages.
 _HTTP_TOKEN = secrets.token_urlsafe(32)
+
+# Long-lived device sessions created by scanning the QR.  Persisted to disk so a
+# panel restart does not log mobile devices back out.  Tokens are stored
+# only as SHA-256 hashes so the file is useless if it leaks.
+_DEVICE_TTL = 365 * 24 * 3600
+_DEVICES = {}
+_last_devices_save = 0.0
+
+
+def _devices_path():
+    try:
+        from config import config_path as _cp
+        return os.path.join(os.path.dirname(_cp()), "devices.json")
+    except Exception:
+        return os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "devices.json")
+
+
+def _load_devices():
+    try:
+        with open(_devices_path()) as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            for k, v in data.items():
+                if not isinstance(v, dict):
+                    # Legacy file: values were plain expiry timestamps.
+                    v = {"exp": v, "ua": "", "created": None, "last_seen": None}
+                _DEVICES[k] = v
+    except Exception:
+        pass
+
+
+def _save_devices():
+    try:
+        with open(_devices_path(), "w") as f:
+            json.dump(_DEVICES, f, indent=2)
+    except Exception:
+        pass
+
+
+def _touch_device(tok_hash):
+    """Refresh a device's last-seen timestamp (throttled disk writes)."""
+    global _last_devices_save
+    rec = _DEVICES.get(tok_hash)
+    if not isinstance(rec, dict):
+        return
+    rec["last_seen"] = time.time()
+    now = time.time()
+    if now - _last_devices_save >= 30:
+        _last_devices_save = now
+        _save_devices()
+
+
+def _ua_device_name(ua):
+    """Best-effort friendly name derived from the device's User-Agent."""
+    if not ua:
+        return "Paired device"
+    low = ua.lower()
+    if "ipad" in low:
+        return "iPad"
+    if "iphone" in low:
+        return "iPhone"
+    if "android" in low:
+        m = re.search(r";\s*([^;\s()/]+?)\s+Build/", ua)
+        if m:
+            return m.group(1).strip()
+        return "Android device"
+    if "macintosh" in low or "mac os" in low:
+        return "Mac"
+    if "windows" in low:
+        return "Windows PC"
+    if "linux" in low:
+        return "Linux"
+    if "pywebview" in low:
+        return "Iris Panel"
+    return "Connected device"
+
+
+def _get_devices():
+    """Return non-sensitive metadata for every unexpired paired device."""
+    now = time.time()
+    out = []
+    for h, rec in _DEVICES.items():
+        exp = rec.get("exp") if isinstance(rec, dict) else rec
+        if exp is None or now > exp:
+            continue
+        if isinstance(rec, dict):
+            out.append({
+                "id": h,
+                "name": _ua_device_name(rec.get("ua", "")),
+                "ua": rec.get("ua", ""),
+                "created": rec.get("created"),
+                "last_seen": rec.get("last_seen"),
+            })
+        else:
+            out.append({
+                "id": h, "name": "Paired device", "ua": "",
+                "created": None, "last_seen": None,
+            })
+    out.sort(key=lambda d: d.get("last_seen") or 0, reverse=True)
+    return out
+
+
+def _token_hash(tok):
+    return hashlib.sha256((tok or "").encode("utf-8")).hexdigest()
+
+
+_load_devices()
 
 _HTML_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), os.pardir, "HTML")
@@ -36,6 +153,34 @@ def register_app(app):
     """Register the IrisApp instance so the HTTP API can access config/serial."""
     global _app
     _app = app
+
+
+# ── Auth helpers ──────────────────────────────────────────────
+
+def _is_loopback_address(ip):
+    """True for loopback source addresses (127.0.0.0/8 or ::1)."""
+    try:
+        if not ip:
+            return False
+        return ip == "::1" or ip.startswith("127.")
+    except Exception:
+        return False
+
+
+def _valid_session(tok):
+    """True when tok is a valid paired-device session cookie."""
+    if not tok:
+        return False
+    dex = _DEVICES.get(_token_hash(tok))
+    if dex is not None:
+        exp = dex.get("exp") if isinstance(dex, dict) else dex
+        if exp is None or time.time() > exp:
+            _DEVICES.pop(_token_hash(tok), None)
+            _save_devices()
+            return False
+        _touch_device(_token_hash(tok))
+        return True
+    return False
 
 
 def _sync_next_alarm(serial_sender, alarms):
@@ -87,7 +232,7 @@ async def handler(websocket):
 
 
 def _ws_process_request(connection, request):
-    """Reject WS connections without the correct token at the HTTP handshake."""
+    """Reject WS connections from non-local peers without the auth token."""
     try:
         path = getattr(request, "path", "") or ""
     except Exception:
@@ -98,6 +243,13 @@ def _ws_process_request(connection, request):
         if part.startswith("token="):
             token = part[len("token="):]
     if token == _HTTP_TOKEN:
+        return None
+    try:
+        peer = getattr(connection, "remote_address", None)
+        peer = peer[0] if peer else ""
+    except Exception:
+        peer = ""
+    if _is_loopback_address(peer):
         return None
     from websockets.datastructures import Headers
     from websockets.http11 import Response
@@ -158,8 +310,22 @@ def _lan_url():
     return "http://%s:15502/index.html" % host
 
 
+def _lan_pair_url():
+    """Pairing URL encoded in the on-screen QR code.
+
+    The URL carries the access token directly. Scanning it opens
+    /pair?token=... on the phone, which authorizes the scan and registers the
+    phone as a persistent paired device. Only ever rendered into the QR image
+    (loopback-served), never returned in API JSON responses.
+    """
+    host = _lan_ip()
+    if _is_loopback_mode():
+        host = "127.0.0.1"
+    return "http://%s:15502/pair?token=%s" % (host, _HTTP_TOKEN)
+
+
 def _qr_bytes():
-    """Render the LAN panel URL as a QR code PNG."""
+    """Render the one-time pairing URL as a QR code PNG."""
     import io
     try:
         import qrcode
@@ -167,7 +333,7 @@ def _qr_bytes():
         return None
     try:
         qr = qrcode.QRCode(box_size=8, border=2)
-        qr.add_data(_lan_url())
+        qr.add_data(_lan_pair_url())
         qr.make(fit=True)
         img = qr.make_image(fill_color="#0f1014", back_color="#ffffff")
         buf = io.BytesIO()
@@ -182,10 +348,37 @@ class _RequestHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, directory=None, **kwargs):
         super().__init__(*args, directory=directory, **kwargs)
 
+    def _session_cookie(self):
+        raw = self.headers.get("Cookie", "")
+        for part in raw.split(";"):
+            part = part.strip()
+            if part.startswith("iris_session="):
+                return part[len("iris_session="):]
+        return ""
+
+    def _is_loopback_peer(self):
+        """True when the TCP peer is on this machine (desktop panel window)."""
+        try:
+            return _is_loopback_address(self.client_address[0])
+        except Exception:
+            return False
+
     def _authorized(self):
-        """True when the request carries the correct auth token."""
+        """True when the request is allowed to reach the panel and API.
+
+        Local (loopback) peers are fully trusted — they are the desktop panel
+        window and browsers on the same machine. Remote peers must present
+        either the auth token header or a valid login session cookie.
+        """
+        try:
+            if _is_loopback_address(self.client_address[0]):
+                return True
+        except Exception:
+            pass
         provided = self.headers.get("X-Iris-Token", "")
-        return provided == _HTTP_TOKEN
+        if provided and hmac.compare_digest(provided, _HTTP_TOKEN):
+            return True
+        return _valid_session(self._session_cookie())
 
     def _host_ok(self):
         """Block DNS-rebinding in loopback mode: Host must be a loopback name."""
@@ -201,6 +394,33 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(b'{"ok":false}')))
         self.end_headers()
         self.wfile.write(b'{"ok":false}')
+
+    _CSP = (
+        "default-src 'none'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' data: https://fonts.gstatic.com; "
+        "img-src 'self' data: blob:; "
+        "connect-src 'self'; "
+        "media-src 'self'; "
+        "base-uri 'none'; "
+        "form-action 'none'; "
+        "frame-ancestors 'none'"
+    )
+
+    def end_headers(self):
+        try:
+            self.send_header("Cache-Control", "no-store")
+        except Exception:
+            pass
+        try:
+            self.send_header("Content-Security-Policy", self._CSP)
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("X-Frame-Options", "DENY")
+            self.send_header("Referrer-Policy", "no-referrer")
+        except Exception:
+            pass
+        super().end_headers()
 
     def do_GET(self):
         if self.path.startswith("/api/"):
@@ -220,13 +440,21 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             name = self.path.split("/")[3]
             self._send_json(_get_plugin_outputs(name))
         elif self.path == "/api/config":
-            self._send_json(_get_config())
+            self._send_json(_get_config(self._is_loopback_peer()))
         elif self.path == "/api/status":
             self._send_json(_get_device_status())
         elif self.path == "/api/settings/pages":
             self._send_json(_get_settings_pages())
         elif self.path == "/api/network/qr":
-            self._serve_network_qr()
+            if not self._is_loopback_peer():
+                self._send_json({"ok": False})
+            else:
+                self._serve_network_qr()
+        elif self.path == "/api/devices":
+            if not self._is_loopback_peer():
+                self._send_json({"ok": False})
+            else:
+                self._send_json({"ok": True, "devices": _get_devices()})
         elif self.path == "/api/sounds":
             self._send_json(_get_sounds())
         elif self.path.startswith("/api/sounds/preview/"):
@@ -235,16 +463,33 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             self._handle_sound_stop()
         elif self.path == "/api/vision/sensors":
             self._send_json(_get_vision_sensors())
+        elif self.path == "/api/volume/master":
+            self._send_json(_get_master_volume())
         elif self.path == "/api/volume":
             self._send_json(_get_volume())
+        elif self.path == "/api/panel":
+            self._send_json(_get_panel())
+        elif self.path == "/api/panel/live":
+            self._send_json(_get_panel_live())
+        elif self.path.startswith("/api/panel/icon"):
+            self._handle_panel_icon()
+        elif self.path == "/api/mdi/font":
+            self._serve_mdi_font()
+        elif self.path.startswith("/api/mdi/codepoints"):
+            self._handle_mdi_codepoints()
         elif self.path.startswith("/media/"):
             self._serve_media(self.path[7:])
-        elif self.path in ("/", "/index.html"):
+        elif self.path.startswith("/pair"):
+            self._handle_pair()
+        elif self.path in ("/", "/index.html", "/login"):
             self._serve_index()
         else:
             super().do_GET()
 
     def do_POST(self):
+        if self.path == "/api/devices/revoke":
+            self._handle_device_revoke()
+            return
         if self.path.startswith("/api/"):
             if not self._host_ok() or not self._authorized():
                 self._reject_unauthorized()
@@ -273,8 +518,20 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         elif self.path.startswith("/api/vision/sensors/"):
             sensor_id = self.path.split("/")[-1]
             self._handle_vision_update_sensor(sensor_id)
+        elif self.path == "/api/volume/master":
+            self._handle_master_volume_set()
+        elif self.path == "/api/volume/session":
+            self._handle_session_volume_set()
         elif self.path == "/api/volume":
             self._handle_volume_set()
+        elif self.path == "/api/panel":
+            self._handle_save_panel()
+        elif self.path == "/api/panel/action":
+            self._handle_panel_action()
+        elif self.path == "/api/panel/brightness":
+            self._handle_panel_brightness()
+        elif self.path == "/api/panel/core":
+            self._handle_panel_core()
         else:
             self.send_error(404)
 
@@ -304,7 +561,12 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             self.send_error(500)
 
     def _serve_network_qr(self):
-        """Serve the LAN panel URL as a QR PNG (auth required via /api/)."""
+        """Serve the one-time pairing QR (loopback-only, auth required).
+
+        Encoding a fresh single-use pairing URL lets a phone scan it to
+        connect without a password.  Only loopback peers can fetch the image,
+        so the QR code never leaves this PC over the network.
+        """
         data = _qr_bytes()
         if data is None:
             self.send_error(500)
@@ -316,8 +578,50 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _handle_pair(self):
+        """Authorize a phone via the QR-carried access token.
+
+        Scanning the on-screen QR opens /pair?token=<access-token> here. If
+        the token matches, the phone is registered as a persistent paired
+        device (long-lived HttpOnly cookie backed by the on-disk device store)
+        and redirected to the panel.
+        """
+        if not self._host_ok():
+            self._reject_unauthorized()
+            return
+        query = self.path.split("?", 1)[1] if "?" in self.path else ""
+        token = ""
+        for part in query.split("&"):
+            if part.startswith("token="):
+                token = part[len("token="):]
+        if not isinstance(token, str) or not token or not hmac.compare_digest(token, _HTTP_TOKEN):
+            body = b'{"ok":false,"error":"invalid access token"}'
+            self.send_response(403)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        tok = secrets.token_urlsafe(32)
+        _DEVICES[_token_hash(tok)] = {
+            "exp": time.time() + _DEVICE_TTL,
+            "ua": self.headers.get("User-Agent", ""),
+            "created": time.time(),
+            "last_seen": time.time(),
+        }
+        _save_devices()
+        self.send_response(302)
+        self.send_header("Location", "/")
+        self.send_header("Set-Cookie",
+                         f"iris_session={tok}; HttpOnly; SameSite=Strict; Path=/; Max-Age={_DEVICE_TTL}")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
     def _serve_index(self):
-        """Serve index.html with the auth token injected (same-origin panel)."""
+        """Serve the settings panel, or the pairing info page if unauthorized."""
+        if not self._authorized():
+            self._serve_login()
+            return
         index_path = os.path.join(self.directory, "index.html")
         if not os.path.isfile(index_path):
             self.send_error(404)
@@ -328,16 +632,46 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         except Exception:
             self.send_error(500)
             return
-        meta = f'<meta name="iris-token" content="{_HTTP_TOKEN}">'
-        if b"<head" in html[:2000]:
-            html = html.replace(b"<head", meta.encode() + b"<head", 1)
-        else:
-            html = meta.encode() + html
         self.send_response(200)
         self.send_header("Content-Type", "text/html")
         self.send_header("Content-Length", str(len(html)))
         self.end_headers()
         self.wfile.write(html)
+
+    def _serve_login(self):
+        """Serve the pairing info page for unauthorized LAN peers."""
+        login_path = os.path.join(self.directory, "login.html")
+        if not os.path.isfile(login_path):
+            self.send_error(404)
+            return
+        try:
+            with open(login_path, "rb") as f:
+                html = f.read()
+        except Exception:
+            self.send_error(500)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html")
+        self.send_header("Content-Length", str(len(html)))
+        self.end_headers()
+        self.wfile.write(html)
+
+    def _handle_device_revoke(self):
+        """Revoke a paired device by id. Loopback-only (desktop panel)."""
+        if not self._is_loopback_peer():
+            self._send_json({"ok": False, "error": "forbidden"})
+            return
+        try:
+            payload = self._read_json()
+        except Exception:
+            self.send_error(400)
+            return
+        dev_id = payload.get("id")
+        if dev_id and _DEVICES.pop(dev_id, None):
+            _save_devices()
+            self._send_json({"ok": True})
+        else:
+            self._send_json({"ok": False, "error": "unknown device"})
 
     def _handle_sound_preview(self, name):
         import alarm_sound
@@ -366,7 +700,9 @@ class _RequestHandler(SimpleHTTPRequestHandler):
                 return
             from config import save_config
             body = {k: v for k, v in body.items()
-                    if k not in ("http_token", "lan_url")}
+                    if k not in ("http_token", "lan_url",
+                                 "panel_password", "panel_password_hash",
+                                 "panel_password_salt")}
             _app.cfg.update(body)
             save_config(_app.cfg)
             self._push_config_to_device(body)
@@ -565,6 +901,208 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         ok = win_volume.set_active_app_volume(max(0, min(100, value)))
         self._send_json({"ok": ok})
 
+    def _handle_master_volume_set(self):
+        try:
+            body = self._read_json()
+        except Exception as e:
+            self.send_error(400, str(e))
+            return
+        try:
+            value = int(body.get("volume"))
+        except (TypeError, ValueError):
+            self.send_error(400, "volume must be an integer")
+            return
+        import win_volume
+        ok = win_volume.set_master_volume(max(0, min(100, value)))
+        self._send_json({"ok": ok})
+
+    def _handle_session_volume_set(self):
+        """Set a specific app session's volume or mute.
+
+        Body: {"pid": int, "volume": int(0-100)} and/or {"pid": int, "mute": bool}.
+        Missing pid/mode -> 400.  Unknown session -> {"ok": false}.
+        """
+        try:
+            body = self._read_json()
+        except Exception as e:
+            self.send_error(400, str(e))
+            return
+        try:
+            pid = int(body.get("pid"))
+        except (TypeError, ValueError):
+            self.send_error(400, "pid must be an integer")
+            return
+        import win_volume
+        if "mute" in body:
+            ok = win_volume.set_session_mute(pid, bool(body.get("mute")))
+        else:
+            try:
+                value = int(body.get("volume"))
+            except (TypeError, ValueError):
+                self.send_error(400, "volume must be an integer")
+                return
+            ok = win_volume.set_session_volume(pid, max(0, min(100, value)))
+        self._send_json({"ok": ok})
+
+    def _handle_save_panel(self):
+        try:
+            body = self._read_json()
+        except Exception as e:
+            self.send_error(400, str(e))
+            return
+        if _app is None:
+            self.send_error(503, "App not registered")
+            return
+        try:
+            from panel_actions import apply_panel_save
+            from config import save_config
+            apply_panel_save(_app.cfg, body)
+            save_config(_app.cfg)
+            mw = getattr(_app, "_main_win", None)
+            if mw is not None and hasattr(mw, "rebuild_panel"):
+                try:
+                    _app._root.after(0, mw.rebuild_panel)
+                except Exception:
+                    pass
+            self._send_json({"ok": True})
+        except Exception as e:
+            log.warning("[http] save panel failed: %s", e)
+            self.send_error(500, str(e))
+
+    def _handle_panel_icon(self):
+        """Extract + serve the app icon for a shortcut path (PNG, cached)."""
+        try:
+            from urllib.parse import urlparse, parse_qs
+            qs = parse_qs(urlparse(self.path).query)
+            p = (qs.get("path") or [""])[0]
+            if not p or not os.path.isfile(p):
+                self.send_error(404)
+                return
+            norm = os.path.normcase(os.path.abspath(p))
+            blob = _APP_ICON_CACHE.get(norm)
+            if blob is None:
+                from win_platform import _extract_via_ps
+                img = _extract_via_ps(norm, size=64)
+                if img is None:
+                    self.send_error(404)
+                    return
+                import io
+                buf = io.BytesIO()
+                img.save(buf, format="PNG")
+                blob = buf.getvalue()
+                _APP_ICON_CACHE[norm] = blob
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(blob)))
+            self.end_headers()
+            self.wfile.write(blob)
+        except Exception as e:
+            log.warning("[http] app icon extraction failed: %s", e)
+            self.send_error(500)
+
+    def _serve_mdi_font(self):
+        """Serve the MDI webfont so the web panel renders the same icons as Tk."""
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mdi-webfont.ttf")
+        if not os.path.isfile(path):
+            self.send_error(404)
+            return
+        try:
+            with open(path, "rb") as f:
+                data = f.read()
+            self.send_response(200)
+            self.send_header("Content-Type", "font/ttf")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        except Exception:
+            self.send_error(500)
+
+    def _handle_mdi_codepoints(self):
+        """Return {"name": "<char>"} for ?names=a,b,c (missing -> null)."""
+        from urllib.parse import urlparse, parse_qs
+        qs = parse_qs(urlparse(self.path).query)
+        names = qs.get("names", [""])
+        if not names:
+            self._send_json({})
+            return
+        import mdi_icons
+        result = {}
+        for chunk in names:
+            for n in chunk.split(","):
+                n = n.strip()
+                if n:
+                    result[n] = mdi_icons.get_char(n)
+        self._send_json(result)
+
+    def _handle_panel_action(self):
+        try:
+            body = self._read_json()
+        except Exception as e:
+            self.send_error(400, str(e))
+            return
+        try:
+            from panel_runtime import execute_slot
+            self._send_json(execute_slot(body.get("slot")))
+        except Exception as e:
+            log.warning("[http] panel action failed: %s", e)
+            self.send_error(500, str(e))
+
+    def _handle_panel_brightness(self):
+        try:
+            body = self._read_json()
+        except Exception as e:
+            self.send_error(400, str(e))
+            return
+        if _app is None:
+            self.send_error(503, "App not registered")
+            return
+        try:
+            value = int(body.get("brightness"))
+        except (TypeError, ValueError):
+            self.send_error(400, "brightness must be an integer")
+            return
+        try:
+            _app._set_brightness(max(0, min(4, value)))
+            self._send_json({"ok": True, "brightness": _app.cfg.get("brightness")})
+        except Exception as e:
+            log.warning("[http] set brightness failed: %s", e)
+            self.send_error(500, str(e))
+
+    def _handle_panel_core(self):
+        try:
+            body = self._read_json()
+        except Exception as e:
+            self.send_error(400, str(e))
+            return
+        if _app is None:
+            self.send_error(503, "App not registered")
+            return
+        tile = body.get("tile")
+        if tile == "display":
+            cur = bool(_app.cfg.get("pc_stats_manual", False))
+            try:
+                _app._toggle_pc_stats(not cur)
+            except Exception as e:
+                log.warning("[http] pc stats toggle failed: %s", e)
+            self._send_json({"ok": True, "state": not cur})
+        elif tile == "overlay":
+            cur = bool(getattr(_app, "_overlay", None))
+            try:
+                _app._root.after(0, lambda: _app._toggle_overlay(not cur))
+            except Exception as e:
+                log.warning("[http] overlay toggle failed: %s", e)
+            self._send_json({"ok": True, "state": not cur})
+        elif tile == "mic":
+            try:
+                from win_platform import toggle_mic_mute
+                st = toggle_mic_mute()
+            except Exception as e:
+                log.warning("[http] mic toggle failed: %s", e)
+                st = None
+            self._send_json({"ok": st is not None, "state": st})
+        else:
+            self._send_json({"ok": False})
+
     def log_message(self, fmt, *args):
         # suppress per-request logs
         pass
@@ -675,12 +1213,13 @@ def _get_settings_pages():
         return {"pages": []}
 
 
-def _get_config():
+def _get_config(loopback=False):
     if _app is None:
         return {}
     cfg = {k: v for k, v in _app.cfg.items()
-           if not k.startswith("_") and k not in ("ha_token",)}
-    cfg["http_token"] = _HTTP_TOKEN
+           if not k.startswith("_") and k not in (
+               "ha_token", "panel_password",
+               "panel_password_salt", "panel_password_hash")}
     cfg["lan_url"] = _lan_url()
     return cfg
 
@@ -804,6 +1343,21 @@ def _merge_vision_config(envelope):
     return merged
 
 
+def _get_panel():
+    if _app is None:
+        return {"panel_board": [], "actions": []}
+    from panel_actions import panel_payload
+    return panel_payload(_app.cfg)
+
+
+def _get_panel_live():
+    if _app is None:
+        from panel_runtime import live_payload
+        return live_payload({})
+    from panel_runtime import live_payload
+    return live_payload(_app.cfg)
+
+
 def _get_vision_sensors():
     import plugin_manager
     sensors = list(_vision_sensors())
@@ -824,6 +1378,15 @@ def _get_volume():
     except Exception as e:
         log.warning("[http] volume query failed: %s", e)
         return {"app": None, "volume": None}
+
+
+def _get_master_volume():
+    import win_volume
+    try:
+        return win_volume.get_master_state()
+    except Exception as e:
+        log.warning("[http] master volume query failed: %s", e)
+        return {"volume": None}
 
 
 def start_http(port=15502):

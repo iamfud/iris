@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#0C0D0F">
+<title>IRIS — Pair Required</title>
+<style>
+  :root{
+    --neon:#48B2E9;
+    --bg:#0C0D0F;
+    --bg-card:#16171a;
+    --border:#26282d;
+    --fg:#e8eaed;
+    --fg-dim:#8b919b;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--bg);
+    color:var(--fg);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    display:flex;align-items:center;justify-content:center;
+    padding:24px;
+  }
+  .card{
+    width:100%;max-width:360px;
+    background:var(--bg-card);
+    border:1px solid var(--border);
+    border-radius:14px;
+    padding:32px 28px;
+    box-shadow:0 12px 40px rgba(0,0,0,.45);
+    text-align:center;
+  }
+  .logo{
+    font-size:26px;font-weight:700;letter-spacing:6px;color:var(--neon);
+    margin-bottom:18px;
+  }
+  .icon{
+    font-size:44px;color:var(--neon);margin-bottom:16px;
+  }
+  h1{font-size:18px;font-weight:600;margin-bottom:10px}
+  p{
+    font-size:13px;color:var(--fg-dim);line-height:1.6;margin-bottom:8px;
+  }
+  .step{
+    display:flex;align-items:center;gap:10px;text-align:left;
+    font-size:13px;color:var(--fg-dim);line-height:1.5;
+    padding:8px 0;border-top:1px solid var(--border);
+  }
+  .step:last-of-type{border-bottom:1px solid var(--border)}
+  .step .n{
+    flex-shrink:0;width:22px;height:22px;border-radius:50%;
+    background:var(--neon);color:#0C0D0F;font-size:12px;font-weight:700;
+    display:flex;align-items:center;justify-content:center;
+  }
+  .note{margin-top:16px;font-size:11px;color:var(--fg-dim)}
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">IRIS</div>
+    <div class="icon">&#128247;</div>
+    <h1>Pair your device</h1>
+    <p>This panel only allows access from devices paired by scanning its QR code. There is no password.</p>
+    <div class="step"><span class="n">1</span><span>Open the Iris panel on your PC and go to <strong>Settings &rarr; Network</strong>.</span></div>
+    <div class="step"><span class="n">2</span><span>Scan the QR code at the top right with your phone camera.</span></div>
+    <div class="step"><span class="n">3</span><span>Your phone is added to the paired devices list and opens the panel automatically.</span></div>
+    <p class="note">Pairing only works on your local network. A device stays paired until you revoke it from the PC.</p>
+  </div>
+</body>
+</html>

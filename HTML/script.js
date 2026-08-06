@@ -14,15 +14,30 @@
   const API_BASE = window.location.protocol === "file:" ? "http://localhost:15502" : window.location.origin;
   const POLL_MS = 1000;
 
-  // Auth token injected into the served document by ws_bridge. Every API
-  // request must carry it.
-  const IRIS_TOKEN = (document.querySelector('meta[name="iris-token"]') || {}).content || "";
+  // True inside the desktop app's panel window (pywebview). Only that window
+  // may see the Network page / access token / QR code.
+  const IS_APP = !!(window.pywebview && window.pywebview.api);
+
+  // The portal's "straight to panel" landing is for phones only. The desktop
+  // (browser or the desktop app window) still opens the dashboard.
+  const IS_MOBILE = (window.matchMedia && window.matchMedia("(max-width: 768px)").matches) || isIOS;
+
+  // Auth is carried by the loopback session or the login session cookie; the
+  // access token is never embedded in the page any more.
+  const IRIS_TOKEN = "";
 
   function apiFetch(url, opts) {
     opts = opts || {};
     opts.headers = Object.assign({}, opts.headers || {});
     if (IRIS_TOKEN) opts.headers["X-Iris-Token"] = IRIS_TOKEN;
-    return fetch(url, opts);
+    return fetch(url, opts).then(function (res) {
+      if (res.status === 401) {
+        // Session expired or unauthenticated remote access -> back to login.
+        window.location.href = "/login";
+        throw new Error("unauthorized");
+      }
+      return res;
+    });
   }
 
   let currentPage = "dashboard";
@@ -47,9 +62,6 @@
   let wizardStep = 1;
   let wizardCapture = null;
   let testTimer = null;
-
-  let volumeState = { app: null, volume: null };
-  let volumeTimer = null;
 
   const ALARM_SOUNDS = [
     { name: "remind",  label: "Remind",  icon: "notifications_active" },
@@ -85,6 +97,7 @@
   // ── Sidebar navigation (desktop) ────────────────────────────
 
   const navItems = document.querySelectorAll(".nav-item");
+
   navItems.forEach((item) => {
     item.addEventListener("click", () => {
       navItems.forEach((n) => n.classList.remove("active"));
@@ -93,11 +106,20 @@
       if (page) {
         currentPage = page;
         selectedPlugin = null;
+        if (page === "panel") {
+          // Re-entering Panel from the sidebar shows the editor again.
+          panelViewMode = false;
+          panelNav = [];
+          if (panelLiveTimer) { clearInterval(panelLiveTimer); panelLiveTimer = null; }
+        } else {
+          exitPanelView();
+        }
         renderPage();
-        if (page === "features" || page === "alarms" || page === "network") fetchConfig();
+        if (page === "features" || page === "alarms" || page === "settings") fetchConfig();
         else if (page === "plugins") fetchPluginsConfig();
         else if (page === "vision") fetchVision();
-        else { visionInWizard = false; stopTestPoll(); stopVolumePoll(); }
+        else if (page === "panel") fetchPanel();
+        else { visionInWizard = false; stopTestPoll(); }
       }
       closeNav();
     });
@@ -207,7 +229,19 @@
 
   function startPolling() {
     settingsRenderer = new SettingsRenderer(API_BASE);
-    settingsRenderer.loadPages().then(function () { renderPage(); });
+    settingsRenderer.loadPages().then(function () {
+      if (IS_APP || !IS_MOBILE) {
+        renderPage();
+      } else {
+        // Phone portal: land directly on the live panel instead of the dashboard.
+        currentPage = "panel";
+        navItems.forEach((n) => n.classList.remove("active"));
+        const panelNavItem = document.querySelector('.nav-item[data-page="panel"]');
+        if (panelNavItem) panelNavItem.classList.add("active");
+        portalAutoPanel = true;
+        fetchPanel();
+      }
+    });
     fetchState();
     fetchPluginsConfig();
     fetchDeviceStatus();
@@ -303,7 +337,7 @@
       const res = await apiFetch(`${API_BASE}/api/config`);
       if (res.ok) {
         featureConfig = await res.json();
-        if (currentPage === "features" || currentPage === "alarms" || currentPage === "network") renderPage();
+        if (currentPage === "features" || currentPage === "alarms" || currentPage === "settings") renderPage();
       }
     } catch (_) {}
   }
@@ -1353,94 +1387,1042 @@
     if (testTimer) { clearInterval(testTimer); testTimer = null; }
   }
 
-  // ── Panel page (active-app volume) ──────────────────────────
+  // ── Panel page (overlay customizer) ─────────────────────────
+
+  let panelDraft = null;
+  let panelDirty = false;
+  let panelActions = [];
+  let panelEdit = null; // { scope:'board'|'utility', index, path: number[] }
+  let panelViewMode = false;   // true = live device screen shown
+  let portalAutoPanel = false; // web portal boot: open live panel instead of dashboard
+  let panelLive = null;        // cached GET /api/panel/live
+  let panelLiveTimer = null;
+  let panelNav = [];           // GROUP nav stack in panel view
+  let panelViewSig = "";
+  let panelSaveTimer = null;
+  let panelSliderTimer = null;
+  let mdiCache = {};           // mdi icon name -> unicode char (from /api/mdi/codepoints)
+  let mdiFetched = {};         // icon names already requested from /api/mdi/codepoints
+
+  function mdiChar(name) {
+    if (mdiCache[name]) return mdiCache[name];
+    return "?";
+  }
+
+  function applyMdiIcons(root) {
+    const scope = root || document;
+    scope.querySelectorAll(".md[data-md]").forEach((el) => {
+      el.textContent = mdiChar(el.getAttribute("data-md") || "");
+    });
+  }
+
+  function mdiPreload(names) {
+    const missing = (names || []).filter((n) => n && !mdiCache[n] && !mdiFetched[n]);
+    if (!missing.length) return;
+    missing.forEach((n) => { mdiFetched[n] = 1; });
+    apiFetch(`${API_BASE}/api/mdi/codepoints?names=${encodeURIComponent(missing.join(","))}`)
+      .then((r) => r.json())
+      .then((map) => {
+        if (!map) return;
+        mdiCache = Object.assign({}, mdiCache, map);
+        applyMdiIcons(document);
+      })
+      .catch(() => {});
+  }
+
+  function fetchPanel() {
+    apiFetch(`${API_BASE}/api/panel`)
+      .then((r) => r.json())
+      .then((data) => {
+        panelActions = data.actions || [];
+        panelDraft = {
+          panel_board: data.panel_board || [],
+          panel_utility: data.panel_utility || [],
+          panel_sliders: data.panel_sliders || [],
+          panel_layout: data.panel_layout || [],
+          panel_gauges: data.panel_gauges || { enabled: true },
+          media_player_path: data.media_player_path || "",
+          hardware_connected: !!data.hardware_connected,
+        };
+        panelDirty = false;
+        panelEdit = null;
+        if (portalAutoPanel) {
+          portalAutoPanel = false;
+          openPanelView();
+        } else {
+          renderPanel();
+        }
+      })
+      .catch(() => {
+        panelDraft = panelDraft || {
+          panel_board: [], panel_utility: [], panel_sliders: [],
+          panel_layout: [], panel_gauges: { enabled: true }, media_player_path: "",
+        };
+        if (portalAutoPanel) {
+          portalAutoPanel = false;
+          openPanelView();
+        } else {
+          renderPanel();
+        }
+      });
+  }
+
+  function savePanelLive() {
+    clearTimeout(panelSaveTimer);
+    panelSaveTimer = setTimeout(() => {
+      if (!panelDraft) return;
+      apiFetch(`${API_BASE}/api/panel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(panelDraft),
+      }).catch(() => {});
+    }, 250);
+  }
+
+  function setPanelDirty(on) {
+    panelDirty = !!on;
+    if (on) savePanelLive();
+  }
+
+  function layoutOn(id) {
+    const row = (panelDraft.panel_layout || []).find((x) => x.id === id);
+    return row ? row.enabled !== false : true;
+  }
+
+  function setLayoutOn(id, on) {
+    if (!panelDraft.panel_layout) panelDraft.panel_layout = [];
+    let row = panelDraft.panel_layout.find((x) => x.id === id);
+    if (!row) {
+      row = { id: id, enabled: on };
+      panelDraft.panel_layout.push(row);
+    } else row.enabled = on;
+    setPanelDirty(true);
+    renderPanel();
+  }
+
+  function sliderOn(id) {
+    const row = (panelDraft.panel_sliders || []).find((x) => x.id === id);
+    return row ? row.enabled !== false : true;
+  }
+
+  function setSliderOn(id, on) {
+    if (!panelDraft.panel_sliders) panelDraft.panel_sliders = [];
+    let row = panelDraft.panel_sliders.find((x) => x.id === id);
+    if (!row) {
+      row = { id: id, enabled: on };
+      panelDraft.panel_sliders.push(row);
+    } else row.enabled = on;
+    setPanelDirty(true);
+    renderPanel();
+  }
+
+  function boardAtPath(path) {
+    let list = panelDraft.panel_board;
+    for (let i = 0; i < path.length; i++) {
+      const slot = list[path[i]];
+      if (!slot) return [];
+      if (!slot.children) slot.children = [];
+      list = slot.children;
+    }
+    return list;
+  }
+
+  function actionLabel(type) {
+    const a = panelActions.find((x) => x.type === type);
+    return a ? a.label : type;
+  }
 
   function renderPanel() {
-    main.innerHTML =
+    if (!panelDraft) {
+      main.innerHTML =
+        '<header>' +
+          '<div class="header-left">' +
+            '<button class="hamburger" id="hamburger" aria-label="Menu">' +
+              '<span class="material-icons-outlined">menu</span>' +
+            '</button>' +
+            '<div><h1>Panel</h1></div>' +
+          '</div>' +
+        '</header>' +
+        '<section class="settings-content"><p class="settings-placeholder">Loading…</p></section>';
+      rebindHamburger();
+      return;
+    }
+    const gOn = layoutOn("gauges") && (panelDraft.panel_gauges || {}).enabled !== false;
+    const boxOn = layoutOn("button_box");
+    const slidOn = layoutOn("sliders");
+    const utilOn = layoutOn("utility");
+    const hwOn = !!panelDraft.hardware_connected;
+    const board = panelDraft.panel_board || [];
+    const util = panelDraft.panel_utility || [];
+    const briOn = hwOn && sliderOn("brightness");
+
+    // In the app the header button is "Done" (closes the window via
+    // rebindHamburger). On the web portal it is "Launch" -> live panel view.
+    const headerBtn = IS_APP
+      ? '<button class="done-btn" id="done-btn">Done</button>'
+      : '<button class="done-btn" id="launch-btn">Launch</button>';
+
+    const previewHtml =
+      '<div class="panel-preview-col">' +
+        '<h2 class="panel-preview-title">Preview</h2>' +
+        '<div class="panel-phone">' +
+          '<div class="panel-phone-sb"><span>COM</span><span class="material-icons-outlined" style="font-size:14px">push_pin</span><span>--:--</span></div>' +
+          (gOn ? '<div class="panel-phone-gauges"><div class="pg"></div><div class="pg"></div><div class="pg"></div></div>' : '') +
+          (boxOn ? '<div class="panel-phone-grid">' + previewTiles(board.slice(0, 8)) + '</div>' : '') +
+          (slidOn ? '<div class="panel-phone-sliders">' +
+            (sliderOn("app_volume") ? '<div class="pps-lab">App Volume</div><div class="pps-bar"></div>' : '') +
+            (sliderOn("master_volume") ? '<div class="pps-lab">Master Volume</div><div class="pps-bar"></div>' : '') +
+            (briOn ? '<div class="pps-lab">Brightness</div><div class="pps-bar"></div>' : '') +
+          '</div>' : '') +
+          (utilOn ? '<div class="panel-phone-util">' + previewTiles(util, true) + '</div>' : '') +
+          '<div class="panel-phone-core">' +
+            '<div class="ppt locked"></div><div class="ppt locked"></div>' +
+            '<div class="ppt locked"></div><div class="ppt locked"></div>' +
+          '</div>' +
+        '</div>' +
+        '<p class="panel-preview-hint">Preview · core row fixed</p>' +
+      '</div>';
+
+    let html =
       '<header>' +
         '<div class="header-left">' +
           '<button class="hamburger" id="hamburger" aria-label="Menu">' +
             '<span class="material-icons-outlined">menu</span>' +
           '</button>' +
-          '<div>' +
-            '<h1>Panel</h1>' +
-          '</div>' +
+          '<div><h1>Panel</h1></div>' +
         '</div>' +
-        '<button class="done-btn" id="done-btn">Done</button>' +
+        headerBtn +
       '</header>' +
-      '<section class="settings-content">' +
-        '<div class="settings-card vol-tile">' +
-          '<div class="vol-heading">' +
-            '<span class="material-icons-outlined vol-heading-icon">graphic_eq</span>' +
-            '<span>Active App Volume</span>' +
-          '</div>' +
-          '<div class="vol-app" id="vol-app">—</div>' +
-          '<div class="vol-slider-row">' +
-            '<input type="range" id="vol-slider" class="settings-slider" min="0" max="100" step="1" value="0" disabled>' +
-            '<span class="settings-slider-value" id="vol-value">0%</span>' +
-          '</div>' +
+      '<section class="settings-content panel-page">' +
+        '<div class="panel-editor-col">';
+
+    // Gauges
+    html += sectionCard("Gauges", "speed",
+      toggleRow("Show gauges", gOn, "panel-tog-gauges") +
+      '<p class="settings-hint">PC stats: CPU · GPU · FPS</p>');
+
+    // Button box
+    html += sectionCard("Button box", "apps",
+      toggleRow("Show button box", boxOn, "panel-tog-box") +
+      (boxOn ? renderBoardEditor(board, []) : ''));
+
+    // Sliders (brightness only when hardware is connected)
+    html += sectionCard("Sliders", "tune",
+      toggleRow("Show sliders section", slidOn, "panel-tog-sliders") +
+      (slidOn ? (
+        toggleRow("App volume", sliderOn("app_volume"), "panel-tog-vol") +
+        toggleRow("Master volume", sliderOn("master_volume"), "panel-tog-mvol") +
+        toggleRow("App mixer", sliderOn("app_mixer"), "panel-tog-mix") +
+        (hwOn ? toggleRow("Display brightness", sliderOn("brightness"), "panel-tog-bri") : "")
+      ) : ''));
+
+    // Utility
+    html += sectionCard("Utility row", "grid_view",
+      toggleRow("Show utility row", utilOn, "panel-tog-util") +
+      (utilOn ? renderUtilityEditor(util) : ''));
+
+    html +=
         '</div>' +
+        previewHtml +
+        (panelEdit ? renderActionModal() : '') +
       '</section>';
+
+    main.innerHTML = html;
     rebindHamburger();
-    wireVolume();
-    startVolumePoll();
+    wirePanelPage();
   }
 
-  function wireVolume() {
-    const slider = document.getElementById("vol-slider");
-    if (!slider) return;
-    let saveTimer = null;
-    slider.addEventListener("input", () => {
-      const val = parseInt(slider.value, 10);
-      const valueEl = document.getElementById("vol-value");
-      if (valueEl) valueEl.textContent = val + "%";
-      if (saveTimer) clearTimeout(saveTimer);
-      saveTimer = setTimeout(() => {
-        apiFetch(`${API_BASE}/api/volume`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ volume: val }),
-        }).catch(() => {});
-      }, 150);
+  function sectionCard(title, icon, body) {
+    return '<div class="settings-section"><h2 class="settings-section-title">' +
+      '<span class="material-icons-outlined" style="font-size:18px;vertical-align:middle;margin-right:6px">' + icon + '</span>' +
+      esc(title) + '</h2><div class="settings-card">' + body + '</div></div>';
+  }
+
+  function toggleRow(label, on, id) {
+    return '<div class="settings-toggle-row">' +
+      '<span class="settings-toggle-label">' + esc(label) + '</span>' +
+      '<div class="settings-toggle' + (on ? ' on' : '') + '" id="' + id + '">' +
+      '<div class="settings-toggle-thumb"></div></div></div>';
+  }
+
+  function previewTiles(slots, four) {
+    let h = "";
+    const n = four ? 4 : Math.max(slots.length, 1);
+    for (let i = 0; i < (four ? 4 : Math.min(n, 8)); i++) {
+      const s = slots[i];
+      if (!s || s.type === "EMPTY") h += '<div class="ppt empty"></div>';
+      else h += '<div class="ppt" title="' + esc(s.name || s.type || "") + '"></div>';
+    }
+    return h;
+  }
+
+  function renderBoardEditor(list, path) {
+    let h = '<div class="panel-slot-list" data-path="' + path.join(",") + '">';
+    list.forEach((slot, i) => {
+      h += '<button type="button" class="panel-slot-tile" data-act="edit" data-i="' + i + '">' +
+        '<span class="panel-slot-text">' +
+          '<span class="panel-slot-name">' + esc(slot.name || "(unnamed)") + '</span>' +
+          '<span class="panel-slot-type">' + esc(actionLabel(slot.type)) + '</span>' +
+        '</span>' +
+        '<span class="material-icons-outlined panel-slot-chev">chevron_right</span>' +
+        '</button>';
+      if (slot.type === "GROUP" && slot.children && slot.children.length) {
+        h += '<div class="panel-slot-children">' + renderBoardEditor(slot.children, path.concat([i])) + '</div>';
+      }
+    });
+    h += '<button type="button" class="settings-btn panel-add-btn" data-act="add">+ Add action</button></div>';
+    return h;
+  }
+
+  function renderUtilityEditor(util) {
+    let h = '<div class="panel-util-grid">';
+    for (let i = 0; i < 4; i++) {
+      const s = util[i] || { type: "EMPTY", name: "" };
+      h += '<button type="button" class="panel-util-tile" data-i="' + i + '">' +
+        '<span class="panel-util-label">Slot ' + (i + 1) + '</span>' +
+        '<span class="panel-slot-name">' + esc(s.name || s.type || "Empty") + '</span>' +
+        '<span class="panel-slot-type">' + esc(actionLabel(s.type || "EMPTY")) + '</span>' +
+        '</button>';
+    }
+    h += '</div>';
+    return h;
+  }
+
+  function renderActionModal() {
+    const ctx = panelEdit;
+    let slot = { name: "", type: "SHORTCUT", icon: "application", color: "" };
+    if (ctx.scope === "utility") {
+      slot = Object.assign(slot, (panelDraft.panel_utility || [])[ctx.index] || {});
+    } else {
+      const list = boardAtPath(ctx.path || []);
+      if (ctx.index >= 0 && list[ctx.index]) slot = Object.assign(slot, list[ctx.index]);
+    }
+    const allowGroup = ctx.scope === "board";
+    const options = panelActions.filter((a) => allowGroup || a.type !== "GROUP");
+    let h = '<div class="panel-modal-backdrop" id="panel-modal">' +
+      '<div class="panel-modal">' +
+      '<h3>' + (ctx.index < 0 ? "Add action" : "Edit action") + '</h3>' +
+      '<div class="settings-control"><label class="settings-label">Name</label>' +
+      '<input type="text" class="settings-input" id="pe-name" value="' + esc(slot.name || "") + '"></div>' +
+      '<div class="settings-control"><label class="settings-label">Type</label>' +
+      '<select class="settings-select" id="pe-type">';
+    options.forEach((a) => {
+      h += '<option value="' + esc(a.type) + '"' + (a.type === slot.type ? " selected" : "") + ">" + esc(a.label) + "</option>";
+    });
+    h += '</select></div>' +
+      '<div class="settings-control"><label class="settings-label">Icon (mdi name)</label>' +
+      '<input type="text" class="settings-input" id="pe-icon" value="' + esc(slot.icon || "") + '"></div>' +
+      '<div class="settings-control"><label class="settings-label">Color (#hex or empty)</label>' +
+      '<input type="text" class="settings-input" id="pe-color" value="' + esc(slot.color || "") + '"></div>' +
+      '<div class="settings-control" id="pe-path-wrap"><label class="settings-label">Shortcut path</label>' +
+      '<div class="settings-picker-row">' +
+      '<input type="text" class="settings-input" id="pe-path" value="' + esc(slot.shortcut_path || "") + '">' +
+      '<button type="button" class="settings-btn" id="pe-browse">Browse</button></div></div>' +
+      '<div class="settings-control" id="pe-appicon-wrap" style="display:none"><label class="settings-label">App icon</label>' +
+      '<div class="settings-appicon-row">' +
+        '<img class="settings-appicon-preview" id="pe-appicon-preview" alt="" hidden>' +
+        '<span class="settings-hint" id="pe-appicon-status">Pulled automatically from the executable.</span>' +
+      '</div></div>' +
+      '<div class="settings-control" id="pe-entity-wrap"><label class="settings-label">HA entity id</label>' +
+      '<input type="text" class="settings-input" id="pe-entity" value="' + esc(slot.entity_id || "") + '"></div>' +
+      '<div class="settings-control" id="pe-keys-wrap"><label class="settings-label">Hotkey VKs (comma-separated)</label>' +
+      '<input type="text" class="settings-input" id="pe-keys" value="' + esc((slot.keys || []).join(",")) + '"></div>' +
+      '<div class="settings-control" id="pe-profile-wrap"><label class="settings-label">OpenRGB / plugin profile</label>' +
+      '<input type="text" class="settings-input" id="pe-profile" value="' + esc(slot.openrgb_profile || slot.profile || "") + '"></div>' +
+      '<div class="panel-modal-actions">' +
+      (ctx.scope === "board" && ctx.index >= 0 ?
+        '<div class="panel-modal-sub">' +
+        '<button type="button" class="settings-btn" id="pe-up">▲ Move up</button>' +
+        '<button type="button" class="settings-btn" id="pe-down">▼ Move down</button>' +
+        '<button type="button" class="settings-btn" id="pe-delete">Delete</button>' +
+        '</div>' : '') +
+      '<button type="button" class="settings-btn" id="pe-cancel">Cancel</button>' +
+      '<button type="button" class="settings-btn settings-btn-primary" id="pe-save">Save</button>' +
+      '</div></div></div>';
+    return h;
+  }
+
+  function wirePanelPage() {
+    const launch = document.getElementById("launch-btn");
+    if (launch) {
+      launch.addEventListener("click", () => {
+        savePanelLive();
+        openPanelView();
+      });
+    }
+
+    function bindTog(id, fn) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener("click", () => fn(!el.classList.contains("on")));
+    }
+    bindTog("panel-tog-gauges", (on) => {
+      panelDraft.panel_gauges = panelDraft.panel_gauges || {};
+      panelDraft.panel_gauges.enabled = on;
+      setLayoutOn("gauges", on);
+    });
+    bindTog("panel-tog-box", (on) => setLayoutOn("button_box", on));
+    bindTog("panel-tog-sliders", (on) => setLayoutOn("sliders", on));
+    bindTog("panel-tog-util", (on) => setLayoutOn("utility", on));
+    bindTog("panel-tog-vol", (on) => setSliderOn("app_volume", on));
+    bindTog("panel-tog-mvol", (on) => setSliderOn("master_volume", on));
+    bindTog("panel-tog-mix", (on) => setSliderOn("app_mixer", on));
+    bindTog("panel-tog-bri", (on) => setSliderOn("brightness", on));
+
+    document.querySelectorAll(".panel-slot-list").forEach((listEl) => {
+      const pathStr = listEl.getAttribute("data-path") || "";
+      const path = pathStr ? pathStr.split(",").map((x) => parseInt(x, 10)) : [];
+      listEl.querySelectorAll(".panel-slot-tile, .panel-add-btn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const act = btn.getAttribute("data-act");
+          const i = parseInt(btn.getAttribute("data-i") || "-1", 10);
+          if (act === "add") {
+            panelEdit = { scope: "board", index: -1, path: path };
+            renderPanel();
+          } else if (act === "edit") {
+            panelEdit = { scope: "board", index: i, path: path };
+            renderPanel();
+          }
+        });
+      });
+    });
+
+    document.querySelectorAll(".panel-util-tile").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        panelEdit = { scope: "utility", index: parseInt(btn.getAttribute("data-i"), 10), path: [] };
+        renderPanel();
+      });
+    });
+
+    wireActionModal();
+  }
+
+  // ── Panel view (live device screen) ─────────────────────────
+
+  function ensurePanelOverlay() {
+    let ov = document.getElementById("panel-view");
+    if (!ov) {
+      ov = document.createElement("div");
+      ov.id = "panel-view";
+      ov.className = "panel-view-overlay";
+      document.body.appendChild(ov);
+    }
+    return ov;
+  }
+
+  function openPanelView() {
+    panelViewMode = true;
+    panelNav = [];
+    panelViewSig = "";
+    ensurePanelOverlay();
+    renderPanelView();
+    fetchPanelLive();
+    if (panelLiveTimer) clearInterval(panelLiveTimer);
+    panelLiveTimer = setInterval(fetchPanelLive, 1000);
+  }
+
+  function exitPanelView() {
+    panelViewMode = false;
+    panelNav = [];
+    panelViewSig = "";
+    if (panelLiveTimer) { clearInterval(panelLiveTimer); panelLiveTimer = null; }
+    panelLive = null;
+    const ov = document.getElementById("panel-view");
+    if (ov) ov.remove();
+  }
+
+  function panelViewConfig() {
+    return (panelLive && panelLive.config) || panelDraft || {};
+  }
+
+  function panelViewSignature() {
+    const cfg = panelViewConfig();
+    const board = panelNav.length
+      ? (panelNav[panelNav.length - 1].children || [])
+      : (cfg.panel_board || []);
+    const keys = board.map((s) => (s.type || "") + ":" + (s.name || ""));
+    const lay = (cfg.panel_layout || []).map((r) => r.id + "=" + (r.enabled === false ? 0 : 1)).join(",");
+    const sl = (cfg.panel_sliders || []).map((r) => r.id + "=" + (r.enabled === false ? 0 : 1)).join(",");
+    return JSON.stringify([
+      panelNav.map((g) => g.name || g.type || "").join(">"),
+      keys,
+      lay,
+      sl,
+      (cfg.panel_gauges || {}).enabled === false ? 0 : 1,
+      !!(panelLive && panelLive.hardware_connected),
+    ]);
+  }
+
+  function fetchPanelLive() {
+    apiFetch(`${API_BASE}/api/panel/live`)
+      .then((r) => r.json())
+      .then((data) => {
+        panelLive = data;
+        if (!panelViewMode) return;
+        if (!panelDraft && data.config) {
+          panelDraft = {
+            panel_board: data.config.panel_board || [],
+            panel_utility: data.config.panel_utility || [],
+            panel_sliders: data.config.panel_sliders || [],
+            panel_layout: data.config.panel_layout || [],
+            panel_gauges: data.config.panel_gauges || { enabled: true },
+            media_player_path: data.config.media_player_path || "",
+            hardware_connected: !!data.hardware_connected,
+          };
+        }
+        const sig = panelViewSignature();
+        if (sig !== panelViewSig || panelMixerChanged(data.app_volumes || [])) {
+          panelViewSig = sig;
+          renderPanelView();
+        } else {
+          updatePanelView();
+        }
+      })
+      .catch(() => {});
+  }
+
+  function panelMixerChanged(apps) {
+    const domPids = Array.from(document.querySelectorAll(".pdev-slider[data-slider^='sess_']"))
+      .map((el) => el.querySelector("input") ? parseInt(el.querySelector("input").getAttribute("data-pid"), 10) : null)
+      .filter((p) => !Number.isNaN(p));
+    const livePids = apps.map((a) => a.pid).filter((p) => p !== null && p !== undefined);
+    if (domPids.length !== livePids.length) return true;
+    return domPids.some((p) => livePids.indexOf(p) === -1);
+  }
+
+  function renderPanelView() {
+    const ov = ensurePanelOverlay();
+    const data = panelLive || {};
+    const cfg = panelViewConfig();
+
+    const layout = {};
+    (cfg.panel_layout || []).forEach((r) => { layout[r.id] = r.enabled !== false; });
+    const gOn = layout.gauges !== false && (cfg.panel_gauges || {}).enabled !== false;
+    const boxOn = layout.button_box !== false;
+    const slidOn = layout.sliders !== false;
+    const utilOn = layout.utility !== false;
+    const sliders = {};
+    (cfg.panel_sliders || []).forEach((r) => { sliders[r.id] = r.enabled !== false; });
+    const hw = !!(data.hardware_connected !== undefined ? data.hardware_connected
+      : (panelDraft && panelDraft.hardware_connected));
+    const briOn = hw && sliders.brightness !== false;
+    const volOn = sliders.app_volume !== false;
+    const mvolOn = sliders.master_volume !== false;
+    const mixOn = sliders.app_mixer !== false;
+
+    const board = panelNav.length
+      ? (panelNav[panelNav.length - 1].children || [])
+      : (cfg.panel_board || []);
+    const util = cfg.panel_utility || [];
+    const gauges = data.gauges || {};
+    const volume = data.volume || {};
+
+    let html = '<div class="pv-screen">';
+    html += '<div class="pv-scroll">';
+    if (gOn) {
+      html += '<div class="pv-gauges">' +
+        panelGauge("CPU", gauges.cpu_temp, 100, "°C") +
+        panelGauge("GPU", gauges.gpu_temp, 100, "°C") +
+        panelGauge("FPS", gauges.fps, 240, "") +
+      '</div>';
+    }
+    html += '<div class="pv-frame">';
+    if (boxOn) {
+      html += '<div class="pv-box"><div class="pdev-grid">' + boardTilesHtml(board) + '</div></div>';
+    }
+    html += '<div class="pv-side">';
+    if (slidOn) {
+      html += '<div class="pv-sliders">' +
+        (volOn ? panelSliderHtml("app_volume", "App Volume", volume.volume, 0, 100) : "") +
+        (mvolOn ? panelSliderHtml("master_volume", "Master Volume", data.master_volume, 0, 100) : "") +
+        (mixOn ? appMixerHtml(data.app_volumes || []) : "") +
+        (briOn ? panelSliderHtml("brightness", "Brightness", data.brightness, 0, 4) : "") +
+      '</div>';
+    }
+    html += '</div>';
+    html += '</div>';
+    html += '</div>';
+    if (utilOn) {
+      html += '<div class="pv-util"><div class="pdev-grid">' + utilTilesHtml(util) + '</div></div>';
+    }
+    html += '<div class="pv-core"><div class="pdev-grid">' + coreTilesHtml(data) + '</div></div>';
+    html += '</div>';
+
+    ov.innerHTML = html;
+    applyMdiIcons(ov);
+    const need = ["microphone-off"];
+    ov.querySelectorAll(".md[data-md]").forEach((el) => need.push(el.getAttribute("data-md")));
+    mdiPreload(need);
+    wirePanelView();
+    paintPanelRanges(ov);
+    fitLandscapeSliders(ov);
+    panelViewSig = panelViewSignature();
+  }
+
+  function fitLandscapeSliders(ov) {
+    if (!ov) return;
+    const side = ov.querySelector(".pv-side");
+    if (!side) return;
+    const isL = window.matchMedia && window.matchMedia("(max-width: 768px) and (orientation: landscape)").matches;
+    if (!isL) {
+      side.style.width = "";
+      return;
+    }
+    const card = ov.querySelector(".pv-side .pv-sliders");
+    if (!card) return;
+    side.style.width = card.offsetHeight + "px";
+  }
+
+  window.addEventListener("resize", () => {
+    if (!panelViewMode) return;
+    const ov = document.getElementById("panel-view");
+    if (ov) fitLandscapeSliders(ov);
+  });
+
+  function gaugeNum(value) {
+    const v = (value === null || value === undefined) ? 0 : Math.round(value);
+    return String(v);
+  }
+
+  function panelGauge(label, value, max, unit) {
+    const v = (value === null || value === undefined) ? 0 : value;
+    const pct = Math.max(0, Math.min(100, (v / max) * 100));
+    const CIRC = 2 * Math.PI * 16;
+    const arc = (pct / 100) * CIRC;
+    const gid = 'ggrad-' + String(label).toLowerCase().replace(/[^a-z0-9_-]/g, '');
+    return '<div class="pdev-gauge">' +
+      '<svg viewBox="0 0 40 40" class="pdev-gsvg">' +
+        '<defs><linearGradient id="' + gid + '" x1="0%" y1="0%" x2="100%" y2="0%">' +
+          '<stop offset="0%" stop-color="#B23AF6"></stop>' +
+          '<stop offset="100%" stop-color="#79E8FC"></stop>' +
+        '</linearGradient></defs>' +
+        '<circle class="pdev-gtrack" cx="20" cy="20" r="16"></circle>' +
+        '<circle class="pdev-garc" cx="20" cy="20" r="16" data-gauge="' + esc(label) + '" style="stroke:url(#' + gid + ');stroke-dasharray:' +
+          arc.toFixed(1) + ' ' + CIRC.toFixed(1) + '"></circle>' +
+      '</svg>' +
+      '<span class="pdev-gval"><span class="pdev-gnum" data-gvalue="' + esc(label) + '">' + gaugeNum(v) + '</span></span>' +
+      '<span class="pdev-glabel">' + esc(label) + (unit ? ' ' + esc(unit) : '') + '</span>' +
+    '</div>';
+  }
+
+  function boardTilesHtml(board) {
+    let h = "";
+    if (panelNav.length) {
+      h += '<button type="button" class="pdev-tile pdev-back" data-nav="back" title="Back">' +
+        '<span class="md" data-md="arrow-left"></span></button>';
+    }
+    if (!board || !board.length) {
+      h += '<div class="pdev-empty">No actions yet</div>';
+      return h;
+    }
+    for (let i = 0; i < board.length; i++) {
+      const s = board[i];
+      if (!s || s.type === "EMPTY") { h += '<span class="pdev-tile pdev-empty-tile"></span>'; continue; }
+      h += panelTileHtml(s, "box", i);
+    }
+    return h;
+  }
+
+  function utilTilesHtml(util) {
+    let h = "";
+    const list = util && util.length ? util : [];
+    for (let i = 0; i < 4; i++) {
+      const s = list[i];
+      if (!s || s.type === "EMPTY") { h += '<span class="pdev-tile pdev-empty-tile"></span>'; continue; }
+      h += panelTileHtml(s, "util", i);
+    }
+    return h;
+  }
+
+  function panelTileHtml(s, listName, idx) {
+    const icon = s.icon || "help-circle";
+    const color = s.color || "";
+    const isGroup = s.type === "GROUP";
+    const appPath = ((s.type === "SHORTCUT" || s.type === "GROUP") && (s.app_icon_path || s.shortcut_path))
+      ? (s.app_icon_path || s.shortcut_path) : "";
+    const glyph = appPath
+      ? '<img class="pdev-iapp" src="' + API_BASE + '/api/panel/icon?path=' + encodeURIComponent(appPath) +
+        '" alt="" data-fallback="' + esc(icon) + '">'
+      : '<span class="md" data-md="' + esc(icon) + '"></span>';
+    return '<button type="button" class="pdev-tile' + (isGroup ? " pdev-group" : "") + '"' +
+      ' data-action="slot" data-list="' + listName + '" data-idx="' + idx + '"' +
+      (color ? ' style="background:' + esc(color) + '"' : "") +
+      ' title="' + esc(s.name || "") + '">' +
+      glyph +
+    '</button>';
+  }
+
+  function panelSliderHtml(id, label, value, min, max) {
+    const v = (value === null || value === undefined) ? 0 : value;
+    return '<div class="pdev-slider" data-slider="' + id + '">' +
+      '<div class="pdev-slab">' +
+        '<span class="pdev-sname">' + esc(label) + '</span>' +
+      '</div>' +
+      '<input type="range" class="pdev-range" data-slider="' + id + '" min="' + min + '" max="' + max + '" step="1" value="' + v + '"></div>';
+  }
+
+  function appMixerHtml(apps) {
+    if (!apps || !apps.length) {
+      return '<div class="pdev-slider pdev-mixer-empty">' +
+        '<div class="pdev-slab"><span class="pdev-sname">No apps playing</span></div></div>';
+    }
+    let h = "";
+    apps.slice(0, 12).forEach((a) => {
+      const pid = a.pid;
+      const name = a.name || "Application";
+      const v = (a.volume === null || a.volume === undefined) ? 0 : a.volume;
+      h += '<div class="pdev-slider" data-slider="sess_' + pid + '">' +
+        '<div class="pdev-slab"><span class="pdev-sname">' + esc(name) + '</span></div>' +
+        '<input type="range" class="pdev-range" data-slider="sess_' + pid + '"' +
+        ' data-pid="' + pid + '" min="0" max="100" step="1" value="' + v + '"></div>';
+    });
+    return h;
+  }
+
+  function coreTilesHtml(data) {
+    const dispOn = !!data.pc_stats_manual;
+    const ovOn = !!data.overlay_on;
+    return '<button type="button" class="pdev-tile pdev-core-tile' + (dispOn ? " pdev-active" : "") + '" data-core="display" title="PC stats display">' +
+        '<span class="md" data-md="monitor"></span></button>' +
+      '<button type="button" class="pdev-tile pdev-core-tile' + (ovOn ? " pdev-active" : "") + '" data-core="overlay" title="Stats overlay">' +
+        '<span class="md" data-md="speedometer"></span></button>' +
+      '<button type="button" class="pdev-tile pdev-core-tile" data-core="mic" title="Microphone mute">' +
+        '<span class="md" data-md="microphone"></span></button>' +
+      '<button type="button" class="pdev-tile pdev-core-tile" data-core="settings" title="Settings">' +
+        '<span class="md" data-md="cog"></span></button>';
+  }
+
+  function currentBoard() {
+    if (panelNav.length) return panelNav[panelNav.length - 1].children || [];
+    return (panelViewConfig().panel_board) || [];
+  }
+
+  function runSlotAction(slot) {
+    if (!slot) return;
+    if (slot.type === "EMPTY") return;
+    if (slot.type === "GROUP") {
+      panelNav.push(slot);
+      apiFetch(`${API_BASE}/api/panel/action`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slot: slot }),
+      }).catch(() => {});
+      renderPanelView();
+      return;
+    }
+    apiFetch(`${API_BASE}/api/panel/action`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slot: slot }),
+    }).catch(() => {});
+  }
+
+  function coreAction(core, tile) {
+    if (core === "settings") {
+      exitPanelView();
+      currentPage = "settings";
+      renderPage();
+      return;
+    }
+    apiFetch(`${API_BASE}/api/panel/core`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tile: core }),
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        if (!d) return;
+        if (core === "mic") {
+          tile.classList.toggle("pdev-active", !!d.state);
+          tile.classList.toggle("pdev-muted", !!d.state);
+          const ic = tile.querySelector(".md");
+          if (ic) ic.setAttribute("data-md", d.state ? "microphone-off" : "microphone");
+          applyMdiIcons(tile);
+        } else {
+          tile.classList.toggle("pdev-active", !!d.state);
+        }
+      })
+      .catch(() => {});
+  }
+
+  function wirePanelView() {
+    // App-icon tiles: if the exe icon can't be extracted, fall back to MDI.
+    document.querySelectorAll("img.pdev-iapp").forEach((im) => {
+      im.addEventListener("error", () => {
+        const md = document.createElement("span");
+        md.className = "md";
+        md.setAttribute("data-md", im.getAttribute("data-fallback") || "help-circle");
+        im.replaceWith(md);
+        applyMdiIcons(md);
+      });
+    });
+    const tiles = document.querySelectorAll(".pdev-tile");
+    tiles.forEach((tile) => {
+      if (tile.getAttribute("data-nav") === "back") {
+        tile.addEventListener("click", () => {
+          panelNav.pop();
+          panelViewSig = panelViewSignature();
+          renderPanelView();
+        });
+        return;
+      }
+      const core = tile.getAttribute("data-core");
+      if (core) {
+        tile.addEventListener("click", () => coreAction(core, tile));
+        return;
+      }
+      if (tile.getAttribute("data-action") === "slot") {
+        tile.addEventListener("click", () => {
+          const list = tile.getAttribute("data-list");
+          const idx = parseInt(tile.getAttribute("data-idx"), 10);
+          let s = null;
+          if (list === "util") {
+            s = (panelViewConfig().panel_utility || [])[idx];
+          } else {
+            s = currentBoard()[idx];
+          }
+          runSlotAction(s);
+        });
+      }
+    });
+
+    document.querySelectorAll("input[type=range].pdev-range").forEach((rng) => {
+      rng.addEventListener("input", () => {
+        const id = rng.getAttribute("data-slider");
+        const val = parseInt(rng.value, 10);
+        paintPanelRanges(rng);
+        clearTimeout(panelSliderTimer);
+        panelSliderTimer = setTimeout(() => {
+          let url;
+          let body;
+          if (id.indexOf("sess_") === 0) {
+            url = "/api/volume/session";
+            body = { pid: parseInt(rng.getAttribute("data-pid"), 10), volume: val };
+          } else if (id === "brightness") {
+            url = "/api/panel/brightness";
+            body = { brightness: val };
+          } else if (id === "master_volume") {
+            url = "/api/volume/master";
+            body = { volume: val };
+          } else {
+            url = "/api/volume";
+            body = { volume: val };
+          }
+          apiFetch(`${API_BASE}${url}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          }).catch(() => {});
+        }, 200);
+      });
     });
   }
 
-  function startVolumePoll() {
-    stopVolumePoll();
-    volumeTimer = setInterval(() => {
-      apiFetch(`${API_BASE}/api/volume`)
-        .then((r) => r.json())
-        .then((data) => {
-          if (!data || typeof data.volume !== "number") return;
-          volumeState = data;
-          updateVolumeUI();
-        })
-        .catch(() => {});
-    }, 1000);
-  }
+  function updatePanelView() {
+    const data = panelLive || {};
+    const gauges = data.gauges || {};
+    const volume = data.volume || {};
 
-  function stopVolumePoll() {
-    if (volumeTimer) { clearInterval(volumeTimer); volumeTimer = null; }
-  }
+    updateGauge("CPU", gauges.cpu_temp, 100, "°C");
+    updateGauge("GPU", gauges.gpu_temp, 100, "°C");
+    updateGauge("FPS", gauges.fps, 240, "");
 
-  function updateVolumeUI() {
-    const slider = document.getElementById("vol-slider");
-    const appEl = document.getElementById("vol-app");
-    const valueEl = document.getElementById("vol-value");
-    if (!slider || !appEl) return;
-    if (typeof volumeState.volume === "number") {
-      slider.value = String(volumeState.volume);
-      slider.disabled = false;
-      appEl.textContent = volumeState.app || "Application";
-      appEl.classList.remove("vol-app-none");
-      if (valueEl) valueEl.textContent = volumeState.volume + "%";
-    } else {
-      slider.value = "0";
-      slider.disabled = true;
-      appEl.textContent = volumeState.app ? (volumeState.app + " — no audio session") : "No audio session";
-      appEl.classList.add("vol-app-none");
-      if (valueEl) valueEl.textContent = "—";
+    const volEl = document.querySelector(".pdev-slider[data-slider='app_volume']");
+    if (volEl) {
+      const rng = volEl.querySelector("input");
+      if (document.activeElement !== rng &&
+          volume.volume !== null && volume.volume !== undefined) {
+        if (rng && String(rng.value) !== String(volume.volume)) rng.value = volume.volume;
+        paintPanelRanges(rng);
+      }
     }
+
+    const mvolEl = document.querySelector(".pdev-slider[data-slider='master_volume']");
+    if (mvolEl) {
+      const rng = mvolEl.querySelector("input");
+      if (document.activeElement !== rng &&
+          data.master_volume !== null && data.master_volume !== undefined) {
+        if (rng && String(rng.value) !== String(data.master_volume)) rng.value = data.master_volume;
+        paintPanelRanges(rng);
+      }
+    }
+
+    const apps = data.app_volumes || [];
+    document.querySelectorAll(".pdev-slider[data-slider^='sess_']").forEach((el) => {
+      const rng = el.querySelector("input");
+      if (!rng || document.activeElement === rng) return;
+      const pid = parseInt(rng.getAttribute("data-pid"), 10);
+      const match = apps.find((a) => a.pid === pid);
+      if (match && match.volume !== null && match.volume !== undefined &&
+          String(rng.value) !== String(match.volume)) {
+        rng.value = match.volume;
+        paintPanelRanges(rng);
+      }
+    });
+
+    const briEl = document.querySelector(".pdev-slider[data-slider='brightness']");
+    if (briEl) {
+      const rng = briEl.querySelector("input");
+      if (document.activeElement !== rng && data.brightness !== null && data.brightness !== undefined) {
+        if (rng && String(rng.value) !== String(data.brightness)) rng.value = data.brightness;
+        paintPanelRanges(rng);
+      }
+    }
+
+    const disp = document.querySelector('.pdev-core-tile[data-core="display"]');
+    if (disp) disp.classList.toggle("pdev-active", !!data.pc_stats_manual);
+    const ov = document.querySelector('.pdev-core-tile[data-core="overlay"]');
+    if (ov) ov.classList.toggle("pdev-active", !!data.overlay_on);
+  }
+
+  function updateGauge(label, value, max, unit) {
+    const v = (value === null || value === undefined) ? 0 : value;
+    const arcEl = document.querySelector('.pdev-garc[data-gauge="' + label + '"]');
+    if (arcEl) {
+      const pct = Math.max(0, Math.min(100, (v / max) * 100));
+      const CIRC = 2 * Math.PI * 16;
+      arcEl.style.strokeDasharray = (pct / 100) * CIRC + " " + CIRC;
+    }
+    const numEl = document.querySelector('.pdev-gnum[data-gvalue="' + label + '"]');
+    if (numEl) numEl.textContent = gaugeNum(v);
+  }
+
+  function paintPanelRanges(scope) {
+    let ranges;
+    if (scope && scope.matches && scope.matches("input[type=range].pdev-range")) {
+      ranges = [scope];
+    } else if (scope && scope.querySelectorAll) {
+      ranges = scope.querySelectorAll("input[type=range].pdev-range");
+    } else {
+      ranges = document.querySelectorAll("input[type=range].pdev-range");
+    }
+    ranges.forEach((rng) => {
+      const min = parseFloat(rng.min) || 0;
+      const max = parseFloat(rng.max) || 100;
+      const val = parseFloat(rng.value) || 0;
+      const pct = max > min ? ((val - min) / (max - min)) * 100 : 0;
+      rng.style.setProperty("--fill", pct.toFixed(1) + "%");
+    });
+  }
+
+  function browseExe(cb) {
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.browse_exe) {
+      window.pywebview.api.browse_exe().then(cb).catch(() => cb(null));
+    } else cb(null);
+  }
+
+  function wireActionModal() {
+    const modal = document.getElementById("panel-modal");
+    if (!modal || !panelEdit) return;
+    const typeEl = document.getElementById("pe-type");
+    const appIconPreview = document.getElementById("pe-appicon-preview");
+    function loadAppIcon() {
+      const p = (document.getElementById("pe-path").value || "").trim();
+      if (!p) { appIconPreview.hidden = true; return; }
+      apiFetch(API_BASE + "/api/panel/icon?path=" + encodeURIComponent(p))
+        .then((r) => { if (!r.ok) throw new Error("icon"); return r.blob(); })
+        .then((blob) => { appIconPreview.src = URL.createObjectURL(blob); appIconPreview.hidden = false; })
+        .catch(() => { appIconPreview.hidden = true; });
+    }
+    const syncFields = () => {
+      const t = typeEl.value;
+      const showPath = t === "SHORTCUT" || t === "GROUP";
+      const showEnt = t === "REST";
+      const showKeys = t === "HOTKEY";
+      const showProf = t === "OPENRGB" || t.indexOf("PLUGIN:") === 0;
+      const showAppIcon = t === "SHORTCUT";
+      document.getElementById("pe-path-wrap").style.display = showPath ? "" : "none";
+      document.getElementById("pe-entity-wrap").style.display = showEnt ? "" : "none";
+      document.getElementById("pe-keys-wrap").style.display = showKeys ? "" : "none";
+      document.getElementById("pe-profile-wrap").style.display = showProf ? "" : "none";
+      document.getElementById("pe-appicon-wrap").style.display = showAppIcon ? "" : "none";
+      if (showAppIcon) loadAppIcon(); else appIconPreview.hidden = true;
+    };
+    typeEl.addEventListener("change", syncFields);
+    syncFields();
+    document.getElementById("pe-browse").addEventListener("click", () => {
+      browseExe((p) => {
+        if (p) {
+          document.getElementById("pe-path").value = p;
+          loadAppIcon();
+        }
+      });
+    });
+    let iconTimer = null;
+    document.getElementById("pe-path").addEventListener("input", () => {
+      clearTimeout(iconTimer);
+      iconTimer = setTimeout(loadAppIcon, 400);
+    });
+    document.getElementById("pe-cancel").addEventListener("click", () => {
+      panelEdit = null;
+      renderPanel();
+    });
+    const moveSlot = (delta) => {
+      const list = boardAtPath(panelEdit.path || []);
+      const j = panelEdit.index + delta;
+      if (j < 0 || j >= list.length) return;
+      const t = list[panelEdit.index]; list[panelEdit.index] = list[j]; list[j] = t;
+      panelEdit = null;
+      setPanelDirty(true);
+      renderPanel();
+    };
+    const upBtn = document.getElementById("pe-up");
+    if (upBtn) upBtn.addEventListener("click", () => moveSlot(-1));
+    const downBtn = document.getElementById("pe-down");
+    if (downBtn) downBtn.addEventListener("click", () => moveSlot(1));
+    const delBtn = document.getElementById("pe-delete");
+    if (delBtn) delBtn.addEventListener("click", () => {
+      const list = boardAtPath(panelEdit.path || []);
+      list.splice(panelEdit.index, 1);
+      panelEdit = null;
+      setPanelDirty(true);
+      renderPanel();
+    });
+    document.getElementById("pe-save").addEventListener("click", () => {
+      const t = document.getElementById("pe-type").value;
+      const slot = {
+        name: document.getElementById("pe-name").value.trim(),
+        type: t,
+        icon: document.getElementById("pe-icon").value.trim() || "help-circle",
+        color: document.getElementById("pe-color").value.trim(),
+      };
+      if (t === "SHORTCUT" || t === "GROUP") {
+        slot.shortcut_path = document.getElementById("pe-path").value.trim();
+      }
+      if (t === "SHORTCUT") {
+        slot.app_icon_path = slot.shortcut_path || null;
+      }
+      if (t === "GROUP" && !slot.children) slot.children = [];
+      if (t === "REST") slot.entity_id = document.getElementById("pe-entity").value.trim();
+      if (t === "HOTKEY") {
+        slot.keys = document.getElementById("pe-keys").value.split(",")
+          .map((x) => parseInt(x.trim(), 10)).filter((n) => !isNaN(n));
+      }
+      if (t === "OPENRGB") slot.openrgb_profile = document.getElementById("pe-profile").value.trim();
+      if (t.indexOf("PLUGIN:") === 0) {
+        const parts = t.split(":");
+        const cid = parts[2] || "value";
+        slot[cid] = document.getElementById("pe-profile").value.trim();
+        slot.profile = slot[cid];
+      }
+      if (panelEdit.scope === "utility") {
+        if (!panelDraft.panel_utility) panelDraft.panel_utility = [{}, {}, {}, {}];
+        while (panelDraft.panel_utility.length < 4) panelDraft.panel_utility.push({ type: "EMPTY" });
+        panelDraft.panel_utility[panelEdit.index] = slot;
+      } else {
+        const list = boardAtPath(panelEdit.path || []);
+        if (panelEdit.index < 0) list.push(slot);
+        else {
+          if (slot.type === "GROUP" && list[panelEdit.index] && list[panelEdit.index].children) {
+            slot.children = list[panelEdit.index].children;
+          }
+          list[panelEdit.index] = slot;
+        }
+      }
+      panelEdit = null;
+      setPanelDirty(true);
+      renderPanel();
+    });
   }
 
   function wireWizard() {

@@ -93,6 +93,13 @@ class IrisApp:
                 self._online = online
                 self._port = port
                 self._update_icon()
+                # Brightness slider appears/disappears with hardware
+                mw = self._main_win
+                if mw is not None and hasattr(mw, "_reflow_panel"):
+                    try:
+                        self._root.after(0, mw._reflow_panel)
+                    except Exception:
+                        pass
             _time.sleep(3)
 
     def _plugin_check_loop(self):

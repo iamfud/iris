@@ -3,6 +3,24 @@
 - Never write code unless I explicitly ask you to.
 - Only answer questions, explain things, or make suggestions — no implementation without a direct order.
 
+# Session Memory — 2026-08-06
+
+## Button configurator: app-icon auto-pull (Phase 1)
+- New endpoint `GET /api/panel/icon?path=<exe>` (`ws_bridge._handle_panel_icon`) → PNG of the exe's icon, cached in `_APP_ICON_CACHE` keyed by normalized abs path (extract once via PowerShell, serve fast to the 1s web-panel poll).
+- **Fixed latent bug**: `win_platform._extract_via_ps` always returned `None` — its `.format()` collided with the PowerShell `try { } catch { }` braces (KeyError). Rewritten to pass BOTH input path and output temp path via env vars (`IRIS_ICON_PATH`/`IRIS_ICON_OUT`), no string interpolation. Verified: extracts 32×32 RGBA from cmd/explorer/notepad.
+- Edit action modal (`renderActionModal`/`wireActionModal` in `script.js`): when Type = SHORTCUT ("App / Shortcut"), an "App icon" row (`pe-appicon-wrap`) with live `<img id="pe-appicon-preview">` auto-loads from `/api/panel/icon` on Browse or path input (400ms debounce); preview is a blob: URL (CSP allows `img-src blob:`).
+- Save stores `app_icon_path = shortcut_path` for SHORTCUT (sanitize_slot keeps it via `_SLOT_KEYS`).
+- Web panel tiles (`panelTileHtml`): SHORTCUT/GROUP with `app_icon_path`/`shortcut_path` render `<img class="pdev-iapp">` instead of the MDI glyph; CSP blocks inline `onerror`, so fallback to MDI is wired via `addEventListener("error")` in `wirePanelView`.
+- Desktop app already auto-extracts via `main_window.py` (`app_icon_path or shortcut_path` → `_make_tile_photo`), now actually works since `_extract_via_ps` is fixed.
+
+# Session Memory — 2026-08-06
+
+## Web portal: phone boots into live panel; PC keeps dashboard
+- `startPolling()`: `if (IS_APP || !IS_MOBILE) renderPage(); else { currentPage="panel"; portalAutoPanel=true; fetchPanel(); }`. Only real phones (`IS_MOBILE`, `max-width:768px` or iOS) land straight on the live panel; the desktop app window and PC browsers open the dashboard "as before".
+- This matters because the PC's settings cog (tray "Iris Settings" + the cog tile) opens the web portal — it must land on the dashboard, not the phone panel.
+- `portalAutoPanel` flag in `script.js`; `fetchPanel()` → `openPanelView()` when set (live device screen), else `renderPanel()` (editor).
+- Unpaired phone still gets pairing message (server-side `_serve_index`); paired phone → live panel.
+
 # Session Memory — 2026-07-01
 
 ## Hotkey mechanism

@@ -146,6 +146,45 @@ def _virtual_screen_bounds():
         return (0, 0, 1920, 1080)
 
 
+class _RECT(ctypes.Structure):
+    _fields_ = [
+        ("left", ctypes.c_long),
+        ("top", ctypes.c_long),
+        ("right", ctypes.c_long),
+        ("bottom", ctypes.c_long),
+    ]
+
+
+class _MONITORINFO(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", ctypes.c_ulong),
+        ("rcMonitor", _RECT),
+        ("rcWork", _RECT),
+        ("dwFlags", ctypes.c_ulong),
+    ]
+
+
+def _default_position(width, height):
+    """Bottom-right of the primary monitor's work area (above the taskbar).
+
+    Used only on first launch; once the user moves the panel, the position is
+    remembered in config.
+    """
+    try:
+        user32 = ctypes.windll.user32
+        monitor = user32.MonitorFromPoint(0, 0, 2)  # MONITOR_DEFAULTTONEAREST
+        info = _MONITORINFO()
+        info.cbSize = ctypes.sizeof(_MONITORINFO)
+        if not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+            return None, None
+        margin = 16
+        x = info.rcWork.right - width - margin
+        y = info.rcWork.bottom - height - margin
+        return int(x), int(y)
+    except Exception:
+        return None, None
+
+
 def _clamp_to_screen(x, y, width, height):
     """Keep the window at least 100x100 pixels on screen."""
     try:
@@ -203,8 +242,13 @@ def _run(width, height, x=None, y=None):
     try:
         if x is not None and y is not None:
             x, y = _clamp_to_screen(x, y, width, height)
-            state["x"] = x
-            state["y"] = y
+        else:
+            # First launch: bottom-right of the primary monitor's work area.
+            x, y = _default_position(width, height)
+            if x is not None and y is not None:
+                x, y = _clamp_to_screen(x, y, width, height)
+        state["x"] = x
+        state["y"] = y
 
         create_kwargs = {
             "width": width,
@@ -215,7 +259,6 @@ def _run(width, height, x=None, y=None):
             "js_api": api,
             "min_size": (_MIN_WIDTH, _MIN_HEIGHT),
         }
-        # Omit x/y on first launch so pywebview centres the window.
         if x is not None and y is not None:
             create_kwargs["x"] = x
             create_kwargs["y"] = y
