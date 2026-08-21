@@ -106,10 +106,63 @@ class SerialSender:
 
     # ── Display intents (device-agnostic; plugins should prefer these) ──
 
-    def notify(self, key, title, message, priority=PRIO_PLUGIN_NOTIFY, style="normal"):
-        """Transient message. Same key replaces in-flight text."""
+    def notify(self, key, title, message, priority=PRIO_PLUGIN_NOTIFY, style="normal", theme="purple"):
+        """Persistent inbox notification (saved in notifications.json).
+
+        ``theme``: ``purple`` (standard) or ``alert`` (red rapid-flash toast).
+        """
         with self._lock:
-            self._display.notify(key, title, message, priority=priority, style=style)
+            self._display.notify(key, title, message, priority=priority, style=style, theme=theme)
+
+    def send_alert(self, title, message, key=None):
+        """Red alert notification — persistent inbox + rapid-flash toast.
+
+        Plugin-friendly: ``self.serial.send_alert("Health Low", "Hull below 30%")``.
+        """
+        from display_priority import PRIO_PLUGIN_ALERT
+        self.notify(key or f"alert.{title}", title, message,
+                    priority=PRIO_PLUGIN_ALERT, style="emphasis", theme="alert")
+
+    def set_warning(self, key, color=None, message=""):
+        """Flag a panel button as in warning state (button turns warning colour).
+
+        Plugin-friendly: ``self.serial.set_warning("elite_dangerous:shields",
+        color="#ffaa00", message="Shields failing")``. ``color`` may be a hex
+        string or ``None`` for the panel's default warning colour. The warning
+        stays active until :meth:`clear_warning` is called.
+        """
+        import warning_state
+        warning_state.set_warning(key, color=color, message=message)
+
+    def clear_warning(self, key):
+        """Remove a warning previously set with :meth:`set_warning`."""
+        import warning_state
+        warning_state.clear_warning(key)
+
+    def event(self, key, title, message, status="good", priority=PRIO_PLUGIN_NOTIFY, style="normal"):
+        """Transient event (Green/Red theme, 5s on phone panel, gone for good, never stored in inbox)."""
+        with self._lock:
+            self._display.event(key, title, message, status=status, priority=priority, style=style)
+
+    def event_good(self, key, title, message, priority=PRIO_PLUGIN_NOTIFY, style="normal"):
+        """Transient good/success event (Green theme)."""
+        self.event(key, title, message, status="good", priority=priority, style=style)
+
+    def event_success(self, key, title, message, priority=PRIO_PLUGIN_NOTIFY, style="normal"):
+        """Alias for event_good (Green theme)."""
+        self.event(key, title, message, status="good", priority=priority, style=style)
+
+    def event_bad(self, key, title, message, priority=PRIO_PLUGIN_NOTIFY, style="normal"):
+        """Transient bad/warning event (Red theme)."""
+        self.event(key, title, message, status="bad", priority=priority, style=style)
+
+    def event_warning(self, key, title, message, priority=PRIO_PLUGIN_NOTIFY, style="normal"):
+        """Alias for event_bad (Red theme)."""
+        self.event(key, title, message, status="bad", priority=priority, style=style)
+
+    def event_alert(self, key, title, message, priority=PRIO_PLUGIN_NOTIFY, style="normal"):
+        """Alias for event_bad (Red theme)."""
+        self.event(key, title, message, status="bad", priority=priority, style=style)
 
     def alert(self, key, text, *, mode="blink", lifetime="hold",
               timed_s=5.0, priority=None):

@@ -11,27 +11,22 @@ import logging
 
 log = logging.getLogger("iris.panel_actions")
 
-# Builtin action types available in the full picker.
+# Standard Generic Action / Button types available in the Button Card editor.
 BUILTIN_ACTIONS = [
+    {"type": "TOGGLE", "label": "Toggle Button", "icon": "toggle-switch", "group": False},
+    {"type": "HOTKEY", "label": "Momentary / Hotkey", "icon": "keyboard", "group": False},
     {"type": "SHORTCUT", "label": "App / Shortcut", "icon": "application", "group": False},
-    {"type": "GROUP", "label": "Group (sub-panel)", "icon": "folder", "group": True},
-    {"type": "REST", "label": "Home Assistant toggle", "icon": "home-assistant", "group": False},
-    {"type": "HOTKEY", "label": "Hotkey", "icon": "keyboard", "group": False},
-    {"type": "OPENRGB", "label": "OpenRGB profile (legacy)", "icon": "palette", "group": False},
-    {"type": "AUDIO OUTPUT", "label": "Audio output toggle", "icon": "speaker", "group": False},
-    {"type": "STOPWATCH", "label": "Stopwatch", "icon": "timer", "group": False},
-    {"type": "MEDIA_PREV", "label": "Media previous", "icon": "skip-previous", "group": False},
-    {"type": "MEDIA_PLAY", "label": "Media play/pause", "icon": "play-pause", "group": False},
-    {"type": "MEDIA_NEXT", "label": "Media next", "icon": "skip-next", "group": False},
-    {"type": "MEDIA_EJECT", "label": "Launch media player", "icon": "eject", "group": False},
-    {"type": "EMPTY", "label": "Empty / spacer", "icon": "border-none-variant", "group": False},
+    {"type": "GROUP", "label": "Group (Sub-Panel)", "icon": "folder", "group": True},
+    {"type": "SENSOR", "label": "Status / Sensor", "icon": "gauge", "group": False},
+    {"type": "SCREENSHOT", "label": "Screenshot", "icon": "camera", "group": False},
+    {"type": "EMPTY", "label": "Empty / Spacer", "icon": "border-none-variant", "group": False},
 ]
 
 DEFAULT_UTILITY = [
     {"name": "Previous", "type": "MEDIA_PREV", "icon": "skip-previous", "color": ""},
     {"name": "Play/Pause", "type": "MEDIA_PLAY", "icon": "play-pause", "color": ""},
     {"name": "Next", "type": "MEDIA_NEXT", "icon": "skip-next", "color": ""},
-    {"name": "Player", "type": "MEDIA_EJECT", "icon": "eject", "color": ""},
+    {"name": "Spotify", "type": "MEDIA_EJECT", "icon": "eject", "color": ""},
 ]
 
 DEFAULT_SLIDERS = [
@@ -51,12 +46,15 @@ DEFAULT_LAYOUT = [
 DEFAULT_GAUGES = {"source": "pc_stats", "enabled": True}
 
 _SLOT_KEYS = (
-    "name", "type", "icon", "color", "app_icon_path", "shortcut_path",
-    "entity_id", "keys", "children", "openrgb_profile",
+    "name", "type", "icon", "color", "shortcut_path", "shortcut_args", "app_icon_path", "hotkey", "keys", "entity", "entity_id", "children", "openrgb_profile",
+    "profile_id", "profile", "value", "tap_action", "show_name", "show_icon", "show_state", "use_app_icon", "show_album_art",
     "audio_input_device_id", "audio_input_device_name",
     "audio_input_device_id_alt", "audio_input_device_name_alt",
-    "audio_primary_icon", "audio_alt_icon", "profile", "value",
+    "audio_primary_icon", "audio_alt_icon",
+    "plugin", "button_id", "widget_type", "state_key", "labels", "colors", "icon_off", "description",
+    "screenshot_monitor",
 )
+
 
 
 def default_utility():
@@ -79,6 +77,8 @@ def ensure_panel_defaults(cfg):
     """Fill missing panel keys on a live config dict (mutates)."""
     if not isinstance(cfg.get("panel_board"), list):
         cfg["panel_board"] = []
+    if not isinstance(cfg.get("panel_profiles"), list):
+        cfg["panel_profiles"] = []
     if not isinstance(cfg.get("panel_utility"), list) or len(cfg["panel_utility"]) != 4:
         cfg["panel_utility"] = default_utility()
     else:
@@ -117,6 +117,15 @@ def sanitize_slot(raw, *, allow_group=True):
         slot["icon"] = "help-circle"
     if "color" not in slot:
         slot["color"] = ""
+    if btype in ("SHORTCUT", "EMPTY", "GROUP"):
+        for ek in ("entity", "plugin", "button_id", "state_key", "labels", "colors", "show_state"):
+            slot.pop(ek, None)
+    elif not slot.get("entity") and not slot.get("plugin"):
+        for ek in ("button_id", "state_key", "labels", "colors"):
+            slot.pop(ek, None)
+    if btype not in ("SHORTCUT", "GROUP"):
+        slot.pop("shortcut_path", None)
+        slot.pop("shortcut_args", None)
     if btype == "GROUP":
         kids = raw.get("children") or []
         if not isinstance(kids, list):
@@ -139,6 +148,130 @@ def sanitize_board(raw):
         if s:
             out.append(s)
     return out
+
+
+def sanitize_profiles(raw):
+    """Return a cleaned list of panel profiles."""
+    if not isinstance(raw, list):
+        return []
+    out = []
+    seen = set()
+    for i, item in enumerate(raw):
+        if not isinstance(item, dict):
+            continue
+        pid = str(item.get("id") or "").strip() or f"prof_{i + 1}"
+        if pid in seen:
+            n = 2
+            while f"{pid}_{n}" in seen:
+                n += 1
+            pid = f"{pid}_{n}"
+        seen.add(pid)
+        exe = str(item.get("exe") or "").strip()
+        name = str(item.get("name") or "").strip() or (exe or pid)
+        out.append({
+            "id": pid,
+            "name": name,
+            "exe": exe,
+            "enabled": bool(item.get("enabled", True)),
+            "board": sanitize_board(item.get("board")),
+        })
+    return out
+
+
+def foreground_exe():
+    """Basename of the foreground process exe, or None."""
+    try:
+        from win_volume import get_foreground_pid
+        pid = get_foreground_pid()
+        if not pid:
+            return None
+        import psutil
+        import os
+        name = psutil.Process(pid).name()
+        return os.path.basename(name) if name else None
+    except Exception:
+        return None
+
+
+def _running_profile_exes(profiles):
+    """Return set of lowercased exe basenames (no .exe) for profiles whose process is running."""
+    import psutil
+    running = set()
+    # Collect all running process names (basename, lowercased, without .exe)
+    try:
+        procs = {p.info["name"].lower().replace(".exe", "")
+                 for p in psutil.process_iter(["name"]) if p.info.get("name")}
+    except Exception:
+        procs = set()
+    for p in (profiles or []):
+        if not isinstance(p, dict) or not p.get("enabled", True):
+            continue
+        pexe = str(p.get("exe") or "").lower().strip().replace(".exe", "")
+        if not pexe:
+            continue
+        if pexe in procs:
+            running.add(pexe)
+    return running
+
+
+import threading
+_CACHE_LOCK = threading.Lock()
+_RESOLVE_CACHE = {"sig": None, "ts": 0.0, "board": None, "active_ids": None, "fg": None}
+_RESOLVE_TTL = 1.0
+
+
+def resolve_panel_board(cfg):
+    """Return (board, active_profile_ids, foreground_exe) for the live panel.
+
+    Default panel_board is always included first. For every enabled profile whose
+    exe process is currently running (resident in memory, regardless of focus),
+    its action tiles are appended after the default board (each padded to the next
+    12-button page boundary). Cached ~1s by the sorted running-exe signature.
+    """
+    import time as _t
+    now = _t.time()
+    fg = foreground_exe()
+    profiles = cfg.get("panel_profiles") or []
+    running = _running_profile_exes(profiles)
+    sig = tuple(sorted(running))
+
+    with _CACHE_LOCK:
+        cache = _RESOLVE_CACHE
+        if (cache["board"] is not None
+                and cache["sig"] == sig
+                and (now - cache["ts"]) < _RESOLVE_TTL):
+            return cache["board"], cache["active_ids"], cache["fg"]
+
+    PAGE = 12
+    default_board = list(cfg.get("panel_board") or [])
+    combined = list(default_board)
+    active_ids = []
+
+    for p in (profiles or []):
+        if not isinstance(p, dict) or not p.get("enabled", True):
+            continue
+        pexe = str(p.get("exe") or "").lower().strip().replace(".exe", "")
+        if not pexe or pexe not in running:
+            continue
+        profile_board = list(p.get("board") or [])
+        if not profile_board:
+            continue
+        # Pad to next 12-tile page boundary
+        rem = len(combined) % PAGE
+        if rem != 0 or len(combined) == 0:
+            pad_count = (PAGE - rem) if rem != 0 else PAGE
+            for _ in range(pad_count):
+                combined.append({"type": "EMPTY", "name": "", "icon": "border-none-variant", "color": ""})
+        combined.extend(profile_board)
+        active_ids.append(p.get("id"))
+
+    with _CACHE_LOCK:
+        cache["sig"] = sig
+        cache["ts"] = now
+        cache["board"] = combined
+        cache["active_ids"] = active_ids
+        cache["fg"] = fg
+    return combined, active_ids, fg
 
 
 def sanitize_utility(raw):
@@ -202,28 +335,8 @@ def slider_enabled(cfg, slider_id):
 
 
 def action_catalog():
-    """Builtin types + discovered plugin controls for the picker."""
-    items = list(BUILTIN_ACTIONS)
-    try:
-        import plugin_manager
-        for name, manifest in plugin_manager.discover_plugins():
-            display = manifest.get("display_name") or name
-            for ctrl in manifest.get("controls") or []:
-                cid = ctrl.get("id")
-                if not cid:
-                    continue
-                items.append({
-                    "type": f"PLUGIN:{name}:{cid}",
-                    "label": f"{display}: {ctrl.get('label') or cid}",
-                    "icon": ctrl.get("icon") or "puzzle",
-                    "group": False,
-                    "plugin": name,
-                    "control_id": cid,
-                    "fields": ctrl.get("fields") or ctrl.get("settings") or [],
-                })
-    except Exception:
-        log.debug("plugin catalog failed", exc_info=True)
-    return items
+    """Generic action types for the Button Card editor."""
+    return list(BUILTIN_ACTIONS)
 
 
 def panel_payload(cfg):
@@ -245,6 +358,7 @@ def panel_payload(cfg):
             pass
     return {
         "panel_board": cfg.get("panel_board") or [],
+        "panel_profiles": cfg.get("panel_profiles") or [],
         "panel_utility": cfg.get("panel_utility") or default_utility(),
         "panel_sliders": cfg.get("panel_sliders") or default_sliders(),
         "panel_layout": cfg.get("panel_layout") or default_layout(),
@@ -261,6 +375,13 @@ def apply_panel_save(cfg, body):
         return cfg
     if "panel_board" in body:
         cfg["panel_board"] = sanitize_board(body["panel_board"])
+        _RESOLVE_CACHE["ts"] = 0.0
+        _RESOLVE_CACHE["board"] = None
+    if "panel_profiles" in body:
+        cfg["panel_profiles"] = sanitize_profiles(body["panel_profiles"])
+        # Invalidate resolve cache so the next live poll picks up the edit.
+        _RESOLVE_CACHE["ts"] = 0.0
+        _RESOLVE_CACHE["board"] = None
     if "panel_utility" in body:
         cfg["panel_utility"] = sanitize_utility(body["panel_utility"])
     if "panel_sliders" in body:

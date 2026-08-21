@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Iris" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <!-- Full-screen dark theme without action bar -->
+        <item name="android:statusBarColor">#48B2E9</item>
+        <item name="android:navigationBarColor">#0C0D0F</item>
+        <item name="android:windowBackground">#0C0D0F</item>
+    </style>
+</resources>

@@ -6,6 +6,7 @@ itself is excluded from targeting, so the slider keeps controlling the last
 real foreground app while the panel is focused.
 """
 
+import contextlib
 import ctypes
 import logging
 import os
@@ -16,6 +17,25 @@ import time
 import win_resolver
 
 log = logging.getLogger("iris.volume")
+
+
+@contextlib.contextmanager
+def _com_session():
+    import comtypes
+    init = False
+    try:
+        comtypes.CoInitialize()
+        init = True
+    except Exception:
+        pass
+    try:
+        yield
+    finally:
+        if init:
+            try:
+                comtypes.CoUninitialize()
+            except Exception:
+                pass
 
 # Foreground PIDs of Iris-owned processes are ignored (panel/WebView2/app).
 _SELF_NAMES = {
@@ -134,8 +154,8 @@ def find_session(pid, name=None):
     try:
         import comtypes
         from pycaw.utils import AudioUtilities
-        comtypes.CoInitialize()
-        sessions = AudioUtilities.GetAllSessions()
+        with _com_session():
+            sessions = AudioUtilities.GetAllSessions()
     except Exception as e:
         log.debug("[volume] find_session: %s", e)
         return None
@@ -226,8 +246,8 @@ def list_sessions():
         import comtypes
         from pycaw.utils import AudioUtilities
         from pycaw.constants import AudioSessionState
-        comtypes.CoInitialize()
-        all_sessions = AudioUtilities.GetAllSessions()
+        with _com_session():
+            all_sessions = AudioUtilities.GetAllSessions()
     except Exception as e:
         log.debug("[volume] list_sessions enumerate: %s", e)
         return sessions
@@ -261,6 +281,7 @@ def list_sessions():
             sessions.append({
                 "pid": pid,
                 "name": name,
+                "exe": os.path.basename(exe_path) if exe_path else None,
                 "volume": vol,
                 "mute": mute,
                 "active": active,
@@ -300,13 +321,13 @@ def _find_session_by_pid(pid):
     try:
         import comtypes
         from pycaw.utils import AudioUtilities
-        comtypes.CoInitialize()
-        for s in AudioUtilities.GetAllSessions():
-            try:
-                if s.ProcessId == pid:
-                    return s
-            except Exception:
-                continue
+        with _com_session():
+            for s in AudioUtilities.GetAllSessions():
+                try:
+                    if s.ProcessId == pid:
+                        return s
+                except Exception:
+                    continue
     except Exception as e:
         log.debug("[volume] find_session_by_pid: %s", e)
     return None
@@ -349,14 +370,14 @@ def get_master_state():
     try:
         import comtypes
         from pycaw.utils import AudioUtilities
-        comtypes.CoInitialize()
-        speakers = AudioUtilities.GetSpeakers()
-        if speakers is None:
-            return {"volume": None}
-        epv = speakers.EndpointVolume
-        if epv is None:
-            return {"volume": None}
-        return {"volume": round(epv.GetMasterVolumeLevelScalar() * 100)}
+        with _com_session():
+            speakers = AudioUtilities.GetSpeakers()
+            if speakers is None:
+                return {"volume": None}
+            epv = speakers.EndpointVolume
+            if epv is None:
+                return {"volume": None}
+            return {"volume": round(epv.GetMasterVolumeLevelScalar() * 100)}
     except Exception as e:
         log.debug("[volume] get master: %s", e)
         return {"volume": None}
@@ -367,15 +388,15 @@ def set_master_volume(value):
     try:
         import comtypes
         from pycaw.utils import AudioUtilities
-        comtypes.CoInitialize()
-        speakers = AudioUtilities.GetSpeakers()
-        if speakers is None:
-            return False
-        epv = speakers.EndpointVolume
-        if epv is None:
-            return False
-        epv.SetMasterVolumeLevelScalar(max(0.0, min(1.0, value / 100.0)), None)
-        return True
+        with _com_session():
+            speakers = AudioUtilities.GetSpeakers()
+            if speakers is None:
+                return False
+            epv = speakers.EndpointVolume
+            if epv is None:
+                return False
+            epv.SetMasterVolumeLevelScalar(max(0.0, min(1.0, value / 100.0)), None)
+            return True
     except Exception as e:
         log.debug("[volume] set master: %s", e)
         return False

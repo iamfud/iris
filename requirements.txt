@@ -31,3 +31,9 @@ pywebview>=4.0
 
 # LAN access QR code
 qrcode>=7.4
+
+# HTTPS panel (self-signed cert generation for Screen Wake Lock on phones)
+cryptography>=42.0
+
+# Panel pairing password (Argon2id hashing)
+argon2-cffi>=23.1.0

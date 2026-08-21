@@ -24,6 +24,7 @@ log = logging.getLogger("iris.display")
 
 # Text channel kinds
 _KIND_NOTIFY = "notify"
+_KIND_EVENT = "event"
 _KIND_ALERT = "alert"
 _KIND_STICKY = "sticky"
 
@@ -58,22 +59,102 @@ class DisplayManager:
 
     # ── Public intent API ──────────────────────────────────────
 
-    def notify(self, key, title, message, priority=PRIO_PLUGIN_NOTIFY, style="normal"):
-        """Transient scrolling/static message.
-
-        ``style``: ``normal`` (5×7) or ``emphasis`` (device big-font path).
-        Same ``key`` replaces an in-flight text intent with that key.
+    def notify(self, key, title, message, priority=PRIO_PLUGIN_NOTIFY, style="normal", theme="purple"):
+        """Persistent inbox notification (Purple theme by default).
+        
+        ``style``: ``normal`` (5x7) or ``emphasis`` (device big-font path).
+        ``theme``: ``purple`` (standard), ``alert`` (red rapid-flash toast),
+        ``green`` or ``red``.  Same ``key`` replaces an in-flight text intent
+        with that key.
         """
         key = self._norm_key(key)
         title = self._clean(title, 60)
         message = self._clean(message, 120)
         display = self._display_text(title, message)
         now = time.monotonic()
+        now_ts = time.time()
+
+        raw_key = str(key or "")
+        parts = [p.capitalize() for p in raw_key.replace(":", ".").split(".") if p]
+        app_name = parts[0] if parts and parts[0].lower() not in ("notify", "core", "plugin", "") else "Plugin"
+
+        try:
+            import notifications_store
+            import ws_bridge
+            import panel_runtime
+            res = notifications_store.add_notification(app_name, title, message, theme=theme, timestamp=now_ts)
+            if res.get("demoted"):
+                ws_bridge.broadcast({
+                    "type": "event",
+                    "app": app_name,
+                    "title": title,
+                    "body": message,
+                    "status": "info",
+                    "timestamp": now_ts,
+                })
+            elif res.get("ok"):
+                notif = res["notification"]
+                panel_runtime._set_plugin_toast(notif)
+                ws_bridge.broadcast({
+                    "type": "notification",
+                    **notif
+                })
+        except Exception as ex:
+            log.debug("[display_mgr] error saving notification: %s", ex)
+
         intent = {
             "kind": _KIND_NOTIFY,
             "key": key,
             "title": title,
             "message": message,
+            "display": display,
+            "priority": int(priority),
+            "style": "emphasis" if style == "emphasis" else "normal",
+            "until": now + self._notify_duration_s(display),
+        }
+        self._submit_text(intent, now)
+
+    def event(self, key, title, message, status="good", priority=PRIO_PLUGIN_NOTIFY, style="normal"):
+        """Transient event (Green/Red theme, 5s on phone panel, gone for good).
+        
+        ``status``: ``good`` (Green) or ``bad`` (Red) or ``info``.
+        """
+        key = self._norm_key(key)
+        title = self._clean(title, 60)
+        message = self._clean(message, 120)
+        display = self._display_text(title, message)
+        norm_status = "good" if str(status).lower() in ("good", "success", "ok", "positive") else (
+            "bad" if str(status).lower() in ("bad", "danger", "warning", "alert", "error") else "info"
+        )
+        now = time.monotonic()
+        now_ts = time.time()
+
+        raw_key = str(key or "")
+        parts = [p.capitalize() for p in raw_key.replace(":", ".").split(".") if p]
+        app_name = parts[0] if parts and parts[0].lower() not in ("notify", "core", "plugin", "") else "Plugin"
+
+        try:
+            import notifications_store
+            import ws_bridge
+            rule = notifications_store.get_source_rule(app_name)
+            if rule != "muted":
+                ws_bridge.broadcast({
+                    "type": "event",
+                    "app": app_name,
+                    "title": title,
+                    "body": message,
+                    "status": norm_status,
+                    "timestamp": now_ts,
+                })
+        except Exception as ex:
+            log.debug("[display_mgr] error broadcasting event: %s", ex)
+
+        intent = {
+            "kind": _KIND_EVENT,
+            "key": key,
+            "title": title,
+            "message": message,
+            "status": norm_status,
             "display": display,
             "priority": int(priority),
             "style": "emphasis" if style == "emphasis" else "normal",

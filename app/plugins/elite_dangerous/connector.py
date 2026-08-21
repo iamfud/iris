@@ -171,6 +171,12 @@ class EDConnector:
 
     def _on_status(self, flags):
         with self._lock:
+            # shields_up is driven by the journal ShieldState event. Status.json's
+            # Flags bit 0x08 can lag the event during shield regeneration, so a
+            # stale "down" value here would produce a spurious down-blip right as
+            # shields come back online. Exclude it from the flag snapshot; the
+            # journal is authoritative for this key.
+            flags.pop("shields_up", None)
             self._status.update(flags)
 
 

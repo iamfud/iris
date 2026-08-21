@@ -31,7 +31,7 @@ class StepSlider:
     """Windows 11-style horizontal slider that snaps to discrete steps."""
     _TRACK_H = 6
     _THUMB_R = 10
-    _H       = 28
+    _H       = 24
     _PX      = 12
 
     def __init__(self, parent, steps, var, on_change=None, bg=BG_CARD,
@@ -93,9 +93,23 @@ class StepSlider:
         n  = len(self._steps)
         tx = px + tw * self._idx() // max(n - 1, 1)
 
+        grad_a = (178, 58, 246)     # #B23AF6
+        grad_b = (121, 232, 252)    # #79E8FC
+
+        def _lerp(t):
+            t = max(0.0, min(1.0, t))
+            col = tuple(int(grad_a[i] + (grad_b[i] - grad_a[i]) * t) for i in range(3))
+            return "#%02x%02x%02x" % col
+
         self._rtrack(px, py, w - px, r, self._track_bg)
         if tx > px:
-            self._rtrack(px, py, tx, r, self._track_fill)
+            span = tx - px
+            cols = max(2, int(span))
+            for i in range(cols):
+                x0 = px + span * i / cols
+                x1 = px + span * (i + 1) / cols
+                cv.create_line(x0, py, x1, py, width=self._TRACK_H,
+                               capstyle="round", fill=_lerp(i / (cols - 1)))
         if self._thumb_img is None:
             self._thumb_img = self._make_thumb()
         cv.create_image(tx, py, anchor="center", image=self._thumb_img)
@@ -148,7 +162,7 @@ class CircularGauge(tk.Canvas):
         super().__init__(parent, width=size, height=size, bg=bg, highlightthickness=0, bd=0, **kw)
         self.label = label
         self.max_value = max(1.0, float(max_value))
-        self.unit = unit
+        self.unit = unit.replace("\u00b0", "")
         self.size = size
         self.thickness = thickness if thickness is not None else max(3, size // 10)
         self._value = None
@@ -162,6 +176,10 @@ class CircularGauge(tk.Canvas):
         self.max_value = max(1.0, float(max_value))
         self._draw(self._value_text(self._value))
 
+    def set_unit(self, unit):
+        self.unit = unit.replace("\u00b0", "")
+        self._draw(self._value_text(self._value))
+
     def set_value(self, value):
         self._value = value
         text = self._value_text(value)
@@ -172,7 +190,7 @@ class CircularGauge(tk.Canvas):
     def _value_text(self, value):
         if value is None:
             return "\u2014"
-        return f"{int(round(value))}{self.unit}"
+        return f"{int(round(value))}"
 
     def _gauge_color(self, ratio):
         if not self.unit:
@@ -204,6 +222,11 @@ class CircularGauge(tk.Canvas):
 
         start = 135
         sweep = 270
+        grad_a = (178, 58, 246)     # #B23AF6
+        grad_b = (121, 232, 252)    # #79E8FC
+
+        def _lerp(t):
+            return tuple(int(grad_a[i] + (grad_b[i] - grad_a[i]) * t) for i in range(3)) + (255,)
 
         d.arc((x0, y0, x1, y1), start=start, end=start + sweep,
               fill=_rgb(BG_CARD) + (255,), width=thick)
@@ -212,17 +235,21 @@ class CircularGauge(tk.Canvas):
         if self._value is not None:
             v = max(0.0, min(float(self._value), self.max_value))
             ratio = v / self.max_value
-            col = _rgb(self._gauge_color(ratio)) + (255,)
-            d.arc((x0, y0, x1, y1), start=start, end=start + sweep * ratio,
-                  fill=col, width=thick)
+            span = sweep * ratio
+            n = max(1, int(round(span / 4)))
+            for i in range(n):
+                a0 = start + span * i / n
+                a1 = start + span * (i + 1) / n
+                d.arc((x0, y0, x1, y1), start=a0, end=a1,
+                      fill=_lerp(i / n), width=thick)
 
-        val_font = _load_font("Segoe UI", max(8, int(self.size * 0.22 * scale)))
+        val_font = _load_font("Segoe UI", max(8, int(self.size * 0.22 * scale)), bold=True)
         sub_font = _load_font("Segoe UI", max(6, int(self.size * 0.12 * scale)))
         cx = cy = (self.size * scale) // 2
 
         vb = d.textbbox((0, 0), center_text, font=val_font)
-        d.text((cx - (vb[2] - vb[0]) // 2, cy - 8 * scale - (vb[3] - vb[1]) // 2),
-               center_text, fill=_rgb(NEON) + (255,), font=val_font)
+        d.text((cx - (vb[2] - vb[0]) // 2, cy - 5 * scale - (vb[3] - vb[1]) // 2),
+               center_text, fill=(255, 255, 255, 255), font=val_font)
 
         lb = d.textbbox((0, 0), self.label, font=sub_font)
         d.text((cx - (lb[2] - lb[0]) // 2, h - (lb[3] - lb[1]) - 4 * scale),
@@ -244,11 +271,12 @@ class RoundedButton(tk.Canvas):
 
     def __init__(self, parent, text="", command=None, style="sec",
                  radius=6, fg=None, bg=None, hover=None,
-                 font=None, padx=14, pady=7, **kw):
+                 font=None, padx=14, pady=7, icon=None, **kw):
         import tkinter.font as _tkf
         self._command = command
         self._radius  = radius
         self._text    = text
+        self._icon    = icon      # MDI char or None
         self._font    = font or FONT_SM
         self._inside  = False
         self._disabled = False
@@ -274,11 +302,15 @@ class RoundedButton(tk.Canvas):
         except Exception:
             self._pbg = BG
 
-        _f  = _tkf.Font(font=self._font)
-        tw  = _f.measure(text)
-        th  = _f.metrics("linespace")
-        w   = tw + padx * 2
-        h   = th + pady * 2
+        if self._icon:
+            w = _tkf.Font(font=self._font).metrics("linespace") + padx * 2
+            h = w
+        else:
+            _f  = _tkf.Font(font=self._font)
+            tw  = _f.measure(text)
+            th  = _f.metrics("linespace")
+            w   = tw + padx * 2
+            h   = th + pady * 2
 
         super().__init__(parent, width=w, height=h,
                          highlightthickness=0, bd=0,
@@ -331,7 +363,15 @@ class RoundedButton(tk.Canvas):
             self._img = cached
             self.delete("all")
             self.create_image(0, 0, anchor="nw", image=self._img)
-            self.create_text(w // 2, h // 2, text=self._text, fill=self._fg, font=self._font)
+            if self._icon:
+                import mdi_icons
+                _rgb = self._parse(self._fg)
+                icon_photo = mdi_icons.render_tk(self._icon, int(h * 0.5), _rgb)
+                if icon_photo:
+                    self._icon_photo = icon_photo
+                    self.create_image(w // 2, h // 2, image=icon_photo)
+            else:
+                self.create_text(w // 2, h // 2, text=self._text, fill=self._fg, font=self._font)
             return
 
         sw, sh = w * scale, h * scale
@@ -350,7 +390,15 @@ class RoundedButton(tk.Canvas):
         self._render_cache[cache_key] = self._img
         self.delete("all")
         self.create_image(0, 0, anchor="nw", image=self._img)
-        self.create_text(w // 2, h // 2, text=self._text, fill=self._fg, font=self._font)
+        if self._icon:
+            import mdi_icons
+            _rgb = self._parse(self._fg)
+            icon_photo = mdi_icons.render_tk(self._icon, int(h * 0.5), _rgb)
+            if icon_photo:
+                self._icon_photo = icon_photo
+                self.create_image(w // 2, h // 2, image=icon_photo)
+        else:
+            self.create_text(w // 2, h // 2, text=self._text, fill=self._fg, font=self._font)
 
     @staticmethod
     def _parse(hex_color):

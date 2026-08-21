@@ -12,6 +12,7 @@ import os
 import re
 import secrets
 import socket
+import ssl
 import threading
 import time
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
@@ -269,8 +270,13 @@ async def _serve_ws(port):
 def _bind_host():
     """Return the bind host for HTTP/WS: loopback unless LAN access is on."""
     try:
-        if _app is not None and _app.cfg.get("lan_access"):
-            return "0.0.0.0"
+        if _app is not None:
+            if _app.cfg.get("lan_access", True):
+                return "0.0.0.0"
+        else:
+            from config import load_config
+            if load_config().get("lan_access", True):
+                return "0.0.0.0"
     except Exception:
         pass
     return "127.0.0.1"
@@ -311,13 +317,7 @@ def _lan_url():
 
 
 def _lan_pair_url():
-    """Pairing URL encoded in the on-screen QR code.
-
-    The URL carries the access token directly. Scanning it opens
-    /pair?token=... on the phone, which authorizes the scan and registers the
-    phone as a persistent paired device. Only ever rendered into the QR image
-    (loopback-served), never returned in API JSON responses.
-    """
+    """Pairing URL encoded in the on-screen QR code."""
     host = _lan_ip()
     if _is_loopback_mode():
         host = "127.0.0.1"
@@ -354,6 +354,17 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             part = part.strip()
             if part.startswith("iris_session="):
                 return part[len("iris_session="):]
+        hdr = self.headers.get("X-Iris-Session", "") or self.headers.get("X-Iris-Token", "")
+        if hdr:
+            return hdr
+        if "?" in self.path:
+            from urllib.parse import urlparse, parse_qs
+            try:
+                qs = parse_qs(urlparse(self.path).query)
+                if "session" in qs and qs["session"]:
+                    return qs["session"][0]
+            except Exception:
+                pass
         return ""
 
     def _is_loopback_peer(self):
@@ -366,19 +377,31 @@ class _RequestHandler(SimpleHTTPRequestHandler):
     def _authorized(self):
         """True when the request is allowed to reach the panel and API.
 
-        Local (loopback) peers are fully trusted — they are the desktop panel
-        window and browsers on the same machine. Remote peers must present
-        either the auth token header or a valid login session cookie.
+        Validates session cookie, X-Iris-Token header, or loopback requests
+        (ensuring Origin header is not an external web domain).
         """
-        try:
-            if _is_loopback_address(self.client_address[0]):
-                return True
-        except Exception:
-            pass
         provided = self.headers.get("X-Iris-Token", "")
         if provided and hmac.compare_digest(provided, _HTTP_TOKEN):
             return True
-        return _valid_session(self._session_cookie())
+        if _valid_session(self._session_cookie()):
+            return True
+
+        try:
+            if _is_loopback_address(self.client_address[0]):
+                origin = self.headers.get("Origin", "")
+                if origin:
+                    from urllib.parse import urlparse
+                    try:
+                        op = urlparse(origin)
+                        if op.hostname not in ("127.0.0.1", "localhost", "::1"):
+                            return False
+                    except Exception:
+                        return False
+                return True
+        except Exception:
+            pass
+
+        return False
 
     def _host_ok(self):
         """Block DNS-rebinding in loopback mode: Host must be a loopback name."""
@@ -401,22 +424,25 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "font-src 'self' data: https://fonts.gstatic.com; "
         "img-src 'self' data: blob:; "
-        "connect-src 'self'; "
+        "connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com; "
         "media-src 'self'; "
+        "frame-src 'self'; "
         "base-uri 'none'; "
         "form-action 'none'; "
-        "frame-ancestors 'none'"
+        "frame-ancestors 'self'"
     )
 
     def end_headers(self):
         try:
-            self.send_header("Cache-Control", "no-store")
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
         except Exception:
             pass
         try:
             self.send_header("Content-Security-Policy", self._CSP)
             self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("X-Frame-Options", "DENY")
+            self.send_header("X-Frame-Options", "SAMEORIGIN")
             self.send_header("Referrer-Policy", "no-referrer")
         except Exception:
             pass
@@ -455,6 +481,8 @@ class _RequestHandler(SimpleHTTPRequestHandler):
                 self._send_json({"ok": False})
             else:
                 self._send_json({"ok": True, "devices": _get_devices()})
+        elif self.path == "/api/keyboard/devices":
+            self._handle_keyboard_devices()
         elif self.path == "/api/sounds":
             self._send_json(_get_sounds())
         elif self.path.startswith("/api/sounds/preview/"):
@@ -463,6 +491,8 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             self._handle_sound_stop()
         elif self.path == "/api/vision/sensors":
             self._send_json(_get_vision_sensors())
+        elif self.path == "/api/screenshot/latest":
+            self._handle_screenshot_latest()
         elif self.path == "/api/volume/master":
             self._send_json(_get_master_volume())
         elif self.path == "/api/volume":
@@ -471,22 +501,43 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             self._send_json(_get_panel())
         elif self.path == "/api/panel/live":
             self._send_json(_get_panel_live())
+        elif self.path == "/api/panel/password/status":
+            self._handle_password_status()
+        elif self.path == "/api/panel/entities":
+            self._handle_panel_entities()
+        elif self.path.startswith("/api/panel/icon-meta"):
+            self._handle_panel_icon_meta()
         elif self.path.startswith("/api/panel/icon"):
             self._handle_panel_icon()
+        elif self.path.startswith("/api/mdi/search"):
+            self._handle_mdi_search()
         elif self.path == "/api/mdi/font":
             self._serve_mdi_font()
         elif self.path.startswith("/api/mdi/codepoints"):
             self._handle_mdi_codepoints()
+        elif self.path.startswith("/api/media/players"):
+            self._handle_media_players()
+        elif self.path.startswith("/api/media/art"):
+            self._handle_media_art()
+        elif self.path.startswith("/api/dialog/browse"):
+            self._handle_dialog_browse()
+        elif self.path == "/api/notifications" or self.path.startswith("/api/notifications?"):
+            self._handle_get_notifications()
         elif self.path.startswith("/media/"):
             self._serve_media(self.path[7:])
         elif self.path.startswith("/pair"):
             self._handle_pair()
-        elif self.path in ("/", "/index.html", "/login"):
+        elif self.path.split("?")[0] in ("/", "/index.html", "/login"):
             self._serve_index()
+        elif self.path.split("?")[0] in ("/Iris.apk", "/download"):
+            self._serve_apk()
         else:
             super().do_GET()
 
     def do_POST(self):
+        if self.path == "/login":
+            self._handle_login()
+            return
         if self.path == "/api/devices/revoke":
             self._handle_device_revoke()
             return
@@ -496,6 +547,8 @@ class _RequestHandler(SimpleHTTPRequestHandler):
                 return
         if self.path == "/api/config":
             self._handle_save_config()
+        elif self.path == "/api/keyboard/target_device":
+            self._handle_keyboard_set_target()
         elif self.path.startswith("/api/plugins/config/"):
             self._handle_save_plugin_config(self.path.split("/")[-1])
         elif self.path.startswith("/api/plugins/") and "/outputs" in self.path:
@@ -518,6 +571,20 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         elif self.path.startswith("/api/vision/sensors/"):
             sensor_id = self.path.split("/")[-1]
             self._handle_vision_update_sensor(sensor_id)
+        elif self.path == "/api/notifications/delete":
+            self._handle_notification_delete()
+        elif self.path == "/api/notifications/clear":
+            self._handle_notification_clear()
+        elif self.path == "/api/portal/reload":
+            self._handle_portal_reload()
+        elif self.path == "/api/notifications/archive":
+            self._handle_notification_archive()
+        elif self.path == "/api/notifications/archive-all":
+            self._handle_notification_archive_all()
+        elif self.path == "/api/notifications/rule":
+            self._handle_notification_rule()
+        elif self.path == "/api/notifications/settings":
+            self._handle_notification_settings()
         elif self.path == "/api/volume/master":
             self._handle_master_volume_set()
         elif self.path == "/api/volume/session":
@@ -526,14 +593,43 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             self._handle_volume_set()
         elif self.path == "/api/panel":
             self._handle_save_panel()
+        elif self.path == "/api/panel/export_buttons":
+            self._handle_panel_export_buttons()
         elif self.path == "/api/panel/action":
             self._handle_panel_action()
         elif self.path == "/api/panel/brightness":
             self._handle_panel_brightness()
         elif self.path == "/api/panel/core":
             self._handle_panel_core()
+        elif self.path == "/api/panel/password":
+            self._handle_save_panel_password()
+        elif self.path == "/api/open_url":
+            self._handle_open_url()
         else:
             self.send_error(404)
+
+    def _handle_keyboard_devices(self):
+        try:
+            from keyboard_service import keyboard_service
+            self._send_json({
+                "ok": True,
+                "driver_status": keyboard_service.driver_status,
+                "target_device": keyboard_service.target_device,
+                "devices": keyboard_service.get_devices()
+            })
+        except Exception as ex:
+            self._send_json({"ok": False, "error": str(ex)})
+
+    def _handle_keyboard_set_target(self):
+        try:
+            body = self._read_json()
+            slot = int(body.get("slot", 1))
+            from keyboard_service import keyboard_service
+            keyboard_service.set_target_device(slot)
+            self._send_json({"ok": True, "target_device": keyboard_service.target_device})
+        except Exception as ex:
+            self._send_json({"ok": False, "error": str(ex)})
+
 
     def do_OPTIONS(self):
         self.send_response(200)
@@ -603,9 +699,18 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             self.wfile.write(body)
             return
         tok = secrets.token_urlsafe(32)
+        ua = self.headers.get("User-Agent", "")
+        existing_key = None
+        for k, d in list(_DEVICES.items()):
+            if isinstance(d, dict) and d.get("ua") == ua:
+                existing_key = k
+                break
+        if existing_key:
+            _DEVICES.pop(existing_key, None)
+
         _DEVICES[_token_hash(tok)] = {
             "exp": time.time() + _DEVICE_TTL,
-            "ua": self.headers.get("User-Agent", ""),
+            "ua": ua,
             "created": time.time(),
             "last_seen": time.time(),
         }
@@ -613,9 +718,228 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         self.send_response(302)
         self.send_header("Location", "/")
         self.send_header("Set-Cookie",
-                         f"iris_session={tok}; HttpOnly; SameSite=Strict; Path=/; Max-Age={_DEVICE_TTL}")
+                         f"iris_session={tok}; SameSite=Lax; Path=/; Max-Age={_DEVICE_TTL}")
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
+
+    def _handle_login(self):
+        """Handle POST /login with panel password verification."""
+        try:
+            import panel_auth
+        except Exception:
+            self._send_json({"ok": False, "error": "password_unavailable"}, status=500)
+            return
+
+        if not panel_auth.password_available():
+            self._send_json({"ok": False, "error": "password_unavailable"}, status=400)
+            return
+
+        length = int(self.headers.get("Content-Length", 0))
+        body_raw = self.rfile.read(length) if length > 0 else b""
+        try:
+            body = json.loads(body_raw.decode("utf-8")) if body_raw else {}
+        except Exception:
+            body = {}
+
+        password = body.get("password", "")
+        if not password:
+            self._send_json({"ok": False, "error": "empty_password"}, status=400)
+            return
+
+        cfg = _app.cfg if _app is not None else {}
+        if not cfg:
+            try:
+                from config import load_config
+                cfg = load_config()
+            except Exception:
+                pass
+
+        stored_hash = cfg.get("panel_password_hash", "")
+        if not stored_hash:
+            self._send_json({"ok": False, "error": "no_password"}, status=400)
+            return
+
+        if not panel_auth.verify_password(stored_hash, password):
+            self._send_json({"ok": False, "error": "incorrect_password"}, status=401)
+            return
+
+        ua = self.headers.get("User-Agent", "")
+        existing_key = None
+        for k, d in list(_DEVICES.items()):
+            if isinstance(d, dict) and d.get("ua") == ua:
+                existing_key = k
+                break
+        if existing_key:
+            _DEVICES.pop(existing_key, None)
+
+        tok = secrets.token_urlsafe(32)
+        _DEVICES[_token_hash(tok)] = {
+            "exp": time.time() + _DEVICE_TTL,
+            "ua": ua,
+            "created": time.time(),
+            "last_seen": time.time(),
+        }
+        _save_devices()
+
+        res_bytes = json.dumps({"ok": True, "token": tok}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(res_bytes)))
+        self.send_header("Set-Cookie", f"iris_session={tok}; SameSite=Lax; Path=/; Max-Age={_DEVICE_TTL}")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(res_bytes)
+
+    def _handle_password_status(self):
+        """Return {"ok": true, "available": bool, "set": bool} for password configurator."""
+        try:
+            import panel_auth
+            avail = panel_auth.password_available()
+        except Exception:
+            avail = False
+
+        cfg = _app.cfg if _app is not None else {}
+        if not cfg:
+            try:
+                from config import load_config
+                cfg = load_config()
+            except Exception:
+                pass
+
+        has_pw = bool(cfg.get("panel_password_hash"))
+        self._send_json({"ok": True, "available": avail, "set": has_pw})
+
+    def _handle_save_panel_password(self):
+        """Handle POST /api/panel/password to set or update the Argon2id hash."""
+        try:
+            import panel_auth
+        except Exception:
+            self._send_json({"ok": False, "error": "password_unavailable"})
+            return
+
+        if not panel_auth.password_available():
+            self._send_json({"ok": False, "error": "password_unavailable"})
+            return
+
+        length = int(self.headers.get("Content-Length", 0))
+        body_raw = self.rfile.read(length) if length > 0 else b""
+        try:
+            body = json.loads(body_raw.decode("utf-8")) if body_raw else {}
+        except Exception:
+            body = {}
+
+        new_pw = (body.get("password") or "").strip()
+        cur_pw = body.get("current") or body.get("current_password") or ""
+
+        cfg = _app.cfg if _app is not None else {}
+        if not cfg:
+            try:
+                from config import load_config
+                cfg = load_config()
+            except Exception:
+                pass
+
+        stored_hash = cfg.get("panel_password_hash", "")
+
+        if stored_hash:
+            if not cur_pw or not panel_auth.verify_password(stored_hash, cur_pw):
+                self._send_json({"ok": False, "error": "incorrect current password"})
+                return
+
+        if not new_pw or len(new_pw) < panel_auth.MIN_PASSWORD_LEN:
+            self._send_json({"ok": False, "error": "too_short", "min_length": panel_auth.MIN_PASSWORD_LEN})
+            return
+
+        from config import save_config
+        new_hash = panel_auth.hash_password(new_pw)
+        if _app is not None:
+            _app.cfg["panel_password_hash"] = new_hash
+            save_config(_app.cfg)
+        else:
+            from config import load_config
+            c = load_config()
+            c["panel_password_hash"] = new_hash
+            save_config(c)
+
+        self._send_json({"ok": True, "set": True})
+
+    def _handle_get_notifications(self):
+        try:
+            import notifications_store
+            data = notifications_store.get_notifications()
+            self._send_json({"ok": True, **data})
+        except Exception as e:
+            self._send_json({"ok": False, "error": str(e)})
+
+    def _handle_notification_delete(self):
+        try:
+            body = self._read_json() or {}
+            notif_id = body.get("id")
+            if not notif_id:
+                self._send_json({"ok": False, "error": "missing id"})
+                return
+            import notifications_store
+            res = notifications_store.delete_notification(notif_id)
+            self._send_json({"ok": res})
+        except Exception as e:
+            self._send_json({"ok": False, "error": str(e)})
+
+    def _handle_notification_clear(self):
+        try:
+            body = self._read_json() or {}
+            include_archived = bool(body.get("include_archived", False))
+            import notifications_store
+            res = notifications_store.delete_all(include_archived)
+            self._send_json({"ok": res})
+        except Exception as e:
+            self._send_json({"ok": False, "error": str(e)})
+
+    def _handle_notification_archive(self):
+        try:
+            body = self._read_json() or {}
+            notif_id = body.get("id")
+            archived = bool(body.get("archived", True))
+            if not notif_id:
+                self._send_json({"ok": False, "error": "missing id"})
+                return
+            import notifications_store
+            res = notifications_store.set_archived(notif_id, archived)
+            self._send_json({"ok": res})
+        except Exception as e:
+            self._send_json({"ok": False, "error": str(e)})
+
+    def _handle_notification_archive_all(self):
+        try:
+            import notifications_store
+            res = notifications_store.archive_all()
+            self._send_json({"ok": res})
+        except Exception as e:
+            self._send_json({"ok": False, "error": str(e)})
+
+    def _handle_notification_rule(self):
+        try:
+            body = self._read_json() or {}
+            source = body.get("source")
+            rule = body.get("rule", "normal")
+            if not source:
+                self._send_json({"ok": False, "error": "missing source"})
+                return
+            import notifications_store
+            notifications_store.set_source_rule(source, rule)
+            self._send_json({"ok": True, "rules": notifications_store.get_source_rules()})
+        except Exception as e:
+            self._send_json({"ok": False, "error": str(e)})
+
+    def _handle_notification_settings(self):
+        try:
+            body = self._read_json() or {}
+            max_stored = body.get("max_stored")
+            if max_stored is not None:
+                import notifications_store
+                notifications_store.set_max_stored(max_stored)
+            self._send_json({"ok": True})
+        except Exception as e:
+            self._send_json({"ok": False, "error": str(e)})
 
     def _serve_index(self):
         """Serve the settings panel, or the pairing info page if unauthorized."""
@@ -656,6 +980,26 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(html)
 
+    def _serve_apk(self):
+        """Serve the compiled Android APK file with attachment headers."""
+        apk_path = os.path.join(self.directory, "Iris.apk")
+        if not os.path.isfile(apk_path):
+            self.send_error(404, "Iris.apk not found")
+            return
+        try:
+            with open(apk_path, "rb") as f:
+                data = f.read()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/vnd.android.package-archive")
+            self.send_header("Content-Disposition", "attachment; filename=\"Iris.apk\"")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(data)
+        except Exception as e:
+            log.warning("[http] failed to serve APK: %s", e)
+            self.send_error(500)
+
     def _handle_device_revoke(self):
         """Revoke a paired device by id. Loopback-only (desktop panel)."""
         if not self._is_loopback_peer():
@@ -691,6 +1035,14 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _handle_portal_reload(self):
+        try:
+            broadcast({"type": "reload", "hard": True})
+            self._send_json({"ok": True})
+        except Exception as e:
+            log.warning("[http] portal reload broadcast failed: %s", e)
+            self.send_error(500, str(e))
+
     def _handle_save_config(self):
         try:
             length = int(self.headers.get("Content-Length", 0))
@@ -699,6 +1051,14 @@ class _RequestHandler(SimpleHTTPRequestHandler):
                 self.send_error(503, "App not registered")
                 return
             from config import save_config
+            # MAX7219 brightness is applied live to the hardware (saved + pushed
+            # to the display), not just stored — do it before the generic cfg
+            # update so _set_brightness still sees the previous value.
+            if "brightness" in body:
+                try:
+                    _app._set_brightness(max(0, min(4, int(body["brightness"]))))
+                except Exception:
+                    log.warning("[http] failed to apply brightness: %s", body.get("brightness"))
             body = {k: v for k, v in body.items()
                     if k not in ("http_token", "lan_url",
                                  "panel_password", "panel_password_hash",
@@ -706,6 +1066,8 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             _app.cfg.update(body)
             save_config(_app.cfg)
             self._push_config_to_device(body)
+            if "theme" in body:
+                broadcast({"type": "theme", "theme": body["theme"], "reload": True})
             self._send_json({"ok": True})
         except Exception as e:
             log.warning("[http] save config failed: %s", e)
@@ -733,38 +1095,42 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         import time as _t
         import threading
 
+        if not hasattr(self, "_SERIAL_PUSH_LOCK"):
+            self._SERIAL_PUSH_LOCK = threading.Lock()
+
         def _send():
-            try:
-                for key_pair in self._FEATURE_KEYS:
-                    key = key_pair[0] if isinstance(key_pair, (list, tuple)) else key_pair
-                    if key in body:
-                        val = "1" if body[key] else "0"
-                        serial_sender.set_live(key, val)
+            with self._SERIAL_PUSH_LOCK:
+                try:
+                    for key_pair in self._FEATURE_KEYS:
+                        key = key_pair[0] if isinstance(key_pair, (list, tuple)) else key_pair
+                        if key in body:
+                            val = "1" if body[key] else "0"
+                            serial_sender.set_live(key, val)
+                            _t.sleep(0.02)
+
+                    if "feature_large_clock" in body or "feature_day_clock" in body or "feature_time" in body:
+                        mode = "Small Clock"
+                        if body.get("feature_large_clock", _app.cfg.get("feature_large_clock")):
+                            mode = "Large Clock"
+                        elif body.get("feature_day_clock", _app.cfg.get("feature_day_clock")):
+                            mode = "Day Clock"
+                        serial_sender.set_live("feature_large_clock", "1" if mode == "Large Clock" else "0")
+                        _t.sleep(0.02)
+                        serial_sender.set_live("feature_day_clock", "1" if mode == "Day Clock" else "0")
+                        _t.sleep(0.02)
+                        mb = "1" if _app.cfg.get("feature_minute_bar", True) and mode != "Large Clock" else "0"
+                        serial_sender.set_live("feature_minute_bar", mb)
                         _t.sleep(0.02)
 
-                if "feature_large_clock" in body or "feature_day_clock" in body or "feature_time" in body:
-                    mode = "Small Clock"
-                    if body.get("feature_large_clock", _app.cfg.get("feature_large_clock")):
-                        mode = "Large Clock"
-                    elif body.get("feature_day_clock", _app.cfg.get("feature_day_clock")):
-                        mode = "Day Clock"
-                    serial_sender.set_live("feature_large_clock", "1" if mode == "Large Clock" else "0")
-                    _t.sleep(0.02)
-                    serial_sender.set_live("feature_day_clock", "1" if mode == "Day Clock" else "0")
-                    _t.sleep(0.02)
-                    mb = "1" if _app.cfg.get("feature_minute_bar", True) and mode != "Large Clock" else "0"
-                    serial_sender.set_live("feature_minute_bar", mb)
-                    _t.sleep(0.02)
+                    if "user_name" in body:
+                        raw = body["user_name"].strip() if isinstance(body["user_name"], str) else ""
+                        serial_sender.set_live("user_name", raw)
+                        serial_sender.queue_on_connect("user_name", raw)
 
-                if "user_name" in body:
-                    raw = body["user_name"].strip() if isinstance(body["user_name"], str) else ""
-                    serial_sender.set_live("user_name", raw)
-                    serial_sender.queue_on_connect("user_name", raw)
-
-                if "alarms" in body:
-                    _sync_next_alarm(serial_sender, body.get("alarms", []))
-            except Exception as e:
-                log.warning("[http] device push failed: %s", e)
+                    if "alarms" in body:
+                        _sync_next_alarm(serial_sender, body.get("alarms", []))
+                except Exception as e:
+                    log.warning("[http] device push failed: %s", e)
 
         threading.Thread(target=_send, daemon=True).start()
 
@@ -806,6 +1172,17 @@ class _RequestHandler(SimpleHTTPRequestHandler):
     def _read_json(self):
         length = int(self.headers.get("Content-Length", 0))
         return json.loads(self.rfile.read(length)) if length else {}
+
+    def _handle_screenshot_latest(self):
+        """Return the most recent screenshot captured by the Tk dialog."""
+        if _app is None:
+            self._send_json({"available": False})
+            return
+        data = getattr(_app, "screenshot_last", None)
+        if not data:
+            self._send_json({"available": False})
+            return
+        self._send_json({"available": True, **data})
 
     def _handle_vision_capture(self):
         import vision
@@ -972,33 +1349,111 @@ class _RequestHandler(SimpleHTTPRequestHandler):
     def _handle_panel_icon(self):
         """Extract + serve the app icon for a shortcut path (PNG, cached)."""
         try:
-            from urllib.parse import urlparse, parse_qs
+            from urllib.parse import urlparse, parse_qs, unquote
+            import shutil
             qs = parse_qs(urlparse(self.path).query)
-            p = (qs.get("path") or [""])[0]
-            if not p or not os.path.isfile(p):
+            raw_p = (qs.get("path") or [""])[0]
+            if not raw_p:
+                self.send_error(404)
+                return
+            p = unquote(raw_p).strip().strip('"\'')
+            p = os.path.expandvars(os.path.expanduser(p))
+            if not os.path.isfile(p):
+                which_p = shutil.which(p)
+                if which_p and os.path.isfile(which_p):
+                    p = which_p
+                else:
+                    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                    cand = os.path.join(base_dir, p)
+                    if os.path.isfile(cand):
+                        p = cand
+                    else:
+                        cand_media = os.path.join(base_dir, "media", p)
+                        if os.path.isfile(cand_media):
+                            p = cand_media
+            if not os.path.isfile(p):
                 self.send_error(404)
                 return
             norm = os.path.normcase(os.path.abspath(p))
-            blob = _APP_ICON_CACHE.get(norm)
-            if blob is None:
-                from win_platform import _extract_via_ps
-                img = _extract_via_ps(norm, size=64)
+            cached = _APP_ICON_CACHE.get(norm)
+            if cached is None:
+                from win_platform import _extract_via_ps, detect_icon_color
+                img = _extract_via_ps(p, size=256)
                 if img is None:
                     self.send_error(404)
                     return
+                color = detect_icon_color(img)
                 import io
                 buf = io.BytesIO()
                 img.save(buf, format="PNG")
                 blob = buf.getvalue()
-                _APP_ICON_CACHE[norm] = blob
+                if len(_APP_ICON_CACHE) >= 100:
+                    _APP_ICON_CACHE.pop(next(iter(_APP_ICON_CACHE)), None)
+                _APP_ICON_CACHE[norm] = (blob, color)
+            else:
+                blob, color = cached
             self.send_response(200)
             self.send_header("Content-Type", "image/png")
             self.send_header("Content-Length", str(len(blob)))
+            if color:
+                self.send_header("X-Detected-Color", color)
+                self.send_header("Access-Control-Expose-Headers", "X-Detected-Color")
             self.end_headers()
             self.wfile.write(blob)
         except Exception as e:
             log.warning("[http] app icon extraction failed: %s", e)
             self.send_error(500)
+
+    def _handle_panel_icon_meta(self):
+        """Return detected icon color metadata for an executable or image path."""
+        try:
+            from urllib.parse import urlparse, parse_qs, unquote
+            import shutil
+            qs = parse_qs(urlparse(self.path).query)
+            raw_p = (qs.get("path") or [""])[0]
+            if not raw_p:
+                self._send_json({"ok": False, "error": "missing path"})
+                return
+            p = unquote(raw_p).strip().strip('"\'')
+            p = os.path.expandvars(os.path.expanduser(p))
+            if not os.path.isfile(p):
+                which_p = shutil.which(p)
+                if which_p and os.path.isfile(which_p):
+                    p = which_p
+                else:
+                    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                    cand = os.path.join(base_dir, p)
+                    if os.path.isfile(cand):
+                        p = cand
+                    else:
+                        cand_media = os.path.join(base_dir, "media", p)
+                        if os.path.isfile(cand_media):
+                            p = cand_media
+            if not os.path.isfile(p):
+                self._send_json({"ok": False, "error": "file not found"})
+                return
+            norm = os.path.normcase(os.path.abspath(p))
+            cached = _APP_ICON_CACHE.get(norm)
+            if cached is not None:
+                _, color = cached
+            else:
+                from win_platform import _extract_via_ps, detect_icon_color
+                img = _extract_via_ps(p, size=256)
+                if img is None:
+                    self._send_json({"ok": False, "error": "extraction failed"})
+                    return
+                color = detect_icon_color(img)
+                import io
+                buf = io.BytesIO()
+                img.save(buf, format="PNG")
+                blob = buf.getvalue()
+                if len(_APP_ICON_CACHE) >= 100:
+                    _APP_ICON_CACHE.pop(next(iter(_APP_ICON_CACHE)), None)
+                _APP_ICON_CACHE[norm] = (blob, color)
+            self._send_json({"ok": True, "path": p, "color": color})
+        except Exception as e:
+            log.warning("[http] icon meta extraction failed: %s", e)
+            self._send_json({"ok": False, "error": str(e)})
 
     def _serve_mdi_font(self):
         """Serve the MDI webfont so the web panel renders the same icons as Tk."""
@@ -1017,6 +1472,23 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         except Exception:
             self.send_error(500)
 
+    def _handle_mdi_search(self):
+        """Return search matches across all 7,440+ icons: ?q=xbox&cat=gamer&limit=120"""
+        from urllib.parse import urlparse, parse_qs
+        qs = parse_qs(urlparse(self.path).query)
+        q = (qs.get("q") or [""])[0]
+        cat = (qs.get("cat") or [""])[0]
+        try:
+            limit = int((qs.get("limit") or [120])[0])
+        except (TypeError, ValueError):
+            limit = 120
+        try:
+            import mdi_icons
+            results = mdi_icons.search_icons(query=q, category=cat, limit=limit)
+            self._send_json({"ok": True, "icons": results})
+        except Exception as ex:
+            self._send_json({"ok": False, "icons": [], "error": str(ex)})
+
     def _handle_mdi_codepoints(self):
         """Return {"name": "<char>"} for ?names=a,b,c (missing -> null)."""
         from urllib.parse import urlparse, parse_qs
@@ -1033,6 +1505,93 @@ class _RequestHandler(SimpleHTTPRequestHandler):
                 if n:
                     result[n] = mdi_icons.get_char(n)
         self._send_json(result)
+
+    def _handle_media_players(self):
+        try:
+            from win_platform import detect_installed_media_players
+            players = detect_installed_media_players()
+            current = (_app.cfg.get("media_player_path", "") or "") if _app is not None else ""
+            self._send_json({"ok": True, "players": players, "current": current})
+        except Exception as e:
+            log.warning("[http] detect media players failed: %s", e)
+            self._send_json({"ok": False, "players": [], "current": "", "error": str(e)})
+
+    def _handle_media_art(self):
+        """Serve the currently playing album/song artwork (JPEG/PNG)."""
+        art_bytes = None
+        mime = "image/jpeg"
+        art_id = ""
+        try:
+            if _app is not None and getattr(_app, "_providers", None):
+                for p in _app._providers:
+                    if hasattr(p, "get_artwork"):
+                        art_bytes, mime, art_id = p.get_artwork()
+                        break
+        except Exception as ex:
+            log.debug("[http] media art lookup error: %s", ex)
+
+        if not art_bytes:
+            self.send_response(404)
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            return
+
+        self.send_response(200)
+        self.send_header("Content-Type", mime or "image/jpeg")
+        self.send_header("Content-Length", str(len(art_bytes)))
+        self.send_header("Cache-Control", "public, max-age=60")
+        if art_id:
+            self.send_header("ETag", f'"{art_id}"')
+        self.end_headers()
+        try:
+            self.wfile.write(art_bytes)
+        except Exception:
+            pass
+
+    def _handle_dialog_browse(self):
+        """Open a native Windows file dialog to pick an .ico, .exe, .png, etc."""
+        from urllib.parse import urlparse, parse_qs
+        qs = parse_qs(urlparse(self.path).query)
+        browse_type = (qs.get("type") or ["icon"])[0]
+        try:
+            from win_platform import open_file_dialog, open_folder_dialog
+            root = getattr(_app, "_root", None) if _app is not None else None
+            if browse_type == "exe":
+                path = open_file_dialog(title="Choose Executable or Shortcut", file_filter="exe", root=root)
+            elif browse_type == "folder":
+                path = open_folder_dialog(title="Choose Folder", root=root)
+            else:
+                path = open_file_dialog(title="Choose Custom Icon or Executable", file_filter="icon", root=root)
+            self._send_json({"ok": True, "path": path or ""})
+        except Exception as ex:
+            log.warning("[http] dialog browse failed: %s", ex)
+            self._send_json({"ok": False, "path": "", "error": str(ex)})
+
+    def _handle_open_url(self):
+        """Open an HTTP/HTTPS URL in the host PC's default browser."""
+        try:
+            body = self._read_json()
+        except Exception as e:
+            self.send_error(400, str(e))
+            return
+
+        url = (body.get("url") or "").strip()
+        if not url:
+            self.send_error(400, "Missing URL")
+            return
+
+        if not (url.startswith("http://") or url.startswith("https://")):
+            self.send_error(400, "Invalid URL protocol (http/https only)")
+            return
+
+        try:
+            import webbrowser
+            log.info("[ws_bridge] Opening URL on host PC: %s", url)
+            webbrowser.open(url)
+            self._send_json({"ok": True, "url": url})
+        except Exception as ex:
+            log.exception("[ws_bridge] Failed to open URL on PC: %s", ex)
+            self.send_error(500, str(ex))
 
     def _handle_panel_action(self):
         try:
@@ -1103,6 +1662,141 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         else:
             self._send_json({"ok": False})
 
+    def _handle_panel_export_buttons(self):
+        try:
+            body = self._read_json()
+        except Exception as e:
+            self.send_error(400, str(e))
+            return
+        if _app is None:
+            self.send_error(503, "App not registered")
+            return
+
+        from panel_actions import sanitize_slot, sanitize_profiles, sanitize_board, ensure_panel_defaults
+        from config import save_config
+
+        profile_id = str(body.get("profile_id") or "__default__").strip()
+        plugin_name = str(body.get("plugin") or "").strip()
+        buttons = body.get("buttons") or []
+        replace_all = bool(body.get("replace_all", False))
+        slot_idx = body.get("slot_idx")
+
+        slots = []
+        for b in buttons:
+            bid = b.get("id") or b.get("button_id")
+            if not bid:
+                continue
+            ent_id = b.get("entity") or (f"{plugin_name}.{bid}" if plugin_name else bid)
+            slot = {
+                "type": "TOGGLE",
+                "entity": ent_id,
+                "name": b.get("name") or bid.replace("_", " ").title(),
+                "plugin": plugin_name or b.get("plugin", ""),
+                "button_id": bid,
+                "widget_type": b.get("widget_type", "status_toggle"),
+                "icon": b.get("icon") or "toggle-switch",
+                "icon_off": b.get("icon_off") or "",
+                "state_key": b.get("state_key") or bid,
+                "labels": b.get("labels") or {},
+                "colors": b.get("colors") or {},
+                "hotkey": b.get("hotkey") or b.get("default_hotkey") or "",
+                "show_name": True,
+                "show_icon": True,
+                "show_state": True,
+                "description": b.get("description") or "",
+            }
+            s = sanitize_slot(slot)
+            if s:
+                slots.append(s)
+
+        cfg = _app.cfg
+        ensure_panel_defaults(cfg)
+
+        target_name = "Default"
+        if profile_id == "__default__":
+            if replace_all:
+                cfg["panel_board"] = slots[:12]
+            else:
+                board = list(cfg.get("panel_board") or [])
+                if slot_idx is not None and 0 <= int(slot_idx) < 12:
+                    while len(board) <= int(slot_idx):
+                        board.append({"type": "EMPTY", "name": "", "icon": "border-none-variant", "color": ""})
+                    if slots:
+                        board[int(slot_idx)] = slots[0]
+                else:
+                    placed = False
+                    for i in range(min(12, len(board))):
+                        if board[i].get("type") == "EMPTY" and slots:
+                            board[i] = slots[0]
+                            placed = True
+                            break
+                    if not placed and len(board) < 12 and slots:
+                        board.append(slots[0])
+                cfg["panel_board"] = sanitize_board(board)
+        else:
+            profiles = cfg.get("panel_profiles") or []
+            if profile_id == "__new__":
+                base_id = f"prof_{plugin_name}" if plugin_name else "prof_custom"
+                existing_ids = {p.get("id") for p in profiles if isinstance(p, dict)}
+                new_id = base_id
+                counter = 1
+                while new_id in existing_ids:
+                    counter += 1
+                    new_id = f"{base_id}_{counter}"
+                profile_id = new_id
+
+            prof = next((p for p in profiles if isinstance(p, dict) and p.get("id") == profile_id), None)
+            if not prof:
+                prof_name = body.get("profile_name") or plugin_name.replace("_", " ").title()
+                prof_exe = body.get("profile_exe") or ""
+                prof = {
+                    "id": profile_id,
+                    "name": prof_name,
+                    "exe": prof_exe,
+                    "enabled": True,
+                    "board": []
+                }
+                profiles.append(prof)
+            target_name = prof.get("name") or profile_id
+
+            if replace_all:
+                prof["board"] = slots[:12]
+            else:
+                board = list(prof.get("board") or [])
+                if slot_idx is not None and 0 <= int(slot_idx) < 12:
+                    while len(board) <= int(slot_idx):
+                        board.append({"type": "EMPTY", "name": "", "icon": "border-none-variant", "color": ""})
+                    if slots:
+                        board[int(slot_idx)] = slots[0]
+                else:
+                    placed = False
+                    for i in range(min(12, len(board))):
+                        if board[i].get("type") == "EMPTY" and slots:
+                            board[i] = slots[0]
+                            placed = True
+                            break
+                    if not placed and len(board) < 12 and slots:
+                        board.append(slots[0])
+                prof["board"] = sanitize_board(board)
+
+            cfg["panel_profiles"] = sanitize_profiles(profiles)
+
+        save_config(cfg)
+        from panel_actions import _RESOLVE_CACHE
+        _RESOLVE_CACHE["ts"] = 0.0
+        _RESOLVE_CACHE["board"] = None
+
+        self._send_json({"ok": True, "target_profile": target_name, "profile_id": profile_id, "count": len(slots)})
+
+    def _handle_panel_entities(self):
+        try:
+            from panel_entities import get_entity_registry
+            entities = get_entity_registry()
+            self._send_json({"ok": True, "entities": entities})
+        except Exception as e:
+            log.warning("[http] panel entities failed: %s", e)
+            self._send_json({"ok": False, "entities": []})
+
     def log_message(self, fmt, *args):
         # suppress per-request logs
         pass
@@ -1167,6 +1861,9 @@ def _get_plugins_config():
             "outputs_def": manifest.get("outputs", []),
             "outputs": plugin_manager.get_plugin_outputs(name),
             "live_data_def": manifest.get("live_data", {}),
+            "buttons_def": manifest.get("buttons", []),
+            "preset_layout": manifest.get("preset_layout", []),
+            "panel_profiles": list(_app.cfg.get("panel_profiles") or []) if _app else [],
             "actions_def": manifest.get("actions", []),
             "diagnostics_def": manifest.get("diagnostics", []),
             "labels": manifest.get("labels", {}),
@@ -1389,6 +2086,29 @@ def _get_master_volume():
         return {"volume": None}
 
 
+def start_udp_discovery(discovery_port=15503, http_port=15502):
+    """Listen for UDP broadcast queries ('IRIS_DISCOVER_REQ') and respond with server URL."""
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("", discovery_port))
+        log.info("UDP discovery listening on port %d", discovery_port)
+    except Exception as e:
+        log.warning("UDP discovery bind failed: %s", e)
+        return
+
+    while True:
+        try:
+            data, addr = sock.recvfrom(1024)
+            if data.strip() == b"IRIS_DISCOVER_REQ":
+                lan_ip = _lan_ip()
+                resp = f"IRIS_DISCOVER_RESP|http://{lan_ip}:{http_port}".encode("utf-8")
+                sock.sendto(resp, addr)
+        except Exception as e:
+            log.warning("UDP discovery handle error: %s", e)
+            time.sleep(0.5)
+
+
 def start_http(port=15502):
     os.makedirs(_HTML_DIR, exist_ok=True)
     host = _bind_host()
@@ -1407,6 +2127,9 @@ def start(ws_port=15501, http_port=15502):
 
     # start HTTP server in a background thread
     threading.Thread(target=start_http, args=(http_port,), daemon=True, name="http-server").start()
+
+    # start UDP discovery service in a background thread
+    threading.Thread(target=start_udp_discovery, args=(15503, http_port), daemon=True, name="udp-discovery").start()
 
     # run WS server on main asyncio loop
     _loop.run_until_complete(_serve_ws(ws_port))

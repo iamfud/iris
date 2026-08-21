@@ -3,6 +3,72 @@
 - Never write code unless I explicitly ask you to.
 - Only answer questions, explain things, or make suggestions — no implementation without a direct order.
 
+# Orientation Cheatsheet (READ THIS FIRST — web panel landscape)
+
+The phone/PWA panel is ONE portrait DOM, rendered on the physical screen by rotating
+the whole `.pv-screen` with `transform: rotate(-90deg)`. NEVER "fix" portrait and
+landscape independently — the two are the same DOM, so every landscape fix must be
+DERIVED from the rotation, not tuned by eye.
+
+- `rotate(-90deg)` maps (in CSS coords, y-down): **portrait-right → screen-UP**,
+  portrait-top → screen-LEFT, portrait-left → screen-DOWN, portrait-bottom → screen-RIGHT.
+- Consequence A — **page stacking**: a horizontal page track (CSS +x = later pages)
+  would put page 1 at the bottom and overflow ABOVE. Fixed in `style.css` by mirroring
+  the track and un-mirroring each grid:
+  `.pv-box .pv-track{ transform:scaleX(-1) }` and `.pv-track .pdev-grid{ transform:scaleX(-1) }`
+  (two mirrors about different centres = pure translation, so button ORDER is preserved).
+- Consequence B — **button order within a page**: a 4×3 grid (DOM `1234/5678/9101112`)
+  rotated -90° reads on screen as `4 8 12 / 3 7 11 / 2 6 10 / 1 5 9`. Fixed in
+  `boardPagesHtml` (`HTML/script.js`) for `is-landscape` by placing slot `perm[p]` at
+  DOM position `p`, where `perm[p] = (3 - (p % 4)) * 3 + floor(p / 4)`. The DOM grid
+  becomes `10 7 4 1 / 11 8 5 2 / 12 9 6 3` → on screen reads `123/456/789/101112`.
+  `data-idx` always stays the slot's real board index (clicks/state updates unaffected).
+- Gesture axes also swap: screen-X ≈ portrait-Y (pan the `.pv-scroll`), screen-Y ≈
+  portrait-X (pan the button track / pages). `.pv-scroll` must allow `pan-x pan-y`
+  (touch-action is the intersection along the ancestor chain — a `pan-x`-only ancestor
+  vetoes the box's screen-Y paging).
+
+# Session Memory — 2026-08-16
+
+## Dedicated Media Player Button Settings & Live Album Art
+- **Button Card Display Options**:
+  - Added **`App Icon`** (`use_app_icon`) sub-toggle under **`Show Icon`** in the button edit modal. Gated so it is disabled/dimmed when `Show Icon` is disabled.
+  - When enabled, overrides MDI glyphs with the configured media player application icon (or shortcut icon).
+  - Added **`Display Album Art`** (`show_album_art`) toggle in the button edit modal.
+- **Dynamic Tile Background Rendering**:
+  - Live album art dynamically renders inside `.pdev-tile` via `.pdev-album-art-bg` (`background-size: cover; filter: brightness(0.6)`) whenever media is playing.
+  - Smooth fallback to the normal theme background plate when stopped or when no art is available.
+  - MDI glyphs, app icons, and status/name bars sit on top at `z-index: 2` with subtle drop shadows.
+- **Universal Media Artwork Extraction**:
+  - `MediaProvider` (`app/providers/media.py`) extracts high-resolution live artwork byte streams from Windows SMTC (`GlobalSystemMediaTransportControlsSessionMediaProperties.thumbnail` via `winrt.windows.storage.streams`) for Spotify, Apple Music, YouTube (Chrome/Edge), VLC, Tidal, foobar2000, etc.
+  - Also extracts embedded artwork from iTunes via COM API (`track.Artwork.Item(1)`).
+  - Exposes `GET /api/media/art` in `app/ws_bridge.py` with ETag cache validation.
+
+## Theme Engine (Iris / Monochrome / 2-Colour Custom) & Remote Sync
+- Linked unified theme tokens on `:root`: `--theme-color-1` (Accent), `--theme-color-2` (Neon), `--neon`, `--neon-purple`, `--theme-gradient-h`, `--theme-gradient-v`, `--scrollbar-thumb`, `--theme-glow`.
+- Automatically drives:
+  - Top header glowing accent line (`header::after`)
+  - Universal webkit scrollbar gradients (`--scrollbar-thumb` from Accent at 0% to Neon at 100%)
+  - Gauges (CSS `conic-gradient` circular rings starting at Accent at 0% and sweeping to Neon at 100%)
+  - Sliders, range tracks, toggle buttons, and `.neon` active glow highlights
+- Config stored in `config.json` under `"theme": { "mode": "iris"|"monochrome"|"custom", "accent": "#hex", "neon": "#hex" }`.
+- New **Appearance** section added to Settings page (`app/settings_pages.json` & `settings_renderer.js`) with 3 clickable preset cards, custom native color pickers with hex inputs, and a live preview swatch.
+- **Remote WebSocket Theme Sync & PWA Cache Clear**:
+  - `Apply Theme` saves configuration and calls `POST /api/portal/reload` (`ws_bridge._handle_portal_reload`).
+  - Broadcasts `{ type: "theme", theme: {...} }` and `{ type: "reload", hard: true }` across all connected phones/PWAs/kiosk browsers.
+- **Personalization & Settings Organization**:
+  - Moved `user_name` ("Your Name") setting from Companion Device into a new **Personalization** card on the main Settings panel (`app/settings_pages.json`).
+  - Automatically personalizes welcome greetings on Dashboard, system notifications, and hardware sync.
+  - Added **Media Player** card to Settings panel with automatic detection of installed media players (Spotify, VLC, Windows Media Player, foobar2000, MusicBee, AIMP, iTunes, Tidal, Plexamp, etc.), live app icon preview extraction, custom executable path input, and native file browser integration (`media_player_path`).
+
+## Intelligent Masonry Layout for Settings Panel
+- Replaced standard rigid CSS grid (`display: grid`) on `.settings-content` with **CSS Column-Masonry** (`columns: 2 380px; column-gap: 24px;`).
+- Section cards (`.settings-section`) use `display: inline-flex; width: 100%; break-inside: avoid;` to stack vertically in column flow without dead vertical row gaps.
+- Wide / complex sections (Appearance Theme Engine, Network Pairing & QR, Devices list) use `.settings-section-wide` / `.settings-section-full` with `column-span: all;` to span full-width rows cleanly.
+- Automatic wide section detection in `HTML/settings_renderer.js` and declarative `"full_width": true` support in `app/settings_pages.json`.
+
+
+
 # Session Memory — 2026-08-06
 
 ## Button configurator: app-icon auto-pull (Phase 1)

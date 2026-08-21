@@ -12,7 +12,7 @@ from plugins.pc_stats.connector import PCStatsConnector
 
 log = logging.getLogger("iris.plugins.pc_stats")
 
-Snapshot = namedtuple("Snapshot", "cpu_temp gpu_temp fps exe cpu_pct")
+Snapshot = namedtuple("Snapshot", "cpu_temp gpu_temp fps exe cpu_pct refresh_rate")
 
 
 class _RtssReader:
@@ -122,6 +122,13 @@ class _MahmReader:
         k.CloseHandle.argtypes = [ctypes.c_void_p]
         self._k = k
 
+    def running(self):
+        h = self._k.OpenFileMappingW(self._READ, False, self._MAP)
+        if not h:
+            return False
+        self._k.CloseHandle(h)
+        return True
+
     def read(self):
         h = self._k.OpenFileMappingW(self._READ, False, self._MAP)
         if not h:
@@ -173,10 +180,18 @@ class Plugin:
         self._rtss = _RtssReader()
         self._mahm = _MahmReader()
         self._running = False
-        self._snapshot = Snapshot(None, None, None, "", 0.0)
+        self._snapshot = Snapshot(None, None, None, "", 0.0, 60)
         self._lock = threading.Lock()
 
+    def _pcfg(self):
+        return (self._cfg.get("plugins") or {}).get("pc_stats", {})
+
+    @staticmethod
+    def _to_f(c):
+        return c * 9.0 / 5.0 + 32.0 if c is not None else None
+
     def start(self):
+        self._connector.normalize_limits()
         self._connector.connect()
         self._running = True
         if self._serial:
@@ -199,44 +214,68 @@ class Plugin:
     def poll(self):
         with self._lock:
             s = self._snapshot
+        use_f = self._pcfg().get("use_fahrenheit", False)
+        rr = int(s.refresh_rate) if s.refresh_rate else 60
         return {
             "available": True,
-            "cpu_temp": s.cpu_temp,
-            "gpu_temp": s.gpu_temp,
+            "cpu_temp": self._to_f(s.cpu_temp) if use_f else s.cpu_temp,
+            "gpu_temp": self._to_f(s.gpu_temp) if use_f else s.gpu_temp,
             "fps": s.fps,
+            "fps_max": rr,
+            "refresh_rate": rr,
             "exe": s.exe,
             "cpu_pct": s.cpu_pct,
+            "cpu_temp_unit": "\u00b0F" if use_f else "\u00b0C",
+            "cpu_temp_max": 212 if use_f else 100,
+            "gpu_temp_unit": "\u00b0F" if use_f else "\u00b0C",
+            "gpu_temp_max": 212 if use_f else 100,
         }
 
     def snapshot(self):
         with self._lock:
             s = self._snapshot
-        return self.poll()
+        d = self.poll()
+        d["layout"] = [
+            {
+                "title": "Hardware Stats",
+                "fields": [
+                    {"key": "cpu_temp", "label": "CPU Temperature"},
+                    {"key": "gpu_temp", "label": "GPU Temperature"},
+                    {"key": "fps", "label": "FPS"},
+                ],
+            }
+        ]
+        return d
 
     @staticmethod
     def _foreground_exe():
         try:
-            hwnd = ctypes.windll.user32.GetForegroundWindow()
-            pid = ctypes.c_ulong()
-            ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            import win32gui
+            import win32process
             import psutil
-            return psutil.Process(pid.value).exe()
+            hwnd = win32gui.GetForegroundWindow()
+            if not hwnd:
+                return ""
+            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+            return psutil.Process(pid).name()
         except Exception:
             return ""
 
     def _push_stats(self, cpu, cpu_temp, gpu_temp, fps):
         if not self._serial:
             return
-        self._serial.send_stats(cpu, cpu_temp, gpu_temp, fps)
+        if cpu_temp is not None or gpu_temp is not None or fps is not None:
+            self._serial.send_stats(cpu, cpu_temp, gpu_temp, fps)
 
     def _loop(self):
+        temp_interval = 2.0
+        fps_interval = 0.5
+        push_interval = 0.5
         last_temp_poll = 0.0
         last_push = 0.0
-        temp_interval = 5.0
-        push_interval = 2.0
-        _temp_cooldown_s = 30
         overlay_active = False
         temp_alert_active = False
+        _temp_cooldown_s = 10.0
         cooldown_until = 0.0
 
         while self._running:
@@ -247,14 +286,6 @@ class Plugin:
                 pass
 
             now = time.time()
-            if fps_data is None and int(now) % 30 == 0:
-                log.info("RTSS poll: no FPS data (RTSS not hooked or not running?)")
-            elif fps_data is not None and int(now) % 30 == 0:
-                fg = self._foreground_exe()
-                log.info("RTSS poll: FPS=%.0f app=%s  foreground=%s  match=%s",
-                         fps_data[0], fps_data[1], fg,
-                         fg.lower() == fps_data[1].lower())
-
             with self._lock:
                 if fps_data:
                     fps, exe = fps_data
@@ -281,14 +312,27 @@ class Plugin:
             except Exception:
                 pass
 
+            refresh_rate = 60
+            try:
+                from win_platform import get_monitor_refresh_rate
+                refresh_rate = get_monitor_refresh_rate()
+            except Exception:
+                pass
+
             with self._lock:
-                self._snapshot = Snapshot(cpu_temp, gpu_temp, fps, exe, cpu_pct)
+                self._snapshot = Snapshot(cpu_temp, gpu_temp, fps, exe, cpu_pct, refresh_rate)
 
             game_active = fps is not None and exe and self._foreground_exe().lower() == exe.lower()
-            cpu_lim = self._cfg.get("cpu_temp_lim", 90)
-            gpu_lim = self._cfg.get("gpu_temp_lim", 90)
-            over_limit = (cpu_temp is not None and cpu_temp >= cpu_lim) or \
-                         (gpu_temp is not None and gpu_temp >= gpu_lim)
+            pcfg = self._pcfg()
+            cpu_lim = pcfg.get("cpu_temp_lim", 90)
+            gpu_lim = pcfg.get("gpu_temp_lim", 90)
+            if pcfg.get("use_fahrenheit", False):
+                cpu_t = self._to_f(cpu_temp)
+                gpu_t = self._to_f(gpu_temp)
+            else:
+                cpu_t, gpu_t = cpu_temp, gpu_temp
+            over_limit = (cpu_t is not None and cpu_t >= cpu_lim) or \
+                         (gpu_t is not None and gpu_t >= gpu_lim)
 
             if over_limit:
                 temp_alert_active = True

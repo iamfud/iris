@@ -180,24 +180,28 @@ class ToastOverlay(_BaseOverlay):
         y = 20 + offset_y
         self._win.geometry(f"340x90+{x}+{y}")
 
-        frame = tk.Frame(self._win, bg=BG_CARD, padx=12, pady=10)
+        border_frame = tk.Frame(self._win, bg="#48B2E9", padx=1, pady=1)
+        border_frame.pack(fill=tk.BOTH, expand=True)
+
+        card_bg = "#0E1B26"
+        frame = tk.Frame(border_frame, bg=card_bg, padx=12, pady=10)
         frame.pack(fill=tk.BOTH, expand=True)
 
         if app:
             tk.Label(
-                frame, text=app, font=("Segoe UI", 8),
-                fg=FG, bg=BG_CARD,
+                frame, text=app.upper(), font=("Segoe UI", 8, "bold"),
+                fg="#48B2E9", bg=card_bg,
             ).pack(anchor=tk.W)
 
         tk.Label(
-            frame, text=title, font=("Segoe UI", 12, "bold"),
-            fg=FG, bg=BG_CARD,
+            frame, text=title, font=("Segoe UI", 11, "bold"),
+            fg="#FFFFFF", bg=card_bg,
         ).pack(anchor=tk.W)
 
         if body:
             tk.Label(
-                frame, text=body, font=("Segoe UI", 10),
-                fg=FG, bg=BG_CARD,
+                frame, text=body, font=("Segoe UI", 9),
+                fg="#B0C4DE", bg=card_bg,
             ).pack(anchor=tk.W)
 
         self._finish(int(self._duration * 1000))

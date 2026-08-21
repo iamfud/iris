@@ -23,7 +23,7 @@ except ImportError:
 
 
 class NotificationMirrorProvider:
-    POLL_SECONDS = 3
+    POLL_SECONDS = 0.3
 
     def __init__(self, cfg, serial_sender=None):
         self.cfg = cfg
@@ -32,6 +32,7 @@ class NotificationMirrorProvider:
         self._last_id = 0
         self._lock = threading.Lock()
         self._last_notif = ""
+        self._last_toast = None  # {app, title, body, timestamp} or None
         self._last_notif_time = 0.0
 
     def start(self):
@@ -49,7 +50,7 @@ class NotificationMirrorProvider:
 
     def poll_data(self):
         with self._lock:
-            return {"last_notif": self._last_notif}
+            return {"last_notif": self._last_notif, "toast": self._last_toast}
 
     def menu_items(self):
         with self._lock:
@@ -111,7 +112,7 @@ class NotificationMirrorProvider:
 
             # rate limit
             now = time.time()
-            if now - self._last_notif_time < 3.0:
+            if now - self._last_notif_time < 0.3:
                 continue
             self._last_notif_time = now
 
@@ -121,35 +122,49 @@ class NotificationMirrorProvider:
             else:
                 msg = (title or body)[:120]
 
+            ts = time.time()
+            toast = {"app": app, "title": title, "body": body, "timestamp": ts}
             with self._lock:
                 self._last_notif = msg
+                self._last_toast = toast
 
             log.info(f"[notif] forwarding: {msg}")
-            ws_bridge.broadcast({
-                "type": "notification",
-                "app": app,
-                "title": title,
-                "body": body,
-                "timestamp": time.time(),
-            })
             if self.serial:
-                self.serial.send_notification(
-                    "", msg, priority=PRIO_CORE_NOTIFY, key="core.mirror")
+                if hasattr(self.serial, "notify"):
+                    self.serial.notify(f"win.{app}", title or app, body, priority=PRIO_CORE_NOTIFY)
+                else:
+                    self.serial.send_notification(title or app, body, priority=PRIO_CORE_NOTIFY, key="core.mirror")
+            else:
+                import notifications_store
+                import ws_bridge
+                res = notifications_store.add_notification(app, title, body, timestamp=ts)
+                if res.get("ok"):
+                    ws_bridge.broadcast({
+                        "type": "notification",
+                        **res["notification"]
+                    })
 
     def _get_app_name(self, n):
         try:
             name = n.app_info.display_info.display_name
-            if name: return name
+            if name and name.strip():
+                return name.strip()
         except Exception:
             pass
         try:
-            aumi = n.app_info.app_user_model_id or ""
+            aumi = (n.app_info.app_user_model_id or "").strip()
             log.debug(f"[notif] aumi={aumi!r}")
             if aumi:
-                return aumi.split("!")[0].split(".")[-1] if "." in aumi else aumi.split("!")[0]
+                clean = aumi.split("!")[0]
+                parts = clean.split(".")
+                for part in reversed(parts):
+                    sub = part.split("_")[0]
+                    if sub and not sub.isdigit() and len(sub) > 2 and not (len(sub) > 8 and all(c in "0123456789ABCDEFabcdef" for c in sub)):
+                        return sub.capitalize()
+                return parts[-1].split("_")[0].capitalize()
         except Exception:
             pass
-        return "Unknown"
+        return "System"
 
     def _get_text(self, n):
         title = ""

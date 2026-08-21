@@ -9,6 +9,11 @@ build/
 
 # Config
 app/iris_config.json
+app/devices.json
+
+# HTTPS panel self-signed cert/key (regenerated locally, never committed)
+app/panel_https_cert.pem
+app/panel_https_key.pem
 
 # Logs
 *.log

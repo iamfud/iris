@@ -9,8 +9,9 @@ import ctypes.wintypes
 from PIL import Image, ImageDraw, ImageTk
 
 from constants import BG, BG_CARD, DEFAULT_BRIGHTNESS, FG, FG_DIM, NEON, BUTTON, FONT_SM
-from widgets import CircularGauge, StepSlider, ToolTip
+from widgets import CircularGauge, RoundedButton, StepSlider, ToolTip
 import mdi_icons
+import colour_picker
 
 log = logging.getLogger("iris.main_window")
 
@@ -112,7 +113,8 @@ class MainWindow:
     W = 220
     H = 568
     RADIUS = 24
-    ALPHA = 0.9
+    ALPHA = 0.98
+    PAGE_H = 150  # one button page (4x3 grid) = the track's page size
 
     def __init__(self, root, app, cfg=None):
         self.app = app
@@ -125,6 +127,22 @@ class MainWindow:
         self._sending_hotkey = False
         self._sticky_after_id = None
         self._sticky_leave_active = False
+        self._picker_active = False
+        self._picker_session = None
+        self._picker_hex_lbl = None
+        self._picker_rgb_lbl = None
+        self._picker_capture_btn = None
+        self._picked_hex = None
+        # Screenshot state
+        self._screenshot_active  = False
+        self._screenshot_slot    = {}
+        self._screenshot_img     = None   # PIL Image of last capture
+        self._screenshot_b64     = None   # JPEG b64 for phone delivery
+        self._screenshot_w       = 0
+        self._screenshot_h       = 0
+        self._screenshot_ts      = 0.0
+        self._screenshot_lbl     = None   # preview tk.Label in dialog
+        self._screenshot_monitor = 0      # selected monitor index
 
         self._win = tk.Toplevel(root)
         self._win.title("Iris")
@@ -376,11 +394,15 @@ class MainWindow:
             fill = slot.get("color") or BG_CARD
             if not fill or fill == "RAINBOW":
                 fill = BG_CARD
+            btype = slot.get("type", "")
+            app_icon = slot.get("app_icon_path")
+            if not app_icon and slot.get("use_app_icon"):
+                app_icon = (self.app.cfg.get("media_player_path") or "").strip() or None
             imgs = [
-                self._make_tile_photo(icon, fill, icon_scale=0.52),
-                self._make_tile_photo(icon, self._adjust_hex(fill, 20), icon_scale=0.52),
+                self._make_tile_photo(icon, fill, icon_scale=0.52, app_icon_path=app_icon),
+                self._make_tile_photo(icon, self._adjust_hex(fill, 20), icon_scale=0.52, app_icon_path=app_icon),
             ]
-            prs = self._make_tile_photo(icon, self._adjust_hex(fill, -20), icon_scale=0.52)
+            prs = self._make_tile_photo(icon, self._adjust_hex(fill, -20), icon_scale=0.52, app_icon_path=app_icon)
             self._utility_tile_refs.extend(imgs + [prs])
             btn = tk.Label(frame, image=imgs[0], bg=BG, cursor="hand2",
                            padx=0, pady=0, borderwidth=0)
@@ -417,7 +439,7 @@ class MainWindow:
             return False
 
     def _panel_section_flags(self):
-        """(gauges, button_box, volume, brightness, mixer, utility) from cfg."""
+        """(gauges, button_box, volume, master_volume, brightness, mixer, utility) from cfg."""
         try:
             from panel_actions import (
                 layout_enabled, slider_enabled, ensure_panel_defaults)
@@ -429,22 +451,23 @@ class MainWindow:
             box = layout_enabled(self.app.cfg, "button_box")
             sliders = layout_enabled(self.app.cfg, "sliders")
             vol = sliders and slider_enabled(self.app.cfg, "app_volume")
+            mvol = sliders and slider_enabled(self.app.cfg, "master_volume")
             # Brightness only when hardware is present (controls the device LEDs)
             bri = (sliders and slider_enabled(self.app.cfg, "brightness")
                    and self._hardware_connected())
             mix = sliders and slider_enabled(self.app.cfg, "app_mixer")
             util = layout_enabled(self.app.cfg, "utility")
-            return gauges, box, vol, bri, mix, util
+            return gauges, box, vol, mvol, bri, mix, util
         except Exception:
-            return True, True, True, False, True, True
+            return True, True, True, True, False, True, True
 
     def _reflow_panel(self):
         """Stack visible sections top-down and shrink the window to fit."""
-        gauges, box, vol, bri, mix, util = self._panel_section_flags()
+        gauges, box, vol, mvol, bri, mix, util = self._panel_section_flags()
         _W, _T, _GAP = 190, 40, 10
         _X = (self.W - _W) // 2
-        GAUGE_H, BTN_H, SLIDER_H = 70, 150, 28
-        TITLE_H, APP_H, SEP, BOTTOM = 16, 14, 1, 24
+        GAUGE_H, BTN_H, SLIDER_H = 70, 150, 24
+        TITLE_H, SEP, BOTTOM = 11, 1, 24
 
         y = 28 + 8
 
@@ -465,55 +488,57 @@ class MainWindow:
         if box:
             y += BTN_H + 10
 
-        any_sl = vol or bri
+        any_sl = vol or mvol or bri
         self._place_or_forget(
             getattr(self, "_sep_sliders", None), any_sl, x=_X, y=y, width=_W)
         if any_sl:
-            y += SEP + 5
+            y += SEP + 3
 
         if vol:
             self._place_or_forget(
                 getattr(self, "_lbl_volume_title", None), True,
                 x=_X + 2, y=y, width=_W - 2, height=TITLE_H)
-            y += TITLE_H + 1
-            self._place_or_forget(
-                getattr(self, "_lbl_volume_app", None), True,
-                x=_X + 2, y=y, width=_W - 2, height=APP_H)
-            y += APP_H + 1
+            y += TITLE_H
             self._place_or_forget(
                 getattr(self, "_slider_volume", None), True, x=_X, y=y, width=_W)
-            y += SLIDER_H + 8
+            y += SLIDER_H + 2
         else:
             self._place_or_forget(getattr(self, "_lbl_volume_title", None), False)
-            self._place_or_forget(getattr(self, "_lbl_volume_app", None), False)
             self._place_or_forget(getattr(self, "_slider_volume", None), False)
 
-        if bri:
+        if mvol:
             self._place_or_forget(
-                getattr(self, "_lbl_brightness_title", None), True,
+                getattr(self, "_lbl_master_title", None), True,
                 x=_X + 2, y=y, width=_W - 2, height=TITLE_H)
-            y += TITLE_H + 1
+            y += TITLE_H
             self._place_or_forget(
-                getattr(self, "_slider_brightness", None), True, x=_X, y=y, width=_W)
-            y += SLIDER_H + 8
+                getattr(self, "_slider_master", None), True, x=_X, y=y, width=_W)
+            y += SLIDER_H + 2
         else:
-            self._place_or_forget(getattr(self, "_lbl_brightness_title", None), False)
-            self._place_or_forget(getattr(self, "_slider_brightness", None), False)
+            self._place_or_forget(getattr(self, "_lbl_master_title", None), False)
+            self._place_or_forget(getattr(self, "_slider_master", None), False)
 
         self._mixer_enabled = bool(mix)
         if mix:
             mixer_h = max(getattr(self, "_mixer_h", 0) or 0, 1)
             self._place_or_forget(
-                getattr(self, "_lbl_mixer_title", None), True,
-                x=_X + 2, y=y, width=_W - 2, height=TITLE_H)
-            y += TITLE_H + 1
-            self._place_or_forget(
                 getattr(self, "_mixer_frame", None), True,
                 x=_X, y=y, width=_W, height=mixer_h)
             y += mixer_h + 8
         else:
-            self._place_or_forget(getattr(self, "_lbl_mixer_title", None), False)
             self._place_or_forget(getattr(self, "_mixer_frame", None), False)
+
+        if bri:
+            self._place_or_forget(
+                getattr(self, "_lbl_brightness_title", None), True,
+                x=_X + 2, y=y, width=_W - 2, height=TITLE_H)
+            y += TITLE_H
+            self._place_or_forget(
+                getattr(self, "_slider_brightness", None), True, x=_X, y=y, width=_W)
+            y += SLIDER_H + 2
+        else:
+            self._place_or_forget(getattr(self, "_lbl_brightness_title", None), False)
+            self._place_or_forget(getattr(self, "_slider_brightness", None), False)
 
         self._place_or_forget(
             getattr(self, "_sep_utility", None), util, x=_X, y=y, width=_W)
@@ -533,10 +558,6 @@ class MainWindow:
             getattr(self, "_core_frame", None), True,
             x=_X, y=y, width=4 * _T + 3 * _GAP, height=_T)
         y += _T + BOTTOM
-
-        hero = getattr(self, "_hero_btn", None)
-        if hero is not None:
-            self._place_or_forget(hero, True, relx=0.5, y=y - 20, anchor=tk.CENTER, width=80, height=18)
 
         new_h = max(int(y), 28 + _T + BOTTOM)
         old_h = getattr(self, "_panel_h", None)
@@ -591,104 +612,135 @@ class MainWindow:
 
         buttons = self._current_buttons()
         _T, _GAP = 40, 10
-        _W = 190
         _COLS = 4
-        col_offset = 0
-        row_offset = 0
+        _ROWS = 3
+        _PAGE_SLOTS = _COLS * _ROWS  # 12 tiles per page, like the phone grid
+        _PAGE = self.PAGE_H
+        _OFF = (_PAGE - (_ROWS * _T + (_ROWS - 1) * _GAP)) // 2  # centre grid in page
 
-        # Back button if in a sub-panel — occupies grid slot 0
-        if self._btn_nav:
-            parent = self._btn_nav[-1]
-            back_img = self._make_tile_photo("reply", BUTTON, icon_color=(72, 178, 233))
-            back_hov = self._make_tile_photo("reply", self._adjust_hex(BUTTON, 20), icon_color=(72, 178, 233))
-            self._btn_tile_refs.extend([back_img, back_hov])
-            back_btn = tk.Label(self._btn_inner, image=back_img, bg=BG, cursor="hand2",
-                                padx=0, pady=0, borderwidth=0)
-            back_btn.place(x=0, y=0)
-            def _bh(e, b=back_btn, h=back_hov, n=back_img): b.config(image=h)
-            def _bl(e, b=back_btn, n=back_img): b.config(image=n)
-            back_btn.bind("<Enter>", _bh)
-            back_btn.bind("<Leave>", _bl)
-            back_btn.bind("<ButtonRelease-1>", lambda e: self._win.after_idle(self.btn_nav_pop))
-            back_btn.bind("<MouseWheel>", self._on_btn_wheel)
+        in_nav = bool(self._btn_nav)
 
-        # "+" empty-state prompt (only when no buttons exist at this level)
-        if not buttons:
-            _px = (_T + _GAP) if self._btn_nav else 0  # past back button
-            plus_img = self._make_tile_photo("plus", BG_CARD)
-            plus_hov = self._make_tile_photo("plus", self._adjust_hex(BG_CARD, 20))
-            self._btn_tile_refs.extend([plus_img, plus_hov])
-            plus_btn = tk.Label(self._btn_inner, image=plus_img, bg=BG, cursor="hand2",
-                                padx=0, pady=0, borderwidth=0)
-            plus_btn.place(x=_px, y=row_offset * (_T + _GAP))
-            def _ph(e, b=plus_btn, h=plus_hov, n=plus_img): b.config(image=h)
-            def _pl(e, b=plus_btn, n=plus_img): b.config(image=n)
-            plus_btn.bind("<Enter>", _ph)
-            plus_btn.bind("<Leave>", _pl)
-            plus_btn.bind("<Button-1>", lambda e: self.app._open_settings())
-            plus_btn.bind("<MouseWheel>", self._on_btn_wheel)
-            plus_tip = tk.Label(self._btn_inner, text="Add",
-                                font=("Segoe UI", 6), fg=FG, bg=BG)
-            plus_tip.place(x=_px, y=row_offset * (_T + _GAP) + _T - 2, width=_T, height=12)
-            plus_tip.bind("<MouseWheel>", self._on_btn_wheel)
+        # Paginate the board into full 4x3 pages; placeholders fill empty slots
+        pages = [buttons[i:i + _PAGE_SLOTS] for i in range(0, max(len(buttons), 1), _PAGE_SLOTS)]
 
-        max_row = row_offset
+        for pi, page in enumerate(pages):
+            y0 = pi * _PAGE + _OFF
+            slots = list(page)
+            if pi == 0 and in_nav:
+                slots = [None] + slots  # back tile owns grid slot 0
+            for i in range(_PAGE_SLOTS):
+                slot = slots[i] if i < len(slots) else None
+                x = (i % _COLS) * (_T + _GAP)
+                y = y0 + (i // _COLS) * (_T + _GAP)
 
-        for i, slot in enumerate(buttons):
-            if slot is None:
-                continue
-            idx = i + 1 if self._btn_nav else i  # shift by 1 for back button
-            col = idx % _COLS
-            row = idx // _COLS
-            max_row = max(max_row, row)
+                # Back button if in a sub-panel — occupies grid slot 0
+                if pi == 0 and in_nav and i == 0:
+                    back_img = self._make_tile_photo("reply", BUTTON, icon_color=(72, 178, 233))
+                    back_hov = self._make_tile_photo("reply", self._adjust_hex(BUTTON, 20), icon_color=(72, 178, 233))
+                    self._btn_tile_refs.extend([back_img, back_hov])
+                    back_btn = tk.Label(self._btn_inner, image=back_img, bg=BG, cursor="hand2",
+                                        padx=0, pady=0, borderwidth=0)
+                    back_btn.place(x=x, y=y)
+                    def _bh(e, b=back_btn, h=back_hov, n=back_img): b.config(image=h)
+                    def _bl(e, b=back_btn, n=back_img): b.config(image=n)
+                    back_btn.bind("<Enter>", _bh)
+                    back_btn.bind("<Leave>", _bl)
+                    back_btn.bind("<ButtonRelease-1>", lambda e: self._win.after_idle(self.btn_nav_pop))
+                    back_btn.bind("<MouseWheel>", self._on_btn_wheel)
+                    continue
 
-            btype = slot.get("type", "")
-            if btype == "AUDIO OUTPUT":
-                cur_id = None
-                try:
-                    from win_platform import get_current_default_audio_output
-                    cur_id = get_current_default_audio_output()
-                except Exception:
-                    pass
-                alt_id = slot.get("audio_input_device_id_alt", "").strip()
-                if alt_id and cur_id and cur_id == alt_id:
-                    icon_name = slot.get("audio_alt_icon") or "headphones"
+                # "+" empty-state prompt (top-left slot when nothing configured)
+                if not buttons and pi == 0 and i == 0:
+                    plus_img = self._make_tile_photo("plus", BG_CARD)
+                    plus_hov = self._make_tile_photo("plus", self._adjust_hex(BG_CARD, 20))
+                    self._btn_tile_refs.extend([plus_img, plus_hov])
+                    plus_btn = tk.Label(self._btn_inner, image=plus_img, bg=BG, cursor="hand2",
+                                        padx=0, pady=0, borderwidth=0)
+                    plus_btn.place(x=x, y=y)
+                    def _ph(e, b=plus_btn, h=plus_hov, n=plus_img): b.config(image=h)
+                    def _pl(e, b=plus_btn, n=plus_img): b.config(image=n)
+                    plus_btn.bind("<Enter>", _ph)
+                    plus_btn.bind("<Leave>", _pl)
+                    plus_btn.bind("<Button-1>", lambda e: self.app._open_settings())
+                    plus_btn.bind("<MouseWheel>", self._on_btn_wheel)
+                    plus_tip = tk.Label(self._btn_inner, text="Add",
+                                        font=("Segoe UI", 6), fg=FG, bg=BG)
+                    plus_tip.place(x=x, y=y + _T - 2, width=_T, height=12)
+                    plus_tip.bind("<MouseWheel>", self._on_btn_wheel)
+                    continue
+
+                # Empty / EMPTY slot → faint placeholder tile (empty grid slot)
+                if slot is None or slot.get("type") == "EMPTY":
+                    ph = self._make_placeholder_photo()
+                    phl = tk.Label(self._btn_inner, image=ph, bg=BG,
+                                   padx=0, pady=0, borderwidth=0)
+                    phl.place(x=x, y=y)
+                    phl.bind("<MouseWheel>", self._on_btn_wheel)
+                    continue
+
+                btype = slot.get("type", "")
+                if btype == "AUDIO OUTPUT":
+                    cur_id = None
+                    try:
+                        from win_platform import get_current_default_audio_output
+                        cur_id = get_current_default_audio_output()
+                    except Exception:
+                        pass
+                    alt_id = slot.get("audio_input_device_id_alt", "").strip()
+                    if alt_id and cur_id and cur_id == alt_id:
+                        icon_name = slot.get("audio_alt_icon") or "headphones"
+                    else:
+                        icon_name = slot.get("audio_primary_icon") or "speaker"
                 else:
-                    icon_name = slot.get("audio_primary_icon") or "speaker"
-            else:
-                icon_name = slot.get("icon") or "help-circle"
-            fill = slot.get("color") or BG_CARD
-            name = slot.get("name") or ""
-            app_icon = slot.get("app_icon_path") or (slot.get("shortcut_path") if btype in ("SHORTCUT", "GROUP") else None)
-            ring = NEON if btype == "GROUP" else None
+                    icon_name = slot.get("icon") or "help-circle"
+                fill = slot.get("color") or BG_CARD
+                name = slot.get("name") or ""
+                app_icon = slot.get("app_icon_path") or (slot.get("shortcut_path") if btype in ("SHORTCUT", "GROUP") else None)
+                if not app_icon and slot.get("use_app_icon"):
+                    app_icon = (self.app.cfg.get("media_player_path") or "").strip() or None
+                ring = NEON if btype == "GROUP" else None
 
-            img = self._make_tile_photo(icon_name, fill, ring_hex=ring, app_icon_path=app_icon)
-            hov = self._make_tile_photo(icon_name, self._adjust_hex(fill, 20), ring_hex=ring, app_icon_path=app_icon)
-            prs = self._make_tile_photo(icon_name, self._adjust_hex(fill, -20), ring_hex=ring, app_icon_path=app_icon)
-            self._btn_tile_refs.extend([img, hov, prs])
+                img = self._make_tile_photo(icon_name, fill, ring_hex=ring, app_icon_path=app_icon)
+                hov = self._make_tile_photo(icon_name, self._adjust_hex(fill, 20), ring_hex=ring, app_icon_path=app_icon)
+                prs = self._make_tile_photo(icon_name, self._adjust_hex(fill, -20), ring_hex=ring, app_icon_path=app_icon)
+                self._btn_tile_refs.extend([img, hov, prs])
 
-            btn = tk.Label(self._btn_inner, image=img, bg=BG, cursor="hand2",
-                           padx=0, pady=0, borderwidth=0)
-            btn.place(x=col * (_T + _GAP), y=row * (_T + _GAP))
-            btn.bind("<MouseWheel>", self._on_btn_wheel)
+                btn = tk.Label(self._btn_inner, image=img, bg=BG, cursor="hand2",
+                               padx=0, pady=0, borderwidth=0)
+                btn.place(x=x, y=y)
+                btn.bind("<MouseWheel>", self._on_btn_wheel)
 
-            def _on_enter(e, b=btn, h=hov): b.config(image=h)
-            def _on_leave(e, b=btn, n=img): b.config(image=n)
-            def _on_press(e, b=btn, p=prs): b.config(image=p)
-            def _on_release(e, b=btn, s=slot, n=img):
-                b.config(image=n)
-                self._on_button_action(s)
+                def _on_enter(e, b=btn, h=hov): b.config(image=h)
+                def _on_leave(e, b=btn, n=img): b.config(image=n)
+                def _on_press(e, b=btn, p=prs): b.config(image=p)
+                def _on_release(e, b=btn, s=slot, n=img):
+                    b.config(image=n)
+                    self._on_button_action(s)
 
-            btn.bind("<Enter>", _on_enter)
-            btn.bind("<Leave>", _on_leave)
-            btn.bind("<ButtonPress-1>", _on_press)
-            btn.bind("<ButtonRelease-1>", _on_release)
+                btn.bind("<Enter>", _on_enter)
+                btn.bind("<Leave>", _on_leave)
+                btn.bind("<ButtonPress-1>", _on_press)
+                btn.bind("<ButtonRelease-1>", _on_release)
 
-            if name:
-                ToolTip(btn, name)
+                if name:
+                    ToolTip(btn, name)
 
-        nrows = max_row + 1
-        self._btn_inner.configure(height=nrows * (_T + _GAP) + _GAP)
+        # Track height = one page per grid page (+ colour-picker / screenshot pages)
+        page_count = len(pages)
+        if self._picker_active:
+            self._build_picker_page(y0=page_count * _PAGE)
+            page_count += 1
+        if self._screenshot_active:
+            self._build_screenshot_page(y0=page_count * _PAGE)
+            page_count += 1
+        self._btn_inner.configure(height=page_count * _PAGE)
+        # Default view = the extra page when active, else the first button page
+        if self._picker_active:
+            self._win.after_idle(self._scroll_btn_to_picker)
+        elif self._screenshot_active:
+            self._win.after_idle(self._scroll_btn_to_screenshot)
+        else:
+            self._win.after_idle(self._snap_btn_view)
 
     @staticmethod
     def _adjust_hex(hex_color, amount):
@@ -701,20 +753,440 @@ class MainWindow:
         except Exception:
             return hex_color
 
+    def _btn_page_count(self):
+        try:
+            inner_h = max(1, int(self._btn_inner.winfo_reqheight()))
+            return max(1, int(round(inner_h / float(self.PAGE_H))))
+        except Exception:
+            return 1
+
+    def _snap_btn_view(self):
+        """Scroll the button track to the appropriate page."""
+        try:
+            inner_h = max(1, int(self._btn_inner.winfo_reqheight()))
+            self._btn_canvas.configure(scrollregion=(0, 0, 0, inner_h))
+            if self._screenshot_active:
+                self._scroll_btn_to_screenshot()
+            elif self._picker_active:
+                self._scroll_btn_to_picker()
+            else:
+                self._btn_canvas.yview_moveto(0)
+        except Exception:
+            pass
+
+    # ── Colour picker (screen grab via low-level mouse hook) ───────────
+
+    def start_colour_picker(self):
+        """Pop the panel up with the colour-picker page and arm the first grab."""
+        if self._picker_session is not None:
+            self._picker_session.end()
+            self._picker_session = None
+        self._picker_active = True
+        self._picked_hex = (self.app.cfg.get("colour_picker_value") or None)
+        self._render_buttons()
+        self.show()
+        self._arm_colour_picker()
+
+    def _arm_colour_picker(self):
+        """Start a fresh grab session. Safe to call repeatedly."""
+        if self._picker_session is not None:
+            self._picker_session.end()
+            self._picker_session = None
+        self._picker_session = colour_picker.ColourPickSession(
+            exclude_hwnd=self._hwnd,
+            root=self._root,
+            on_preview=self._picker_preview,
+            on_colour=self._picker_colour,
+            on_cancel=self._picker_cancel,
+        )
+        self._picker_session.begin()
+
+    def _finish_colour_picker(self):
+        if self._picker_session:
+            self._picker_session.end()
+            self._picker_session = None
+        self._picker_active = False
+        self._picker_hex_lbl = self._picker_rgb_lbl = None
+        self._picker_capture_btn = None
+        self._click_guard = True
+        self._render_buttons()
+
+    # ── Screenshot (screen grab via vision.py + iconify) ────────────────
+
+    def start_screenshot(self, slot=None):
+        """Open the screenshot dialog page over the button box."""
+        self._screenshot_slot    = slot or {}
+        self._screenshot_monitor = int((slot or {}).get("screenshot_monitor", 0))
+        self._screenshot_active  = True
+        self._render_buttons()
+        self.show()
+
+    def _scroll_btn_to_screenshot(self):
+        """Scroll the button track so the screenshot page is in view."""
+        try:
+            inner_h = max(1, int(self._btn_inner.winfo_reqheight()))
+            self._btn_canvas.configure(scrollregion=(0, 0, 0, inner_h))
+            num = max(1, self._btn_page_count())
+            self._btn_canvas.yview_moveto((num - 1) / num)
+        except Exception:
+            pass
+
+    def _build_screenshot_page(self, y0):
+        import vision as _vision
+        _W, _PH = 190, self.PAGE_H
+        frm = tk.Frame(self._btn_inner, bg=BG, width=_W, height=_PH)
+        frm.place(x=0, y=y0)
+        frm.pack_propagate(False)
+
+        tk.Label(frm, text="SCREENSHOT", font=("Segoe UI", 6, "bold"),
+                 fg=FG_DIM, bg=BG).place(x=0, y=6, width=_W, height=12)
+
+        # Preview thumbnail area
+        self._screenshot_lbl = tk.Label(
+            frm, bg="#111111", text="No capture yet",
+            font=("Segoe UI", 7), fg=FG_DIM,
+            relief="flat", anchor="center")
+        self._screenshot_lbl.bind("<MouseWheel>", self._on_btn_wheel)
+        if self._screenshot_img is not None:
+            self._update_screenshot_preview()
+
+        # Monitor dropdown — only shown when more than one monitor is present
+        monitors = _vision.monitor_rects()
+        n_mon = len(monitors)
+
+        if n_mon > 1:
+            mon_labels = [
+                f"Monitor {i + 1}  ({m['w']}×{m['h']})"
+                for i, m in enumerate(monitors)
+            ]
+            mon_idx = max(0, min(self._screenshot_monitor, n_mon - 1))
+            self._ss_mon_var = tk.StringVar(value=mon_labels[mon_idx])
+
+            mon_menu = tk.OptionMenu(frm, self._ss_mon_var, *mon_labels)
+            mon_menu.config(
+                bg="#1a1a1a", fg=FG, activebackground=NEON,
+                font=("Segoe UI", 7), relief="flat",
+                highlightthickness=0, width=22, anchor="w")
+            mon_menu["menu"].config(bg="#1a1a1a", fg=FG,
+                                    activebackground=NEON, activeforeground=BG)
+            mon_menu.place(x=6, y=98, width=178, height=20)
+            mon_menu.bind("<MouseWheel>", self._on_btn_wheel)
+            # preview sits between title (y=18) and monitor (y=98)
+            _pv_h = 98 - 22 - 4
+            btn_y = 122
+
+            def _on_mon_change(*_):
+                try:
+                    self._screenshot_monitor = mon_labels.index(
+                        self._ss_mon_var.get())
+                except ValueError:
+                    pass
+            self._ss_mon_var.trace_add("write", _on_mon_change)
+        else:
+            # no monitor — push buttons to the bottom, preview fills the gap
+            btn_y = _PH - 6 - 26          # 150 - 6 - 26 = 118
+            _pv_h = btn_y - 22 - 4        # 92
+
+        self._screenshot_lbl.place(x=6, y=22, width=178, height=_pv_h)
+
+        # Capture buttons — 3 across: Area | Fullscreen | Done
+        _btn_h, _btn_gap = 26, 4
+        _btn_y0 = 6
+        _total_w = _W - 2 * _btn_y0  # usable width
+        _area_w = 48
+        _done_w = 48
+        _full_w = _total_w - _area_w - _done_w - 2 * _btn_gap
+        area_btn = RoundedButton(
+            frm, text="Area", style="sec",
+            command=self._screenshot_grab_area,
+            font=("Segoe UI", 8, "bold"))
+        area_btn.place(x=_btn_y0, y=btn_y, width=_area_w, height=_btn_h)
+
+        full_btn = RoundedButton(
+            frm, text="Fullscreen", style="sec",
+            command=self._screenshot_grab_full,
+            font=("Segoe UI", 8, "bold"))
+        full_btn.place(x=_btn_y0 + _area_w + _btn_gap, y=btn_y, width=_full_w, height=_btn_h)
+
+        done_btn = RoundedButton(
+            frm, text="Done", style="prim",
+            command=self._finish_screenshot,
+            font=("Segoe UI", 8, "bold"))
+        done_btn.place(x=_btn_y0 + _area_w + _btn_gap + _full_w + _btn_gap, y=btn_y, width=_done_w, height=_btn_h)
+
+        for w in (area_btn, full_btn, done_btn):
+            w.bind("<MouseWheel>", self._on_btn_wheel)
+
+    def _screenshot_grab_full(self):
+        """Hide the window, wait, then capture the selected monitor."""
+        import threading
+        self._win.withdraw()
+
+        def _capture():
+            import vision as _vision
+            monitors = _vision.monitor_rects()
+            idx = max(0, min(self._screenshot_monitor, len(monitors) - 1))
+            m = monitors[idx]
+            bbox = (m["x"], m["y"], m["x"] + m["w"], m["y"] + m["h"])
+            try:
+                img = _vision.capture(bbox)
+                self._root.after(0, lambda: self._on_screenshot_done(img))
+            except Exception as exc:
+                log.warning("screenshot full capture failed: %s", exc)
+                self._root.after(0, self._win.deiconify)
+
+        self._root.after(
+            200, lambda: threading.Thread(
+                target=_capture, daemon=True, name="iris-screenshot-full"
+            ).start()
+        )
+
+    def _screenshot_grab_area(self):
+        """Hide the window, show the region selector, then capture."""
+        import threading
+        self._win.withdraw()
+
+        def _capture():
+            import vision as _vision
+            rect = _vision.select_region(self._root, timeout=90)
+            if rect:
+                x, y, w, h = rect
+                try:
+                    img = _vision.capture((x, y, x + w, y + h))
+                    self._root.after(0, lambda: self._on_screenshot_done(img))
+                    return
+                except Exception as exc:
+                    log.warning("screenshot area capture failed: %s", exc)
+            self._root.after(0, self._win.deiconify)
+
+        self._root.after(
+            150, lambda: threading.Thread(
+                target=_capture, daemon=True, name="iris-screenshot-area"
+            ).start()
+        )
+
+    def _on_screenshot_done(self, img):
+        """Called on the Tk thread once the capture thread has a PIL image."""
+        import io, base64, time as _time
+        self._win.deiconify()
+        self._screenshot_img = img
+        self._screenshot_ts  = _time.time()
+        self._screenshot_w   = img.width
+        self._screenshot_h   = img.height
+        self._save_screenshot_to_disk(img)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=62, optimize=True)
+        self._screenshot_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+        # Make available for GET /api/screenshot/latest
+        if self.app is not None:
+            self.app.screenshot_last = {
+                "img": self._screenshot_b64,
+                "fmt": "jpeg",
+                "w":   self._screenshot_w,
+                "h":   self._screenshot_h,
+                "ts":  self._screenshot_ts,
+            }
+        self._update_screenshot_preview()
+
+    def _save_screenshot_to_disk(self, img):
+        """Persist the capture as a PNG in the configured screenshot folder."""
+        import os
+        try:
+            folder = (self.app.cfg.get("screenshot_dir") or "").strip() if self.app is not None else ""
+            if not folder:
+                folder = os.path.join(os.path.expanduser("~"), "Documents", "Iris", "Screenshots")
+            folder = os.path.abspath(folder)
+            os.makedirs(folder, exist_ok=True)
+            fname = "iris_%s.png" % _time.strftime("%Y%m%d_%H%M%S")
+            path = os.path.join(folder, fname)
+            img.save(path, format="PNG")
+            log.info("screenshot saved: %s", path)
+        except Exception as exc:
+            log.warning("screenshot save failed: %s", exc)
+
+    def _update_screenshot_preview(self):
+        """Resize the captured image and show it in the dialog preview label."""
+        if self._screenshot_lbl is None or self._screenshot_img is None:
+            return
+        try:
+            from PIL import Image, ImageTk
+            thumb = self._screenshot_img.copy()
+            thumb.thumbnail((178, 72), Image.LANCZOS)
+            photo = ImageTk.PhotoImage(thumb)
+            self._screenshot_lbl.config(image=photo, text="")
+            self._screenshot_lbl._photo = photo  # keep reference to prevent GC
+        except Exception as exc:
+            log.warning("screenshot preview update failed: %s", exc)
+
+    def _finish_screenshot(self):
+        """Close the screenshot dialog and return to the button grid."""
+        self._screenshot_active = False
+        self._screenshot_lbl    = None
+        self._click_guard = True
+        self._render_buttons()
+
+    def _scroll_btn_to_picker(self):
+        """Scroll the button track so the colour-picker page is in view."""
+        try:
+            inner_h = max(1, int(self._btn_inner.winfo_reqheight()))
+            self._btn_canvas.configure(scrollregion=(0, 0, 0, inner_h))
+            num = max(1, self._btn_page_count())
+            self._btn_canvas.yview_moveto((num - 1) / num)
+        except Exception:
+            pass
+
+    def _build_picker_page(self, y0):
+        _W, _PH = 190, self.PAGE_H
+        frm = tk.Frame(self._btn_inner, bg=BG, width=_W, height=_PH)
+        frm.place(x=0, y=y0)
+        frm.pack_propagate(False)
+
+        tk.Label(frm, text="COLOUR PICKER", font=("Segoe UI", 6, "bold"),
+                 fg=FG_DIM, bg=BG).place(x=0, y=6, width=_W, height=12)
+
+        self._picker_hex_lbl = tk.Label(frm, text=self._picked_hex or "#------",
+                                        font=("Consolas", 16, "bold"),
+                                        fg=self._picked_hex or NEON, bg=BG)
+        self._picker_hex_lbl.place(x=0, y=22, width=_W, height=30)
+
+        self._picker_rgb_lbl = tk.Label(frm, text="rgb(—, —, —)",
+                                        font=("Consolas", 8), fg=FG, bg=BG)
+        self._picker_rgb_lbl.place(x=0, y=54, width=_W, height=14)
+
+        tip = tk.Label(frm, text="Hover the display to preview, click to grab.",
+                       font=("Segoe UI", 6), fg=FG_DIM, bg=BG)
+        tip.place(x=0, y=72, width=_W, height=14)
+
+        # Two buttons centered: eyedropper + Done
+        _btn_h, _btn_gap = 28, 6
+        _pick_w = 36
+        _done_w = _W - _pick_w - _btn_gap - 12   # 6px margin each side
+
+        pick_btn = RoundedButton(
+            frm, style="sec", icon="eyedropper",
+            command=self._arm_colour_picker,
+            font=("Segoe UI", 8, "bold"))
+        pick_btn.place(x=6, y=102, width=_pick_w, height=_btn_h)
+        pick_btn.bind("<MouseWheel>", self._on_btn_wheel)
+
+        done = RoundedButton(frm, text="Done", style="prim",
+                             command=self._finish_colour_picker,
+                             font=("Segoe UI", 8, "bold"))
+        done.place(x=6 + _pick_w + _btn_gap, y=102, width=_done_w, height=_btn_h)
+
+        for w in (self._picker_hex_lbl, self._picker_rgb_lbl, tip, done, pick_btn):
+            w.bind("<MouseWheel>", self._on_btn_wheel)
+
+        self._picker_hex_lbl.bind("<Button-1>", lambda e: self._copy_picked("hex"))
+        self._picker_rgb_lbl.bind("<Button-1>", lambda e: self._copy_picked("rgb"))
+
+    def _copy_picked(self, which):
+        """Copy the current hex or rgb value to the clipboard."""
+        try:
+            value = self._picked_hex
+            if not value:
+                return
+            if which == "rgb" and self._picker_rgb_lbl is not None:
+                cur = self._picker_rgb_lbl.cget("text")
+                if cur.startswith("rgb("):
+                    value = cur
+            self._root.clipboard_clear()
+            self._root.clipboard_append(value)
+            self._root.update()
+            self._picker_hex_lbl.config(fg=NEON)
+            self._picker_rgb_lbl.config(fg=FG)
+        except Exception as e:
+            log.warning("copy picked colour failed: %s", e)
+
+    def _picker_preview(self, hexs, rgb):
+        if self._picker_hex_lbl is not None:
+            try:
+                self._picker_hex_lbl.config(text=hexs, fg=hexs)
+                self._picker_rgb_lbl.config(text="rgb(%d, %d, %d)" % rgb)
+            except Exception:
+                pass
+
+    def _picker_colour(self, hexs, rgb):
+        """A colour was grabbed — lock it, persist it, and notify the phone."""
+        self._picked_hex = hexs
+        self._picker_preview(hexs, rgb)
+        try:
+            self.app.cfg["colour_picker_value"] = hexs
+            from config import save_config
+            save_config(self.app.cfg)
+        except Exception as e:
+            log.warning("save picked colour failed: %s", e)
+        try:
+            from serial_comm import serial_sender
+            serial_sender.notify("colour.picker.last", "Colour Picked", hexs, theme="purple")
+        except Exception as e:
+            log.warning("colour picker notify failed: %s", e)
+
+    def _picker_cancel(self):
+        """Session cancelled — keep the page up so the value is still readable."""
+
     def _on_btn_wheel(self, e):
-        self._btn_canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+        """Page-based scroll: one wheel notch = one full page."""
+        try:
+            num_pages = self._btn_page_count()
+            cur = self._btn_canvas.yview()[0]
+            page = max(0, min(num_pages - 1, int(round(cur * num_pages))))
+            delta = int(-1 * (e.delta / 120))  # +1 on wheel down (Windows)
+            page = max(0, min(num_pages - 1, page + delta))
+            self._btn_canvas.yview_moveto(page / num_pages)
+        except Exception:
+            pass
 
     def _on_button_action(self, slot):
+        if getattr(self, '_click_guard', False):
+            self._click_guard = False
+            return
         btype = slot.get("type", "")
         log.info("Button '%s' clicked — type=%s", slot.get("name",""), btype)
 
-        import threading, subprocess
+        import threading, os, subprocess
+
+        def _safe_launch(p, args=None):
+            if not p:
+                return
+            import shutil
+            import shlex
+            raw_path = os.path.expandvars(os.path.expanduser(str(p).strip().strip('"\'')))
+            raw_args = os.path.expandvars(str(args or "").strip())
+            if not raw_args and not os.path.isfile(raw_path):
+                try:
+                    parts = shlex.split(raw_path, posix=False)
+                    if parts:
+                        first_token = parts[0].strip('"\'')
+                        first_token = os.path.expandvars(os.path.expanduser(first_token))
+                        which_p = shutil.which(first_token) or (first_token if os.path.isfile(first_token) else None)
+                        if which_p and os.path.isfile(which_p):
+                            raw_path = which_p
+                            raw_args = raw_path[len(parts[0]):].strip()
+                except Exception:
+                    pass
+
+            exe = shutil.which(raw_path) or raw_path
+            try:
+                if raw_args:
+                    if hasattr(os, "startfile"):
+                        os.startfile(exe, arguments=raw_args)
+                    else:
+                        subprocess.Popen(f'"{exe}" {raw_args}', shell=True)
+                else:
+                    if hasattr(os, "startfile"):
+                        os.startfile(exe)
+                    else:
+                        subprocess.Popen([exe], shell=False)
+            except Exception as ex:
+                log.warning("Launch shortcut failed: %s", ex)
 
         if btype == "GROUP":
             path = slot.get("shortcut_path", "").strip()
+            s_args = slot.get("shortcut_args", "").strip()
             if path:
                 threading.Thread(
-                    target=lambda: subprocess.Popen(["cmd", "/c", "start", "", path]),
+                    target=lambda: _safe_launch(path, s_args),
                     daemon=True,
                 ).start()
             self.btn_nav_push(slot)
@@ -724,11 +1196,45 @@ class MainWindow:
             self.btn_nav_push(slot)
             return
 
+        ent = slot.get("entity", "").strip()
+        if ent == "media.player" or ent == "media.eject" or btype == "MEDIA_EJECT":
+            self._media_eject()
+            return
+        if ent == "media.play_pause" or btype == "MEDIA_PLAY":
+            self._media_play_pause()
+            return
+        if ent == "media.next" or btype == "MEDIA_NEXT":
+            self._media_next()
+            return
+        if ent == "media.prev" or btype == "MEDIA_PREV":
+            self._media_prev()
+            return
+        if ent == "system.display":
+            self.app._toggle_pc_stats()
+            return
+        if ent == "system.overlay":
+            self.app._toggle_overlay()
+            return
+        if ent == "system.mic_mute":
+            from win_platform import toggle_mic_mute
+            toggle_mic_mute()
+            return
+        if ent == "system.settings":
+            self.app._open_settings()
+            return
+        if ent == "system.colour_picker":
+            self.start_colour_picker()
+            return
+        if ent == "system.screenshot" or btype == "SCREENSHOT":
+            self.start_screenshot(slot)
+            return
+
         if btype == "SHORTCUT":
             path = slot.get("shortcut_path", "").strip()
+            s_args = slot.get("shortcut_args", "").strip()
             if path:
                 threading.Thread(
-                    target=lambda: subprocess.Popen(["cmd", "/c", "start", "", path]),
+                    target=lambda: _safe_launch(path, s_args),
                     daemon=True,
                 ).start()
         elif btype == "REST":
@@ -741,14 +1247,6 @@ class MainWindow:
             self._do_audio_output_action(slot)
         elif btype == "STOPWATCH":
             self.app._toggle_stopwatch()
-        elif btype == "MEDIA_PREV":
-            self._media_prev()
-        elif btype == "MEDIA_PLAY":
-            self._media_play_pause()
-        elif btype == "MEDIA_NEXT":
-            self._media_next()
-        elif btype == "MEDIA_EJECT":
-            self._media_eject()
         elif btype == "EMPTY":
             pass
         elif btype.startswith("PLUGIN:"):
@@ -940,55 +1438,35 @@ class MainWindow:
             log.warning("OpenRGB colour apply failed: %s", ex)
 
     def _do_hotkey_action(self, slot):
-        keys = slot.get("keys", [])
-        if not keys:
+        hotkey = (slot.get("hotkey") or "").strip()
+        if not hotkey:
+            legacy_keys = slot.get("keys", [])
+            if legacy_keys:
+                hotkey = legacy_keys
+
+        if not hotkey:
             return
 
         title = getattr(self, '_saved_foreground_title', '')
-        if not title:
-            log.warning("[hotkey] no saved foreground title")
-            return
-
         self._sending_hotkey = True
         self.hide()
 
         try:
-            import pygetwindow as gw
-            matches = gw.getWindowsWithTitle(title)
-            if not matches:
-                log.warning("[hotkey] window '%s' not found", title)
-                return
+            if title:
+                import pygetwindow as gw
+                matches = gw.getWindowsWithTitle(title)
+                if matches:
+                    matches[0].activate()
+                    _time.sleep(0.15)
 
-            target = matches[0]
-            log.info("[hotkey] activating '%s'", target.title)
-            target.activate()
-            _time.sleep(0.5)
-
-            # Convert VK codes to hardware scancodes
-            scans = []
-            for vk in keys:
-                scan = user32.MapVirtualKeyW(vk, 0)
-                if scan:
-                    scans.append(scan)
-
-            if not scans:
-                log.warning("[hotkey] no scancodes for vk=%s", keys)
-                return
-
-            # Press chord (all down, brief hold, all up)
-            for scan in scans:
-                _hardware_key(scan, press=True)
-                _time.sleep(0.03)
-            _time.sleep(0.08)
-            for scan in reversed(scans):
-                _hardware_key(scan, press=False)
-                _time.sleep(0.03)
-
-            log.info("[hotkey] sent via hardware scancodes to '%s'", title)
+            from keyboard_service import keyboard_service
+            keyboard_service.send_sequence(hotkey)
+            log.info("[hotkey] sent '%s' via hardware keyboard_service", hotkey)
         except Exception as ex:
             log.error("[hotkey] error: %s", ex)
         finally:
             self._win.after(200, lambda: setattr(self, '_sending_hotkey', False))
+
 
     def _do_audio_output_action(self, slot):
         try:
@@ -1018,6 +1496,37 @@ class MainWindow:
     # ── Tile photo cache ──────────────────────────────────────────
     _tile_cache = {}
 
+    @staticmethod
+    def _parse_hex(hex_str, default=(43, 43, 43)):
+        if isinstance(hex_str, str) and len(hex_str) >= 7 and hex_str.startswith("#"):
+            try:
+                return tuple(int(hex_str[i:i+2], 16) for i in (1, 3, 5))
+            except (ValueError, TypeError):
+                pass
+        return default
+
+    def _make_placeholder_photo(self):
+        """Empty tile — a faint filled rounded rect, no border."""
+        cached = self._tile_cache.get("__placeholder__")
+        if cached is not None:
+            return cached
+        _T, _CR = 40, 8
+        S = _T * 2
+        R = _CR * 2
+        brgb = self._parse_hex(BG, default=(12, 13, 15))
+        frgb = self._parse_hex(BG_CARD, default=(43, 43, 43))
+        # Phone renders the tile at opacity .3 — approximate by blending toward BG
+        blend = tuple(int(frgb[i] * 0.35 + brgb[i] * 0.65) for i in range(3))
+        img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        d.rounded_rectangle([0, 0, S - 1, S - 1], R, fill=(*blend, 255))
+        img = img.resize((_T, _T), Image.LANCZOS)
+        base = Image.new("RGB", (_T, _T), brgb)
+        base.paste(img, mask=img.split()[3])
+        photo = ImageTk.PhotoImage(base)
+        self._tile_cache["__placeholder__"] = photo
+        return photo
+
     def _make_tile_photo(self, mdi_name, fill_hex, ring_hex=None, icon_color=None,
                          app_icon_path=None, icon_scale=0.7):
         """4× supersampled PIL tile → PhotoImage (rounded rect + icon).
@@ -1030,6 +1539,9 @@ class MainWindow:
         R = _CR * 2
         bw = 4
 
+        if not fill_hex or not isinstance(fill_hex, str):
+            fill_hex = BG_CARD if isinstance(BG_CARD, str) else "#2B2B2B"
+
         cache_key = (mdi_name, fill_hex, ring_hex, icon_color, app_icon_path, icon_scale)
         cached = self._tile_cache.get(cache_key)
         if cached is not None:
@@ -1039,8 +1551,8 @@ class MainWindow:
             return self._make_rainbow_tile(mdi_name, ring_hex, icon_color, app_icon_path,
                                            icon_scale, _T, _CR, S, R, bw, cache_key)
 
-        frgb = tuple(int(fill_hex[i:i+2], 16) for i in (1, 3, 5))
-        brgb = tuple(int(BG[i:i+2], 16) for i in (1, 3, 5))
+        frgb = self._parse_hex(fill_hex, default=(43, 43, 43))
+        brgb = self._parse_hex(BG, default=(12, 13, 15))
         if icon_color:
             ic_rgb = icon_color
         else:
@@ -1073,8 +1585,8 @@ class MainWindow:
                 bbox = app_img.getbbox()
                 if bbox:
                     app_img = app_img.crop(bbox)
-                app_img = app_img.resize((_T, _T), Image.LANCZOS)
-                app_img_s = app_img.resize((S, S), Image.LANCZOS)
+                icon_sz = int(S * icon_scale)
+                app_img_s = app_img.resize((icon_sz, icon_sz), Image.LANCZOS)
                 ox = (S - app_img_s.width) // 2
                 oy = (S - app_img_s.height) // 2
                 layer = Image.new("RGBA", (S, S), (0, 0, 0, 0))
@@ -1100,7 +1612,7 @@ class MainWindow:
 
         # Ring border on top of everything
         if ring_hex:
-            rrgb = tuple(int(ring_hex[i:i+2], 16) for i in (1, 3, 5))
+            rrgb = self._parse_hex(ring_hex, default=(72, 178, 233))
             ring_img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
             r_draw = ImageDraw.Draw(ring_img)
             r_draw.rounded_rectangle([0, 0, S-1, S-1], R, fill=(*rrgb, 255))
@@ -1116,7 +1628,7 @@ class MainWindow:
 
     def _make_rainbow_tile(self, mdi_name, ring_hex, icon_color, app_icon_path,
                            icon_scale, _T, _CR, S, R, bw, cache_key):
-        brgb = tuple(int(BG[i:i+2], 16) for i in (1, 3, 5))
+        brgb = self._parse_hex(BG, default=(12, 13, 15))
         if icon_color:
             ic_rgb = icon_color
         else:
@@ -1177,7 +1689,7 @@ class MainWindow:
             except Exception as e:
                 log.warning("Icon render(%s) failed: %s", mdi_name, e)
         if ring_hex:
-            rrgb = tuple(int(ring_hex[i:i+2], 16) for i in (1, 3, 5))
+            rrgb = self._parse_hex(ring_hex, default=(72, 178, 233))
             ring_img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
             r_draw = ImageDraw.Draw(ring_img)
             r_draw.rounded_rectangle([0, 0, S-1, S-1], R, fill=(*rrgb, 255))
@@ -1216,6 +1728,23 @@ class MainWindow:
         except Exception:
             pass
 
+    def _on_master_volume_change(self):
+        try:
+            import win_volume
+            win_volume.set_master_volume(self._master_var.get())
+        except Exception:
+            pass
+
+    def _refresh_master_ui(self):
+        try:
+            import win_volume
+            state = win_volume.get_master_state()
+        except Exception:
+            state = {"volume": None}
+        vol = state.get("volume")
+        if isinstance(vol, int) and self._master_var.get() != vol:
+            self._master_var.set(vol)
+
     def _refresh_volume_ui(self):
         try:
             import win_volume
@@ -1223,16 +1752,12 @@ class MainWindow:
         except Exception:
             state = {"app": None, "volume": None}
         vol = state.get("volume")
-        app = state.get("app")
         if isinstance(vol, int):
             self._volume_enabled = True
             if self._volume_var.get() != vol:
                 self._volume_var.set(vol)
-            self._lbl_volume_app.config(text=app or "Application", fg=FG_DIM)
         else:
             self._volume_enabled = False
-            label = (f"{app} — no audio") if app else "No audio session"
-            self._lbl_volume_app.config(text=label, fg=FG_DIM)
 
     def _refresh_mixer_ui(self):
         """Refresh per-app volume rows from win_volume.list_sessions()."""
@@ -1246,7 +1771,7 @@ class MainWindow:
             sessions = win_volume.list_sessions()
         except Exception:
             sessions = []
-        key = tuple((s.get("pid"), s.get("volume"), s.get("name")) for s in sessions)
+        key = tuple((s.get("pid"), s.get("volume"), s.get("exe") or s.get("name")) for s in sessions)
         if key == self._mixer_sig:
             return
         self._mixer_sig = key
@@ -1254,27 +1779,27 @@ class MainWindow:
             w.destroy()
         self._mixer_rows = []
 
-        _LABEL_H, _SLIDER_H = 14, 26
+        _LABEL_H, _SLIDER_H = 12, 24
         y = 0
         for s in sessions[:10]:
             pid = s.get("pid")
-            name = s.get("name") or "Application"
+            name = (s.get("exe") or s.get("name") or "Application").upper()
             vol = s.get("volume")
             var = tk.IntVar(value=vol if isinstance(vol, int) else 0)
-            lbl = tk.Label(frame, text=name, font=("Segoe UI", 8),
-                           fg=FG_DIM, bg=BG, anchor="w")
-            lbl.place(x=0, y=y, width=180, height=_LABEL_H)
+            lbl = tk.Label(frame, text=name, font=("Segoe UI", 7, "bold"),
+                           fg=NEON, bg=BG, anchor="w")
+            lbl.place(x=0, y=y, width=190, height=_LABEL_H)
             y += _LABEL_H
-            sl = StepSlider(frame, list(range(101)), var,
+            sl = StepSlider(frame, list(range(101)), var, bg=BG,
                             on_change=lambda p=pid, v=var: self._set_mixer_volume(p, v.get()))
-            sl.place(x=0, y=y, width=180, height=_SLIDER_H)
-            y += _SLIDER_H + 6
+            sl.place(x=0, y=y, width=190, height=_SLIDER_H)
+            y += _SLIDER_H + 2
             self._mixer_rows.append({"pid": pid, "var": var, "slider": sl, "label": lbl})
 
         if not self._mixer_rows:
-            empty = tk.Label(frame, text="No apps playing", font=("Segoe UI", 8),
+            empty = tk.Label(frame, text="NO APPS PLAYING", font=("Segoe UI", 7, "bold"),
                              fg=FG_DIM, bg=BG, anchor="w")
-            empty.place(x=0, y=0, width=180, height=_LABEL_H)
+            empty.place(x=0, y=0, width=190, height=_LABEL_H)
             y = _LABEL_H + 8
 
         self._mixer_h = y
@@ -1305,13 +1830,30 @@ class MainWindow:
         self._send_media_key(0xB0)  # VK_MEDIA_NEXT_TRACK
 
     def _media_eject(self):
-        if not self.app:
-            return
-        path = self.app.cfg.get("media_player_path", "").strip()
+        path = ""
+        if self.app and getattr(self.app, "cfg", None):
+            path = (self.app.cfg.get("media_player_path") or "").strip()
+        if not path:
+            try:
+                from config import load_config
+                path = (load_config().get("media_player_path") or "").strip()
+            except Exception:
+                pass
         if not path:
             return
-        import threading, subprocess
-        threading.Thread(target=lambda: subprocess.Popen([path], shell=False), daemon=True).start()
+        import threading, os, subprocess
+        from win_platform import bring_media_player_to_foreground
+        def _launch():
+            try:
+                if not bring_media_player_to_foreground(path):
+                    if path:
+                        if hasattr(os, "startfile"):
+                            os.startfile(path)
+                        else:
+                            subprocess.Popen([path], shell=False)
+            except Exception as ex:
+                log.warning("media eject launch failed: %s", ex)
+        threading.Thread(target=_launch, daemon=True).start()
 
     def _build_tiles(self):
         self._tile_refs = []
@@ -1324,24 +1866,30 @@ class MainWindow:
         self._sep_sliders = tk.Frame(self._win, bg=BG_CARD, height=1)
 
         self._lbl_volume_title = tk.Label(
-            self._win, text="App Volume", font=("Segoe UI", 10),
+            self._win, text="APP VOLUME", font=("Segoe UI", 7, "bold"),
             fg=NEON, bg=BG, anchor="w")
-        self._lbl_volume_app = tk.Label(
-            self._win, text="No audio session", font=("Segoe UI", 8),
-            fg=FG_DIM, bg=BG, anchor="w")
         self._volume_enabled = False
         self._volume_var = tk.IntVar(value=0)
         self._slider_volume = StepSlider(
-            self._win, list(range(101)), self._volume_var,
+            self._win, list(range(101)), self._volume_var, bg=BG,
             on_change=self._on_volume_change,
         )
 
+        self._lbl_master_title = tk.Label(
+            self._win, text="MASTER VOLUME", font=("Segoe UI", 7, "bold"),
+            fg=NEON, bg=BG, anchor="w")
+        self._master_var = tk.IntVar(value=0)
+        self._slider_master = StepSlider(
+            self._win, list(range(101)), self._master_var, bg=BG,
+            on_change=self._on_master_volume_change,
+        )
+
         self._lbl_brightness_title = tk.Label(
-            self._win, text="Display Brightness", font=("Segoe UI", 10),
+            self._win, text="DISPLAY BRIGHTNESS", font=("Segoe UI", 7, "bold"),
             fg=NEON, bg=BG, anchor="w")
         self._brightness_var = tk.IntVar(value=self.app.cfg.get("brightness", DEFAULT_BRIGHTNESS))
         self._slider_brightness = StepSlider(
-            self._win, list(range(5)), self._brightness_var,
+            self._win, list(range(5)), self._brightness_var, bg=BG,
             on_change=self._on_brightness_change,
         )
 
@@ -1349,9 +1897,6 @@ class MainWindow:
         self._mixer_h = 0
         self._mixer_sig = None
         self._mixer_rows = []
-        self._lbl_mixer_title = tk.Label(
-            self._win, text="App Mixer", font=("Segoe UI", 10),
-            fg=NEON, bg=BG, anchor="w")
         self._mixer_frame = tk.Frame(self._win, bg=BG)
 
         self._sep_utility = tk.Frame(self._win, bg=BG_CARD, height=1)
@@ -1469,21 +2014,6 @@ class MainWindow:
             self.app._open_settings(),
         ))
 
-        # ── TEMP: hero overlay test button ──
-        self._hero_btn = tk.Label(self._win, text="SHOW HERO", bg=NEON, fg=BG,
-                            font=("Segoe UI", 7, "bold"), cursor="hand2")
-        self._hero_btn.bind("<Button-1>", lambda e: self.app._overlays.hero(
-            title="SOL",
-            subtitle="Population: 24.3 Billion",
-            fields=[
-                ("Economy", "High Tech / Refinery"),
-                ("Government", "Democracy"),
-                ("Security", "High"),
-                ("Allegiance", "Federation"),
-            ],
-            duration=6,
-        ))
-
     def _on_gauge_click(self, e):
         if not self._overlay_on:
             self._overlay_on = True
@@ -1506,12 +2036,28 @@ class MainWindow:
                     self._gauge_cpu.set_value(s.cpu_temp)
                     self._gauge_gpu.set_value(s.gpu_temp)
                     self._gauge_fps.set_value(s.fps)
+                    fps_max = getattr(s, "refresh_rate", None) or getattr(s, "fps_max", 60) or 60
+                    if self._gauge_fps.max_value != fps_max:
+                        self._gauge_fps.set_max(fps_max)
+                    cpu_max = getattr(s, "cpu_temp_max", 100)
+                    gpu_max = getattr(s, "gpu_temp_max", 100)
+                    cpu_unit = getattr(s, "cpu_temp_unit", "\u00b0C").replace("\u00b0", "")
+                    gpu_unit = getattr(s, "gpu_temp_unit", "\u00b0C").replace("\u00b0", "")
+                    if self._gauge_cpu.max_value != cpu_max:
+                        self._gauge_cpu.set_max(cpu_max)
+                    if self._gauge_gpu.max_value != gpu_max:
+                        self._gauge_gpu.set_max(gpu_max)
+                    if self._gauge_cpu.unit != cpu_unit:
+                        self._gauge_cpu.set_unit(cpu_unit)
+                    if self._gauge_gpu.unit != gpu_unit:
+                        self._gauge_gpu.set_unit(gpu_unit)
                 except Exception:
                     pass
                 break
 
         if self._visible:
             self._refresh_volume_ui()
+            self._refresh_master_ui()
             self._refresh_mixer_ui()
 
         self._win.after(1000, self._update_status)
@@ -1537,10 +2083,12 @@ class MainWindow:
         self._win.deiconify()
         self._win.update_idletasks()
         self._apply_region()
+        self._snap_btn_view()
         self._win.lift()
         self._win.focus_force()
         self._visible = True
         self._refresh_volume_ui()
+        self._refresh_master_ui()
         self._refresh_mixer_ui()
         # Snap mouse cursor to center of panel
         px = self._win.winfo_x()
@@ -1574,7 +2122,7 @@ class MainWindow:
         self.hide()
 
     def _on_focusout(self, e):
-        if self._sending_hotkey or self._pin_pinned:
+        if self._sending_hotkey or self._pin_pinned or self._picker_active:
             return
         if self._is_fullscreen_app():
             self._start_sticky_leave()

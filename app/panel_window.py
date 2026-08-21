@@ -60,27 +60,101 @@ class _JSApi:
             except Exception:
                 pass
 
-    def browse_exe(self):
-        if not self._window:
-            return ""
+
+def _find_windows_for_pid(pid: int) -> list:
+    """Find visible top-level window handles owned by process pid."""
+    user32 = ctypes.windll.user32
+    hwnds = []
+
+    def enum_cb(hwnd, _):
+        if not user32.IsWindow(hwnd) or not user32.IsWindowVisible(hwnd):
+            return True
+        lp_pid = ctypes.c_ulong()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(lp_pid))
+        if lp_pid.value == pid:
+            hwnds.append(hwnd)
+        return True
+
+    WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+    cb = WNDENUMPROC(enum_cb)
+    try:
+        user32.EnumWindows(cb, 0)
+    except Exception as ex:
+        log.warning("[panel] EnumWindows failed: %s", ex)
+
+    # Fallback by window title if none found by PID
+    if not hwnds:
+        h = user32.FindWindowW(None, "Iris")
+        if h and user32.IsWindow(h):
+            hwnds.append(h)
+
+    return hwnds
+
+
+def _bring_to_foreground(hwnd):
+    """Restore and bring window to the top of the foreground."""
+    if not hwnd:
+        return
+    try:
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+
+        SW_RESTORE = 9
+        SW_SHOW = 5
+        HWND_TOPMOST = -1
+        HWND_NOTOPMOST = -2
+        SWP_NOMOVE = 0x0002
+        SWP_NOSIZE = 0x0001
+        SWP_SHOWWINDOW = 0x0040
+
+        # 1. Unminimize if minimized
+        if user32.IsIconic(hwnd):
+            user32.ShowWindow(hwnd, SW_RESTORE)
+        else:
+            user32.ShowWindow(hwnd, SW_SHOW)
+
+        # 2. Briefly pulse topmost to pop above background windows
+        user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)
+        user32.SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)
+
+        # 3. Attach thread input to bypass Windows foreground restriction
+        fg_hwnd = user32.GetForegroundWindow()
+        fg_thread = user32.GetWindowThreadProcessId(fg_hwnd, None) if fg_hwnd else 0
+        cur_thread = kernel32.GetCurrentThreadId()
+
+        if fg_thread and fg_thread != cur_thread:
+            user32.AttachThreadInput(cur_thread, fg_thread, True)
+            user32.BringWindowToTop(hwnd)
+            user32.SetForegroundWindow(hwnd)
+            user32.AttachThreadInput(cur_thread, fg_thread, False)
+        else:
+            user32.BringWindowToTop(hwnd)
+            user32.SetForegroundWindow(hwnd)
+
+        # 4. Windows shell activation fallback
         try:
-            import webview
-            result = self._window.create_file_dialog(
-                webview.OPEN_DIALOG,
-                file_types=("Executable (*.exe)",),
-            )
-            return result[0] if result else ""
+            user32.SwitchToThisWindow(hwnd, True)
         except Exception:
-            return ""
+            pass
+    except Exception as ex:
+        log.warning("[panel] _bring_to_foreground failed: %s", ex)
 
 
 def open_panel(width=_DEFAULT_WIDTH, height=_DEFAULT_HEIGHT):
-    """Open the settings panel. Reuses existing process if still alive."""
+    """Open the settings panel. If already open, brings the existing window to the foreground."""
     global _proc
 
     if _proc is not None and _proc.is_alive():
-        log.info("[panel] already open")
-        return
+        hwnds = _find_windows_for_pid(_proc.pid)
+        if hwnds:
+            for hwnd in hwnds:
+                _bring_to_foreground(hwnd)
+            log.info("[panel] brought existing window to foreground (pid=%d)", _proc.pid)
+            return
+        else:
+            # Process alive but window was closed/stale
+            log.info("[panel] process %d has no visible window; restarting", _proc.pid)
+            close_panel()
 
     try:
         from config import load_config
@@ -107,6 +181,7 @@ def open_panel(width=_DEFAULT_WIDTH, height=_DEFAULT_HEIGHT):
     )
     _proc.start()
     log.info("[panel] process started (pid=%d)", _proc.pid)
+
 
 
 def close_panel():
@@ -238,6 +313,17 @@ def _run(width, height, x=None, y=None):
 
     api = _JSApi(state)
     panel_url = "http://127.0.0.1:15502/index.html"
+
+    # Wait for the local HTTP bridge to be ready before opening the WebView
+    import time, urllib.request
+    for _ in range(50):
+        try:
+            with urllib.request.urlopen(panel_url, timeout=0.3) as resp:
+                if resp.status == 200:
+                    break
+        except Exception:
+            time.sleep(0.1)
+
     print(f"[panel] loading {panel_url} ({width}x{height})")
     try:
         if x is not None and y is not None:

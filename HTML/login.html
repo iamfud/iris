@@ -2,9 +2,17 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#0C0D0F">
-<title>IRIS — Pair Required</title>
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Iris">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=4">
+<link rel="shortcut icon" href="icon.png?v=4">
+<link rel="apple-touch-icon" sizes="180x180" href="icon-180.png?v=4">
+<link rel="manifest" href="manifest.json?v=4">
+<title>IRIS — Pair your device</title>
 <style>
   :root{
     --neon:#48B2E9;
@@ -43,30 +51,56 @@
   p{
     font-size:13px;color:var(--fg-dim);line-height:1.6;margin-bottom:8px;
   }
-  .step{
-    display:flex;align-items:center;gap:10px;text-align:left;
-    font-size:13px;color:var(--fg-dim);line-height:1.5;
-    padding:8px 0;border-top:1px solid var(--border);
+  .pw-input{
+    width:100%;
+    margin:14px 0 10px;
+    padding:12px 14px;
+    font-size:15px;
+    color:var(--fg);
+    background:var(--bg);
+    border:1px solid var(--border);
+    border-radius:10px;
+    outline:none;
   }
-  .step:last-of-type{border-bottom:1px solid var(--border)}
-  .step .n{
-    flex-shrink:0;width:22px;height:22px;border-radius:50%;
-    background:var(--neon);color:#0C0D0F;font-size:12px;font-weight:700;
-    display:flex;align-items:center;justify-content:center;
+  .pw-input:focus{border-color:var(--neon)}
+  .pw-input::placeholder{color:var(--fg-dim)}
+  .go-btn{
+    width:100%;
+    padding:12px 14px;
+    font-size:15px;font-weight:600;
+    color:#0C0D0F;
+    background:var(--neon);
+    border:none;border-radius:10px;
+    cursor:pointer;
   }
-  .note{margin-top:16px;font-size:11px;color:var(--fg-dim)}
+  .go-btn:disabled{opacity:.55;cursor:default}
+  .error{
+    margin-top:12px;
+    font-size:13px;color:#ff6b6b;line-height:1.5;
+    display:none;
+  }
+  .error.show{display:block}
+  .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+  .note{margin-top:18px;font-size:11px;color:var(--fg-dim)}
 </style>
 </head>
 <body>
   <div class="card">
     <div class="logo">IRIS</div>
-    <div class="icon">&#128247;</div>
+    <div class="icon">&#128274;</div>
     <h1>Pair your device</h1>
-    <p>This panel only allows access from devices paired by scanning its QR code. There is no password.</p>
-    <div class="step"><span class="n">1</span><span>Open the Iris panel on your PC and go to <strong>Settings &rarr; Network</strong>.</span></div>
-    <div class="step"><span class="n">2</span><span>Scan the QR code at the top right with your phone camera.</span></div>
-    <div class="step"><span class="n">3</span><span>Your phone is added to the paired devices list and opens the panel automatically.</span></div>
-    <p class="note">Pairing only works on your local network. A device stays paired until you revoke it from the PC.</p>
+    <p>Enter the panel password to connect this device to Iris.</p>
+    <form id="login-form">
+      <label for="pw" class="sr-only">Panel password</label>
+      <input type="password" id="pw" class="pw-input" placeholder="Panel password" autocomplete="current-password">
+      <button type="submit" id="go" class="go-btn">Connect</button>
+    </form>
+    <p class="error" id="err"></p>
+    <p class="note">Pairing only works on your local network. A paired device stays connected until you revoke it from the PC.</p>
+    <p class="note" style="margin-top:14px;">
+      Prefer a native app? <a href="/Iris.apk" download="Iris.apk" style="color:var(--neon);text-decoration:none;font-weight:600;display:inline-flex;align-items:center;gap:4px;">📥 Download Android Companion (Iris.apk)</a>
+    </p>
   </div>
+  <script src="login.js"></script>
 </body>
 </html>

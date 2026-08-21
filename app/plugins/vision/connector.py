@@ -96,7 +96,22 @@ class VisionSensorManager:
         return self._cfg.get("plugins", {}).get("vision", {})
 
     def _sensors(self):
-        return self._plugin_cfg().get("sensors", [])
+        raw_sensors = self._plugin_cfg().get("sensors", [])
+        if not isinstance(raw_sensors, list):
+            return []
+        sensors = []
+        seen = set()
+        for raw in raw_sensors:
+            sensor = vision.sanitize_sensor(raw)
+            sensor_id = sensor.get("id")
+            # A missing or duplicate ID cannot be safely tracked by the
+            # per-sensor worker map.  API-created sensors always have one;
+            # this protects manually edited legacy config at runtime.
+            if not sensor_id or sensor_id in seen:
+                continue
+            seen.add(sensor_id)
+            sensors.append(sensor)
+        return sensors
 
     def _outputs(self):
         return self._plugin_cfg().get("outputs", {})
@@ -105,7 +120,7 @@ class VisionSensorManager:
         pcfg = self._plugin_cfg()
         if not pcfg.get("enabled", True):
             return False
-        current = next((s for s in pcfg.get("sensors", [])
+        current = next((s for s in self._sensors()
                         if s.get("id") == sensor.get("id")), None)
         if current is None:
             return False
@@ -125,7 +140,7 @@ class VisionSensorManager:
 
     def _sync(self):
         sensors = self._sensors()
-        active_ids = {s["id"] for s in sensors if s.get("enabled", True)
+        active_ids = {s.get("id") for s in sensors if s.get("enabled", True)
                       and _is_exe_running(s.get("exe", ""))}
 
         with self._lock:
@@ -135,8 +150,9 @@ class VisionSensorManager:
             self._stop_sensor(sid)
 
         for sid in active_ids - thread_ids:
-            sensor = next(s for s in sensors if s["id"] == sid)
-            self._start_sensor(sensor)
+            sensor = next((s for s in sensors if s.get("id") == sid), None)
+            if sensor is not None:
+                self._start_sensor(sensor)
 
         # Restart crashed threads.
         for sid in active_ids & thread_ids:
@@ -144,20 +160,22 @@ class VisionSensorManager:
                 t = self._threads.get(sid)
             if t and not t.is_alive():
                 self._stop_sensor(sid)
-                sensor = next(s for s in sensors if s["id"] == sid)
-                self._start_sensor(sensor)
+                sensor = next((s for s in sensors if s.get("id") == sid), None)
+                if sensor is not None:
+                    self._start_sensor(sensor)
 
     def _start_sensor(self, sensor):
+        sid = sensor.get("id")
         with self._lock:
-            if sensor["id"] in self._threads:
+            if sid in self._threads:
                 return
-            self._runtime.setdefault(sensor["id"], {
+            self._runtime.setdefault(sid, {
                 "value": 0.0, "active": False, "last_triggered": 0.0, "last_run": 0.0,
             })
             t = threading.Thread(
                 target=self._sensor_loop, args=(sensor,),
-                daemon=True, name=f"vision-{sensor['id']}")
-            self._threads[sensor["id"]] = t
+                daemon=True, name=f"vision-{sid}")
+            self._threads[sid] = t
         t.start()
 
     def _stop_sensor(self, sensor_id):
@@ -167,7 +185,7 @@ class VisionSensorManager:
     # ── Per-sensor capture loop ──────────────────────────────────
 
     def _sensor_loop(self, sensor):
-        sid = sensor["id"]
+        sid = sensor.get("id")
         try:
             while not self._stop.is_set():
                 current = next((s for s in self._sensors()
@@ -290,14 +308,14 @@ class VisionSensorManager:
         active_count = 0
         sensor_rows = []
         for s in sensors:
-            rt = runtime.get(s["id"], {})
+            rt = runtime.get(s.get("id"), {})
             if s.get("enabled", True) and rt.get("active"):
                 active_count += 1
             sensor_rows.append({
-                "id": s["id"],
+                "id": s.get("id"),
                 "name": s.get("name", ""),
                 "exe": s.get("exe", ""),
-                "running": s["id"] in self._threads,
+                "running": s.get("id") in self._threads,
                 "value": rt.get("value", 0.0),
                 "active": rt.get("active", False),
                 "last_run": rt.get("last_run", 0.0),

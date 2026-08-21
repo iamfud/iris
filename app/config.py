@@ -22,9 +22,9 @@ def load_config():
         # Migrate old key names
         if "ha_board" in raw and "panel_board" not in raw:
             raw["panel_board"] = raw.pop("ha_board")
-        # Password auth was removed (QR pairing is the only remote path).
-        for stale in ("panel_password", "panel_password_salt",
-                      "panel_password_hash"):
+        # Legacy plaintext password keys were removed. panel_password_hash
+        # (Argon2id PHC string) is kept — it is the active pairing password.
+        for stale in ("panel_password", "panel_password_salt"):
             raw.pop(stale, None)
         try:
             from panel_actions import ensure_panel_defaults
@@ -38,7 +38,16 @@ def load_config():
 
 def save_config(cfg):
     path = config_path()
-    merged = {**DEFAULT_CONFIG, **cfg}
+    preserved = {}
+    try:
+        with open(path) as f:
+            old = json.load(f)
+        for key in old:
+            if key not in cfg:
+                preserved[key] = old[key]
+    except Exception:
+        pass
+    merged = {**DEFAULT_CONFIG, **preserved, **cfg}
     merged.pop("ha_board", None)  # remove stale old key
     tmp = path + ".tmp"
     try:

@@ -206,6 +206,7 @@ class Plugin:
             "cargo_scoop": ("CARGO HATCH", "OPEN", "CLOSED"),
         }
         prev = {}
+        shield_alert_active = False
         while self._running:
             try:
                 st = self._connector.status()
@@ -219,15 +220,100 @@ class Plugin:
                     continue
                 last = prev.get(key)
                 if last is not None and cur != last and self._serial:
-                    # Stable key so opposite edge replaces mid-scroll.
-                    self._serial.notify(
-                        f"ed.{key}",
-                        label,
-                        on_msg if cur else off_msg,
-                    )
+                    # Determine good vs bad status
+                    if key == "landing_gear":
+                        ev_status = "good" if cur else "bad"  # DOWN is safe (good), UP is retracted (bad)
+                    elif key == "hardpoints":
+                        ev_status = "bad" if cur else "good"  # DEPLOYED is combat alert (bad), STOWED is safe (good)
+                    else:
+                        ev_status = "good"
+
+                    if hasattr(self._serial, "event"):
+                        self._serial.event(
+                            f"ed.{key}",
+                            label,
+                            on_msg if cur else off_msg,
+                            status=ev_status,
+                        )
+                    else:
+                        self._serial.notify(
+                            f"ed.{key}",
+                            label,
+                            on_msg if cur else off_msg,
+                        )
                 prev[key] = cur
+
+            # Shield-down alert: STATE-driven, not edge-triggered. While the
+            # status reports shields DOWN the alert is active — sent once per
+            # episode, re-armed when shields come back online. The connector
+            # keeps shields_up authoritative from the journal ShieldState event,
+            # so a stale Status.json flag can't re-fire it during recovery.
+            shields = st.get("shields_up")
+            if shields is not None:
+                if shields is False:
+                    if not shield_alert_active:
+                        self._alert_shields_down()
+                        self._set_shields_warning()
+                        shield_alert_active = True
+                else:
+                    if shield_alert_active:
+                        shield_alert_active = False
+                        self._clear_shields_warning()
+
             self._update_progress_bar(st)
             time.sleep(0.5)
+
+    def _alert_shields_down(self):
+        """Red rapid-flash alert when the ship shield generator fails."""
+        if not self._serial:
+            return
+        try:
+            if hasattr(self._serial, "send_alert"):
+                self._serial.send_alert(
+                    "SHIELDS DOWN",
+                    "Shield generator has failed",
+                    key="ed.shields",
+                )
+            else:
+                self._serial.notify(
+                    "ed.shields",
+                    "SHIELDS DOWN",
+                    "Shield generator has failed",
+                    theme="alert",
+                )
+            log.info("[ed] shields down alert sent")
+        except Exception as e:
+            log.warning("[ed] shield alert error: %s", e)
+
+    def _set_shields_warning(self):
+        """Flag the Shields button red while the shield generator is down.
+
+        The warning colour overrides the button's normal on/off colour; when it
+        is cleared the button returns to its previous saved value.
+        """
+        if not self._serial:
+            return
+        try:
+            if hasattr(self._serial, "set_warning"):
+                self._serial.set_warning(
+                    "elite_dangerous:shields",
+                    color="#ff3355",
+                    message="SHIELDS DOWN",
+                )
+        except Exception as e:
+            log.warning("[ed] shield warning error: %s", e)
+
+    def _clear_shields_warning(self):
+        """Turn the warning off; the button returns to its saved colour."""
+        if not self._serial:
+            return
+        try:
+            if hasattr(self._serial, "clear_warning"):
+                self._serial.clear_warning("elite_dangerous:shields")
+            if hasattr(self._serial, "clear_display"):
+                self._serial.clear_display("ed.shields")
+        except Exception as e:
+            log.warning("[ed] shield warning clear error: %s", e)
 
     def _fuel_percent(self):
         """Return fuel % (0-100) from journal fuel tons, or None if unknown."""

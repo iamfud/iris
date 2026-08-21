@@ -11,13 +11,6 @@
           "title": "Clock Display",
           "controls": [
             {
-              "type": "text",
-              "key": "user_name",
-              "label": "Your Name",
-              "placeholder": "Your Name",
-              "save_debounce_ms": 300
-            },
-            {
               "type": "select",
               "key": "clock_mode",
               "label": "Clock Mode",
@@ -51,6 +44,21 @@
               "key": "feature_minute_bar",
               "label": "Minute bar",
               "description": "Visual minute progress bar on the display"
+            }
+          ]
+        },
+        {
+          "title": "Display",
+          "controls": [
+            {
+              "type": "slider",
+              "key": "brightness",
+              "label": "MAX7219 Brightness",
+              "min": 0,
+              "max": 4,
+              "step": 1,
+              "unit": "",
+              "description": "Brightness of the companion MAX7219 display (0 = off)"
             }
           ]
         },
@@ -101,31 +109,91 @@
       "nav_group": "bottom",
       "sections": [
         {
+          "title": "Personalization",
+          "controls": [
+            {
+              "type": "text",
+              "key": "user_name",
+              "label": "Your Name",
+              "placeholder": "Your Name",
+              "description": "Used by Iris to personalize welcome greetings and system messages.",
+              "save_debounce_ms": 300
+            }
+          ]
+        },
+        {
+          "title": "Media Player",
+          "full_width": true,
+          "controls": [
+            {
+              "type": "media_player_picker",
+              "key": "media_player_path",
+              "label": "Player Application (Eject)",
+              "description": "Application launched when pressing the Player / Eject button."
+            }
+          ]
+        },
+        {
+          "title": "Screenshots",
+          "controls": [
+            {
+              "type": "folder_picker",
+              "key": "screenshot_dir",
+              "label": "Screenshot folder",
+              "description": "Where captures are saved as PNG files. Default: Documents\\Iris\\Screenshots. Leave empty to use the default."
+            }
+          ]
+        },
+        {
+          "title": "Appearance",
+          "full_width": true,
+          "controls": [
+            {
+              "type": "theme",
+              "key": "theme",
+              "label": "Theme Engine"
+            }
+          ]
+        },
+        {
           "title": "Network",
           "app_only": true,
+          "full_width": true,
           "qr_top_right": true,
           "instructions": [
             "The panel binds to localhost by default, so no login is needed on this PC.",
-            "To reach it from your phone, turn on Allow LAN access, then scan the QR code at the top right. The QR carries the access token — scanning pairs your phone with this panel. The code is only ever shown on this PC, so it can't be fetched over the network.",
-            "A paired phone stays connected until you revoke it in the list below."
+            "To reach it from your phone, turn on Allow LAN access, then scan the QR code at the top right. Scanning opens the pairing page on your phone over HTTPS (a secure connection needed to keep the phone's screen awake on the live panel).",
+            "The first time you open the HTTPS address, your phone shows a self-signed certificate warning — tap through it once, then re-add the home-screen icon from the HTTPS address if you had one.",
+            "Set a panel password below, then enter it on your phone to pair it. A paired phone stays connected until you revoke it in the list below."
           ],
           "controls": [
             {
               "type": "toggle",
               "key": "lan_access",
               "label": "Allow LAN access",
-              "description": "Allow devices on your network to reach the panel. Restart required. Remote devices must pair by scanning the QR code."
+              "description": "Allow devices on your network to reach the panel. Restart required. Remote devices must pair by entering the panel password."
             },
             {
               "type": "qr",
               "key": "lan_url",
               "label": "Scan to pair",
-              "description": "Scan from your phone to connect once — no password needed. The QR carries the access token and is only ever shown on this PC."
+              "description": "Scan from your phone to open the pairing page — enter your panel password there to connect."
+            },
+            {
+              "type": "apk_download",
+              "label": "Android Companion App",
+              "description": "Download and install the native Android Iris.apk directly on your phone."
+            },
+            {
+              "type": "password",
+              "key": "panel_password",
+              "label": "Panel password",
+              "description": "Phones must enter this password to pair with the panel. Set it once, change it any time."
             },
             {
               "type": "devices",
               "label": "Paired devices",
-              "description": "Devices that have scanned the QR to pair. Revoke any you no longer trust — the phone is signed out immediately."
+              "description": "Devices that have entered the panel password to pair. Revoke any you no longer trust — the phone is signed out immediately."
             }
           ]
         }
@@ -140,6 +208,10 @@
     "text": {
       "description": "Text input field",
       "fields": ["key", "label", "placeholder", "save_debounce_ms"]
+    },
+    "password": {
+      "description": "Panel pairing password (set / change via dialog)",
+      "fields": ["key", "label", "description"]
     },
     "select": {
       "description": "Dropdown select",

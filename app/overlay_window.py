@@ -180,9 +180,6 @@ class OverlayWindow:
                                font=("Segoe UI", 20, "bold"), anchor="w")
             val_lbl.pack(side="left")
             self._num_labels["numbers"][key] = val_lbl
-            if unit:
-                tk.Label(row, text=unit, bg=BG, fg=FG_DIM,
-                         font=("Segoe UI", 12)).pack(side="left")
 
     def _build_numline_frame(self, parent):
         self._num_labels["numline"] = {}
@@ -223,9 +220,6 @@ class OverlayWindow:
                                width=w, anchor="e")
             val_lbl.pack(side="left", padx=(2, 0))
             self._num_labels["numline"][key] = val_lbl
-            if unit:
-                tk.Label(bar, text=unit, bg=BG_CARD, fg=FG_DIM,
-                         font=("Segoe UI", fs)).pack(side="left", padx=(0, 10))
 
     # ── Window-level drag (numline only) ──
 
@@ -486,12 +480,30 @@ class OverlayWindow:
         try:
             s = self._provider.snapshot()
             cpu_temp, gpu_temp, fps = s.cpu_temp, s.gpu_temp, s.fps
+            cpu_max = getattr(s, "cpu_temp_max", 100)
+            gpu_max = getattr(s, "gpu_temp_max", 100)
+            fps_max = getattr(s, "refresh_rate", None) or getattr(s, "fps_max", 60) or 60
+            if self._fps_max != fps_max:
+                self._fps_max = fps_max
             fps_val = min(fps, self._fps_max) if fps is not None else None
 
             for gauge_map in self._gauges.values():
-                gauge_map["cpu_temp"].set_value(cpu_temp)
-                gauge_map["gpu_temp"].set_value(gpu_temp)
-                gauge_map["fps"].set_value(fps_val)
+                cpu_g = gauge_map["cpu_temp"]
+                gpu_g = gauge_map["gpu_temp"]
+                fps_g = gauge_map["fps"]
+                if cpu_g.max_value != cpu_max:
+                    cpu_g.set_max(cpu_max)
+                if gpu_g.max_value != gpu_max:
+                    gpu_g.set_max(gpu_max)
+                if fps_g.max_value != self._fps_max:
+                    fps_g.set_max(self._fps_max)
+                if cpu_g.unit != getattr(s, "cpu_temp_unit", "\u00b0C").replace("\u00b0", ""):
+                    cpu_g.set_unit(getattr(s, "cpu_temp_unit", "\u00b0C").replace("\u00b0", ""))
+                if gpu_g.unit != getattr(s, "gpu_temp_unit", "\u00b0C").replace("\u00b0", ""):
+                    gpu_g.set_unit(getattr(s, "gpu_temp_unit", "\u00b0C").replace("\u00b0", ""))
+                cpu_g.set_value(cpu_temp)
+                gpu_g.set_value(gpu_temp)
+                fps_g.set_value(fps_val)
 
             if self._num_vars:
                 self._num_vars["cpu_temp"].set(f"{int(cpu_temp)}" if cpu_temp is not None else "\u2014")
@@ -500,8 +512,8 @@ class OverlayWindow:
 
             labels = self._num_labels.get(self._style, {})
             if "cpu_temp" in labels:
-                labels["cpu_temp"].configure(fg=self._text_color("cpu_temp", cpu_temp, 100))
-                labels["gpu_temp"].configure(fg=self._text_color("gpu_temp", gpu_temp, 100))
+                labels["cpu_temp"].configure(fg=self._text_color("cpu_temp", cpu_temp, cpu_max))
+                labels["gpu_temp"].configure(fg=self._text_color("gpu_temp", gpu_temp, gpu_max))
                 labels["fps"].configure(fg=self._text_color("fps", fps_val, self._fps_max))
         except Exception:
             pass
@@ -518,8 +530,9 @@ class OverlayWindow:
                 return NEON_RED
             ratio = min(value, max_value) / max_value if max_value > 0 else 0
             return NEON_GRN if ratio >= 0.8 else NEON
-        if value >= 90:
+        ratio = value / max_value if max_value > 0 else 0
+        if ratio >= 0.9:
             return NEON_RED
-        if value >= 65:
+        if ratio >= 0.65:
             return GAUGE_WARN
         return NEON

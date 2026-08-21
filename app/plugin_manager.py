@@ -46,6 +46,8 @@ def discover_plugins():
                 manifest.setdefault("type", "service")
                 manifest.setdefault("message_not_running", "")
                 manifest.setdefault("settings", [])
+                manifest.setdefault("buttons", [])
+                manifest.setdefault("preset_layout", [])
                 try:
                     mod = importlib.import_module(f"plugins.{entry}.connector")
                     for name_in_mod in dir(mod):
@@ -93,6 +95,27 @@ def _merge_settings(manifest, connector_settings):
 def get_manifest(name):
     """Return the manifest dict for a named plugin."""
     return _manifests.get(name, {})
+
+
+def refresh_settings(name):
+    """Re-merge connector get_settings() into the cached manifest.
+
+    Lets the panel pick up unit/range changes (e.g. the °F toggle)
+    without an app restart. Idempotent — sections merge by title.
+    """
+    manifest = _manifests.get(name)
+    if not manifest:
+        return
+    try:
+        mod = importlib.import_module(f"plugins.{name}.connector")
+        for obj in vars(mod).values():
+            if isinstance(obj, type) and hasattr(obj, "get_settings"):
+                conn_settings = obj.get_settings()
+                if conn_settings:
+                    _merge_settings(manifest, conn_settings)
+                break
+    except Exception:
+        pass
 
 
 def load_plugin(name, cfg, serial_sender=None, overlays=None):
@@ -413,8 +436,180 @@ def get_plugin_status(name):
     }
 
 
-# ── Widget definitions ─────────────────────────────────────
+# ── Plugin Button Controls ────────────────────────────────────
+
+def get_plugin_buttons(name):
+    """Return list of button definitions exported by the named plugin."""
+    manifest = _manifests.get(name) or {}
+    return manifest.get("buttons", [])
 
 
+def get_all_plugin_buttons():
+    """Return dict of {plugin_name: [button_defs]} for all plugins."""
+    result = {}
+    for name, manifest in _manifests.items():
+        btns = manifest.get("buttons") or []
+        if btns:
+            result[name] = btns
+    return result
 
 
+def _parse_button_state_value(val, labels):
+    """Parse plugin state value into (is_on: bool, label_text: str, raw_value: Any).
+
+    Supports:
+      - Explicit Dict: {"active": 1/0, "label": "DOWN"} or {"on": True, "value": "..."}
+      - Explicit Tuple/List: ("DOWN", 1) or (1, "DOWN") or ["DOWN", 0]
+      - Pure Boolean / Int: True/1 (ON) or False/0 (OFF) -> mapped to labels["on"]/labels["off"]
+      - String matching: matches labels["on"] (ON) or labels["off"] (OFF) case-insensitively
+      - Fallback keywords for legacy string values
+    """
+    labels = labels or {}
+    lbl_on = str(labels.get("on", "ON"))
+    lbl_off = str(labels.get("off", "OFF"))
+
+    if val is None:
+        return False, lbl_off, None
+
+    # 1. Dict payload
+    if isinstance(val, dict):
+        if "active" in val:
+            is_on = bool(val["active"])
+        elif "on" in val:
+            is_on = bool(val["on"])
+        elif "is_on" in val:
+            is_on = bool(val["is_on"])
+        elif "state" in val and isinstance(val["state"], (bool, int, float)):
+            is_on = bool(val["state"])
+        else:
+            is_on = False
+        lbl = val.get("label") or val.get("text") or (lbl_on if is_on else lbl_off)
+        return is_on, str(lbl), val
+
+    # 2. Tuple / List payload: (label, 1/0) or (1/0, label)
+    if isinstance(val, (tuple, list)) and len(val) >= 2:
+        elem0, elem1 = val[0], val[1]
+        if isinstance(elem1, (bool, int, float)):
+            is_on = bool(elem1)
+            lbl = str(elem0)
+        elif isinstance(elem0, (bool, int, float)):
+            is_on = bool(elem0)
+            lbl = str(elem1)
+        else:
+            is_on = (str(elem1).strip().lower() == lbl_on.strip().lower() or
+                     str(elem1).strip().lower() in ("1", "true", "on", "active"))
+            lbl = str(elem0)
+        return is_on, lbl, val
+
+    # 3. Pure Boolean
+    if isinstance(val, bool):
+        is_on = val
+        lbl = lbl_on if is_on else lbl_off
+        return is_on, lbl, val
+
+    # 4. Numeric (int / float)
+    if isinstance(val, (int, float)):
+        is_on = bool(val > 0)
+        lbl = lbl_on if is_on else lbl_off
+        return is_on, lbl, val
+
+    # 5. String value
+    if isinstance(val, str):
+        v_clean = val.strip().lower()
+        on_clean = lbl_on.strip().lower()
+        off_clean = lbl_off.strip().lower()
+
+        if v_clean == on_clean:
+            is_on = True
+            lbl = val
+        elif v_clean == off_clean:
+            is_on = False
+            lbl = val
+        elif v_clean in ("1", "true", "on", "active", "down", "deployed", "charging", "online", "yes", "docked", "landed"):
+            is_on = True
+            lbl = val if val else lbl_on
+        elif v_clean in ("0", "false", "off", "inactive", "up", "retracted", "offline", "no"):
+            is_on = False
+            lbl = val if val else lbl_off
+        else:
+            is_on = False
+            lbl = val
+
+        return is_on, lbl, val
+
+    return False, str(val), val
+
+
+def get_plugin_button_states():
+    """Collect live state {f'{plugin}:{button_id}': {'active': bool, 'value': any, 'label': str}}."""
+    import time
+    states = {}
+    for pname, inst in _instances.items():
+        manifest = _manifests.get(pname, {})
+        buttons = manifest.get("buttons", [])
+        if not buttons:
+            continue
+        p_state = {}
+        p_status = {}
+        try:
+            if hasattr(inst, "poll"):
+                polled = inst.poll()
+                if isinstance(polled, dict):
+                    p_state = polled.get("state") or polled
+                    p_status = polled.get("status") or {}
+            elif hasattr(inst, "state"):
+                p_state = inst.state()
+        except Exception:
+            pass
+
+        for btn in buttons:
+            bid = btn.get("id")
+            skey = btn.get("state_key")
+            if not bid or not skey:
+                continue
+
+            val = p_status.get(skey)
+            if val is None:
+                val = p_state.get(skey)
+
+            labels = btn.get("labels") or {}
+            is_on, lbl, val_raw = _parse_button_state_value(val, labels)
+
+            states[f"{pname}:{bid}"] = {
+                "active": bool(is_on),
+                "value": val_raw,
+                "label": str(lbl),
+                "timestamp": time.time(),
+            }
+    return states
+
+
+def handle_button_action(plugin_name, button_id, slot_data=None):
+    """Trigger action for a plugin button (via plugin handler or hardware keystroke)."""
+    slot_data = slot_data or {}
+    manifest = _manifests.get(plugin_name, {})
+    btn_def = next((b for b in manifest.get("buttons", []) if b.get("id") == button_id), None)
+
+    # 1. Check if plugin instance defines on_button
+    inst = _instances.get(plugin_name)
+    if inst and hasattr(inst, "on_button"):
+        try:
+            res = inst.on_button(button_id, slot_data)
+            if res is not None:
+                return {"ok": bool(res)}
+        except Exception as ex:
+            log.warning("[pm] plugin %s on_button failed: %s", plugin_name, ex)
+
+    # 2. Fallback to keybind / hotkey injection
+    hotkey = slot_data.get("hotkey") or (btn_def.get("default_hotkey") if btn_def else None)
+    if hotkey:
+        try:
+            from keyboard_service import keyboard_service
+            keyboard_service.send_hotkey(hotkey)
+            log.info("[pm] dispatched hotkey '%s' for %s:%s", hotkey, plugin_name, button_id)
+            return {"ok": True, "hotkey": hotkey}
+        except Exception as ex:
+            log.warning("[pm] keyboard injection failed for %s:%s: %s", plugin_name, button_id, ex)
+            return {"ok": False, "error": str(ex)}
+
+    return {"ok": True}

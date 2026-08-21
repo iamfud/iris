@@ -15,6 +15,9 @@ class HAProvider:
     def start(self):
         pass
 
+    def stop(self):
+        pass
+
     def _call(self, entity_id):
         url = self.cfg.get("ha_url", "").rstrip("/")
         token = self.cfg.get("ha_token", "")

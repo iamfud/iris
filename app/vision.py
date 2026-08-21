@@ -22,6 +22,7 @@ import io
 import logging
 import math
 import os
+import re
 import threading
 import time
 import tkinter as tk
@@ -108,14 +109,56 @@ def resolve_exe_for_point(x, y):
 def region_to_bbox(anchor, region):
     """Convert an anchor rect + percentage region to a pixel bbox.
 
-    Returns (left, top, right, bottom) in virtual screen coordinates.
+    Returns (left, top, right, bottom) in virtual screen coordinates,
+    always clamped to the virtual screen and at least 1x1, so a capture can
+    never exceed a full-screen grab no matter what anchor/region values the
+    runtime is given.
     """
-    ax, ay, aw, ah = anchor["x"], anchor["y"], anchor["w"], anchor["h"]
-    x = int(ax + (region.get("x_pct", 0) / 100.0) * aw)
-    y = int(ay + (region.get("y_pct", 0) / 100.0) * ah)
-    w = int((region.get("w_pct", 100) / 100.0) * aw)
-    h = int((region.get("h_pct", 100) / 100.0) * ah)
-    return (x, y, max(x + w, x + 1), max(y + h, y + 1))
+    anchor = anchor if isinstance(anchor, dict) else {}
+    region = region if isinstance(region, dict) else {}
+    try:
+        ax = float(anchor.get("x", 0))
+        ay = float(anchor.get("y", 0))
+        aw = float(anchor.get("w", 0))
+        ah = float(anchor.get("h", 0))
+    except (TypeError, ValueError):
+        ax = ay = 0.0
+        aw = ah = 0.0
+    if not all(math.isfinite(v) for v in (ax, ay, aw, ah)) or aw <= 0 or ah <= 0:
+        ax, ay, aw, ah = 0.0, 0.0, 1920.0, 1080.0
+
+    def _pct(key, default):
+        try:
+            v = float(region.get(key, default))
+        except (TypeError, ValueError):
+            return default
+        return v if math.isfinite(v) else default
+
+    x_pct = _pct("x_pct", 0.0)
+    y_pct = _pct("y_pct", 0.0)
+    w_pct = _pct("w_pct", 100.0)
+    h_pct = _pct("h_pct", 100.0)
+
+    left = int(ax + (x_pct / 100.0) * aw)
+    top = int(ay + (y_pct / 100.0) * ah)
+    right = int(left + max((w_pct / 100.0) * aw, 1.0))
+    bottom = int(top + max((h_pct / 100.0) * ah, 1.0))
+
+    vx, vy, vw, vh = virtual_screen_bounds()
+    v_right = vx + vw
+    v_bottom = vy + vh
+    # Clamp both edges.  Clamping only the lower bound leaves ``left`` or
+    # ``top`` beyond the virtual display when a malformed region starts past
+    # its far edge, producing an inverted PIL bounding box.
+    left = max(vx, min(left, v_right - 1))
+    top = max(vy, min(top, v_bottom - 1))
+    right = min(right, v_right)
+    bottom = min(bottom, v_bottom)
+    if right <= left:
+        right = min(left + 1, v_right)
+    if bottom <= top:
+        bottom = min(top + 1, v_bottom)
+    return (left, top, right, bottom)
 
 
 def region_to_pct(anchor, rect):
@@ -151,6 +194,152 @@ def normalize_draft(draft):
     d.setdefault("direction", "below")
     d.setdefault("require_foreground", False)
     return d
+
+
+_SENSOR_MODES = {"color_percentage", "pixel_match", "average_brightness"}
+_SENSOR_DIRECTIONS = {"above", "below"}
+_SENSOR_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_SENSOR_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def _bool_strict(v, default=False):
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return bool(v)
+    if isinstance(v, str):
+        s = v.strip().lower()
+        if s in ("true", "1", "yes", "on"):
+            return True
+        if s in ("false", "0", "no", "off"):
+            return False
+    return default
+
+
+def _float_clamped(v, default, lo, hi):
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(f):
+        return default
+    return max(lo, min(hi, f))
+
+
+def _int_clamped(v, default, lo, hi):
+    try:
+        f = float(v)
+        i = int(f)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    if not math.isfinite(f):
+        return default
+    return max(lo, min(hi, i))
+
+
+def _region_sanitized(raw):
+    default = {"x_pct": 0.0, "y_pct": 0.0, "w_pct": 100.0, "h_pct": 100.0}
+    if not isinstance(raw, dict):
+        return default
+    return {
+        "x_pct": _float_clamped(raw.get("x_pct"), default["x_pct"], -1000.0, 1000.0),
+        "y_pct": _float_clamped(raw.get("y_pct"), default["y_pct"], -1000.0, 1000.0),
+        "w_pct": _float_clamped(raw.get("w_pct"), default["w_pct"], 0.0, 1000.0),
+        "h_pct": _float_clamped(raw.get("h_pct"), default["h_pct"], 0.0, 1000.0),
+    }
+
+
+def _pixel_sanitized(raw):
+    default = {"x_pct": 50.0, "y_pct": 50.0}
+    if not isinstance(raw, dict):
+        return default
+    return {
+        "x_pct": _float_clamped(raw.get("x_pct"), default["x_pct"], 0.0, 100.0),
+        "y_pct": _float_clamped(raw.get("y_pct"), default["y_pct"], 0.0, 100.0),
+    }
+
+
+def _anchor_sanitized(raw):
+    if not isinstance(raw, dict):
+        return default_anchor()
+    try:
+        x = float(raw.get("x", 0))
+        y = float(raw.get("y", 0))
+        w = float(raw.get("w", 0))
+        h = float(raw.get("h", 0))
+    except (TypeError, ValueError):
+        return default_anchor()
+    if not all(math.isfinite(v) for v in (x, y, w, h)):
+        return default_anchor()
+    return {
+        "x": int(max(-32767.0, min(32767.0, x))),
+        "y": int(max(-32767.0, min(32767.0, y))),
+        "w": int(max(1.0, min(32767.0, w))),
+        "h": int(max(1.0, min(32767.0, h))),
+    }
+
+
+def sanitize_sensor(raw):
+    """Return a validated, clamped copy of a vision sensor config.
+
+    Unknown keys are dropped and every persisted field is type-coerced and
+    clamped to a safe range, so untrusted HTTP input can never produce
+    extreme screen captures or crash the per-sensor worker threads.
+    """
+    raw = raw if isinstance(raw, dict) else {}
+    out = {}
+
+    _id = raw.get("id")
+    if isinstance(_id, str) and _SENSOR_ID_RE.match(_id):
+        out["id"] = _id
+
+    def _text(key, limit=120):
+        v = raw.get(key)
+        if isinstance(v, str):
+            return v.strip()[:limit]
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            return str(v)[:limit]
+        return ""
+
+    out["name"] = _text("name")
+    out["exe"] = _text("exe")
+    out["event_name"] = _text("event_name")
+    out["event_message"] = _text("event_message", limit=200)
+
+    out["enabled"] = _bool_strict(raw.get("enabled"), True)
+    out["output_display"] = _bool_strict(raw.get("output_display"), True)
+    out["flash_name"] = _bool_strict(raw.get("flash_name"), False)
+    out["require_foreground"] = _bool_strict(raw.get("require_foreground"), False)
+
+    mode = raw.get("mode")
+    out["mode"] = mode if mode in _SENSOR_MODES else "color_percentage"
+
+    direction = raw.get("direction")
+    out["direction"] = direction if direction in _SENSOR_DIRECTIONS else "below"
+
+    color = raw.get("color")
+    out["color"] = color if (isinstance(color, str) and _SENSOR_COLOR_RE.match(color)) else "#ff0000"
+
+    out["tolerance"] = _int_clamped(raw.get("tolerance"), 40, 0, 255)
+    # Colour percentage and pixel-match are percentages; brightness is an
+    # 8-bit luminance value.
+    threshold_max = 255.0 if out["mode"] == "average_brightness" else 100.0
+    out["threshold"] = _float_clamped(raw.get("threshold"), 30.0, 0.0, threshold_max)
+    out["poll_rate"] = _float_clamped(raw.get("poll_rate"), 1.0, 0.1, 10.0)
+    out["cooldown_s"] = _float_clamped(raw.get("cooldown_s"), 10.0, 0.0, 86400.0)
+
+    out["pixel"] = _pixel_sanitized(raw.get("pixel"))
+    out["region"] = _region_sanitized(raw.get("region"))
+    out["anchor"] = _anchor_sanitized(raw.get("anchor"))
+
+    created = raw.get("created")
+    if (isinstance(created, (int, float)) and not isinstance(created, bool)
+            and math.isfinite(float(created)) and float(created) > 0):
+        out["created"] = int(created)
+    else:
+        out["created"] = int(time.time())
+
+    return out
 
 
 # ── Capture ────────────────────────────────────────────────────
@@ -206,7 +395,7 @@ def measure(draft):
     never touches the exe gate, so it works even when the app is
     closed (used by the wizard's Test step).
     """
-    d = normalize_draft(draft)
+    d = sanitize_sensor(draft)
     mode = d.get("mode", "color_percentage")
     anchor = d.get("anchor")
     region = d.get("region")
@@ -370,6 +559,7 @@ def select_region(root, timeout=60):
                 holder["rect"] = rect
                 done.set()
             sel = RegionSelector(root, _done)
+            holder["sel"] = sel
             sel.show()
         except Exception:
             log.warning("failed to open region selector", exc_info=True)
@@ -381,5 +571,11 @@ def select_region(root, timeout=60):
         return None
 
     if not done.wait(timeout):
+        sel = holder.get("sel")
+        if sel:
+            try:
+                root.after(0, lambda: sel.close(None))
+            except Exception:
+                pass
         return None
     return holder.get("rect")

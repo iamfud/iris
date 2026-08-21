@@ -57,6 +57,12 @@
           "description": "Show PC hardware stats on the display"
         },
         {
+          "type": "toggle",
+          "key": "use_fahrenheit",
+          "label": "Use Fahrenheit (\u00b0F)",
+          "description": "Set temperature limits in degrees Fahrenheit"
+        },
+        {
           "type": "slider",
           "key": "cpu_temp_lim",
           "label": "CPU Temperature Limit",

@@ -12,6 +12,7 @@
   "capabilities": {
     "status": true,
     "configuration": true,
+    "buttons": true,
     "outputs": true,
     "live_data": true,
     "actions": false,
@@ -21,6 +22,7 @@
   "labels": {
     "status": "CONNECTION",
     "configuration": "GAME DETECTION",
+    "buttons": "BUTTON CONTROLS",
     "outputs": "OUTPUT ROUTING",
     "live_data": "GAME STATE"
   },
@@ -29,6 +31,144 @@
     { "key": "status_code", "label": "Status", "source": "lifecycle" },
     { "key": "commander", "label": "Commander", "source": "plugin" },
     { "key": "system", "label": "System", "source": "plugin" }
+  ],
+
+  "buttons": [
+    {
+      "id": "landing_gear",
+      "name": "Landing Gear",
+      "widget_type": "status_toggle",
+      "icon": "airplane-landing",
+      "icon_off": "airplane-takeoff",
+      "state_key": "landing_gear",
+      "labels": { "on": "DOWN", "off": "UP" },
+      "colors": { "on": "#00ff88", "off": "#444444" },
+      "default_hotkey": "L",
+      "description": "Toggle ship landing gear with live journal status"
+    },
+    {
+      "id": "cargo_scoop",
+      "name": "Cargo Scoop",
+      "widget_type": "status_toggle",
+      "icon": "bag-personal",
+      "state_key": "cargo_scoop",
+      "labels": { "on": "DEPLOYED", "off": "RETRACTED" },
+      "colors": { "on": "#ffaa00", "off": "#444444" },
+      "default_hotkey": "Home",
+      "description": "Deploy / retract cargo scoop"
+    },
+    {
+      "id": "flight_assist",
+      "name": "Flight Assist",
+      "widget_type": "status_toggle",
+      "icon": "steering",
+      "state_key": "flight_assist",
+      "labels": { "on": "ON", "off": "OFF" },
+      "colors": { "on": "#48b2e9", "off": "#ff4444" },
+      "default_hotkey": "Z",
+      "description": "Flight assist toggle"
+    },
+    {
+      "id": "lights",
+      "name": "Ship Lights",
+      "widget_type": "status_toggle",
+      "icon": "flare",
+      "state_key": "lights_on",
+      "labels": { "on": "ON", "off": "OFF" },
+      "colors": { "on": "#ffee55", "off": "#444444" },
+      "default_hotkey": "Insert",
+      "description": "Ship exterior lights"
+    },
+    {
+      "id": "hardpoints",
+      "name": "Hardpoints",
+      "widget_type": "status_toggle",
+      "icon": "crosshairs",
+      "state_key": "hardpoints",
+      "labels": { "on": "DEPLOYED", "off": "RETRACTED" },
+      "colors": { "on": "#ff3344", "off": "#444444" },
+      "default_hotkey": "U",
+      "description": "Deploy weapons / mining tools"
+    },
+    {
+      "id": "night_vision",
+      "name": "Night Vision",
+      "widget_type": "status_toggle",
+      "icon": "eye",
+      "state_key": "night_vision",
+      "labels": { "on": "ON", "off": "OFF" },
+      "colors": { "on": "#00ffcc", "off": "#444444" },
+      "default_hotkey": "N",
+      "description": "Toggle night vision HUD"
+    },
+    {
+      "id": "silent_running",
+      "name": "Silent Running",
+      "widget_type": "status_toggle",
+      "icon": "ghost",
+      "state_key": "silent_running",
+      "labels": { "on": "ACTIVE", "off": "OFF" },
+      "colors": { "on": "#ff8800", "off": "#444444" },
+      "default_hotkey": "Delete",
+      "description": "Close heat radiators for stealth"
+    },
+    {
+      "id": "supercruise",
+      "name": "Supercruise",
+      "widget_type": "status_toggle",
+      "icon": "rocket-launch",
+      "state_key": "supercruise",
+      "labels": { "on": "ACTIVE", "off": "IDLE" },
+      "colors": { "on": "#48b2e9", "off": "#444444" },
+      "default_hotkey": "J",
+      "description": "Frame Shift Drive supercruise"
+    },
+    {
+      "id": "shields",
+      "name": "Shields",
+      "widget_type": "display",
+      "icon": "shield",
+      "state_key": "shields_up",
+      "labels": { "on": "ONLINE", "off": "DOWN" },
+      "colors": { "on": "#48b2e9", "off": "#ff2244" },
+      "description": "Live ship shield generator state"
+    },
+    {
+      "id": "mass_lock",
+      "name": "Mass Lock",
+      "widget_type": "display",
+      "icon": "weight",
+      "state_key": "mass_locked",
+      "labels": { "on": "LOCKED", "off": "CLEAR" },
+      "colors": { "on": "#ff4444", "off": "#00ff88" },
+      "description": "Gravitational mass lock indicator"
+    },
+    {
+      "id": "fsd_status",
+      "name": "FSD Charge",
+      "widget_type": "display",
+      "icon": "speedometer",
+      "state_key": "fsd_charging",
+      "labels": { "on": "CHARGING", "off": "READY" },
+      "colors": { "on": "#ffaa00", "off": "#555555" },
+      "description": "Frame Shift Drive charge meter"
+    },
+    {
+      "id": "fuel_scoop",
+      "name": "Fuel Scoop",
+      "widget_type": "display",
+      "icon": "gas-station",
+      "state_key": "scooping_fuel",
+      "labels": { "on": "SCOOPING", "off": "IDLE" },
+      "colors": { "on": "#ffee00", "off": "#555555" },
+      "description": "Stellar corona fuel scoop active"
+    }
+  ],
+
+  "preset_layout": [
+    "landing_gear", "cargo_scoop", "flight_assist", "lights",
+    "hardpoints", "night_vision", "silent_running", "supercruise",
+    "shields", "mass_lock", "fsd_status", "fuel_scoop"
   ],
 
   "outputs": [

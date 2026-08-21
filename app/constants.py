@@ -34,14 +34,17 @@ DEFAULT_CONFIG = {
     "media_enabled": True,
     "mirror_enabled": True,
     "media_player_path": "",
+    "screenshot_dir": "",
     "lan_access": True,
+    "keep_alive": True,
     "alarms": [],
     "panel_board": [],
+    "panel_profiles": [],
     "panel_utility": [
         {"name": "Previous", "type": "MEDIA_PREV", "icon": "skip-previous", "color": ""},
         {"name": "Play/Pause", "type": "MEDIA_PLAY", "icon": "play-pause", "color": ""},
         {"name": "Next", "type": "MEDIA_NEXT", "icon": "skip-next", "color": ""},
-        {"name": "Player", "type": "MEDIA_EJECT", "icon": "eject", "color": ""},
+        {"name": "Spotify", "type": "MEDIA_EJECT", "icon": "eject", "color": ""},
     ],
     "panel_sliders": [
         {"id": "app_volume", "enabled": True},
@@ -57,6 +60,11 @@ DEFAULT_CONFIG = {
     "panel_gauges": {"source": "pc_stats", "enabled": True},
     "user_name": "",
     "run_at_startup": False,
+    "theme": {
+        "mode": "iris",
+        "accent": "#B23AF6",
+        "neon": "#79E8FC"
+    },
     "plugins": {},
 }
 
