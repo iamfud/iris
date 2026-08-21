@@ -1323,12 +1323,21 @@ class _RequestHandler(SimpleHTTPRequestHandler):
                     })
 
                 elif meta["type"] == "note":
+                    title = ""
                     preview = ""
                     fpath = os.path.join(folder, fname)
                     try:
                         with open(fpath, encoding="utf-8") as f:
-                            content = f.read(200)
-                        preview = content.split("\n")[0][:80]
+                            content = f.read(500)
+                        lines = content.split("\n")
+                        body_lines = []
+                        for idx, line in enumerate(lines):
+                            if idx == 0 and line.startswith("title:"):
+                                title = line[6:].strip()
+                            else:
+                                if line.strip():
+                                    body_lines.append(line)
+                        preview = body_lines[0][:80] if body_lines else ""
                     except Exception:
                         pass
                     items.append({
@@ -1336,6 +1345,7 @@ class _RequestHandler(SimpleHTTPRequestHandler):
                         "filename": fname,
                         "app": meta["app"],
                         "ts": ts,
+                        "title": title,
                         "preview": preview,
                     })
 

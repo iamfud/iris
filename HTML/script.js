@@ -485,9 +485,21 @@
           else { visionInWizard = false; stopTestPoll(); }
         }
       }
-      closeNav();
     });
   });
+
+  window.navigateToPage = function (pageName) {
+    if (!pageName) return;
+    const targetNav = document.querySelector(`.nav-item[data-page="${pageName}"]`);
+    if (targetNav) {
+      targetNav.click();
+    } else {
+      currentPage = pageName;
+      selectedPlugin = null;
+      exitPanelView();
+      renderPage();
+    }
+  };
 
   // ── Hamburger menu (mobile) ─────────────────────────────────
 
@@ -1835,14 +1847,16 @@
 
   function libNoteCardHtml(item) {
     const ts = new Date(item.ts * 1000).toLocaleString([], {dateStyle:"short", timeStyle:"short"});
-    const preview = item.preview ? (item.preview.startsWith("title:") ? item.preview.slice(6).trim() : item.preview) : "";
+    const title = item.title || "";
+    const preview = item.preview || "";
     return `<div class="lib-card-note" data-filename="${item.filename}">
       <div class="lib-note-body">
         <div class="lib-note-header">
           <span class="lib-card-app">${item.app}</span>
           <span class="lib-card-ts">${ts}</span>
         </div>
-        <p class="lib-note-preview">${escapeHtml(preview) || '<em style="opacity:0.4">Empty note</em>'}</p>
+        ${title ? `<div class="lib-note-title">${escapeHtml(title)}</div>` : ''}
+        <p class="lib-note-preview">${escapeHtml(preview) || (!title ? '<em style="opacity:0.4">Empty note</em>' : '')}</p>
       </div>
       <button class="lib-card-delete" title="Delete note">
         <span class="material-icons-outlined" style="font-size:16px;">delete</span>

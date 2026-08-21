@@ -1507,6 +1507,16 @@ class SettingsRenderer {
           ".settings-btn[data-action='" + ctrl.action + "']");
         buttons.forEach(function (el) {
           el.addEventListener("click", function () {
+            if (ctrl.action === "navigate" || ctrl.action === "open_page") {
+              var targetPage = ctrl.target || "library";
+              if (typeof window.navigateToPage === "function") {
+                window.navigateToPage(targetPage);
+              } else {
+                var navBtn = document.querySelector(".nav-item[data-page='" + targetPage + "']");
+                if (navBtn) navBtn.click();
+              }
+              return;
+            }
             if (ctrl.action === "copy_token") {
               apiFetch(self._apiBase + "/api/config")
                 .then(function (res) { return res.ok ? res.json() : {}; })

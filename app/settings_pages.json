@@ -122,6 +122,24 @@
           ]
         },
         {
+          "title": "Screenshots & Library",
+          "controls": [
+            {
+              "type": "folder_picker",
+              "key": "screenshot_dir",
+              "label": "Screenshot folder",
+              "description": "Where captures and notes are saved. Default: Documents\\Iris\\Screenshots. Leave empty to use default."
+            },
+            {
+              "type": "button",
+              "label": "Open Library",
+              "icon": "photo_library",
+              "action": "navigate",
+              "target": "library"
+            }
+          ]
+        },
+        {
           "title": "Media Player",
           "full_width": true,
           "controls": [
@@ -130,17 +148,6 @@
               "key": "media_player_path",
               "label": "Player Application (Eject)",
               "description": "Application launched when pressing the Player / Eject button."
-            }
-          ]
-        },
-        {
-          "title": "Screenshots",
-          "controls": [
-            {
-              "type": "folder_picker",
-              "key": "screenshot_dir",
-              "label": "Screenshot folder",
-              "description": "Where captures are saved as PNG files. Default: Documents\\Iris\\Screenshots. Leave empty to use the default."
             }
           ]
         },
