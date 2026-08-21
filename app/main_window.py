@@ -109,6 +109,31 @@ def _set_round_rect(hwnd, w, h, r):
     user32.SetWindowRgn(hwnd, hrgn, True)
 
 
+def _get_foreground_app_name():
+    """Return the sanitised process name of the current foreground window.
+
+    Used to tag screenshot filenames so the Library can group captures by app.
+    Falls back to ``"desktop"`` if the foreground window cannot be resolved.
+    """
+    import re as _re
+    try:
+        import psutil
+        pid = ctypes.c_ulong()
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return "desktop"
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if not pid.value:
+            return "desktop"
+        raw = psutil.Process(pid.value).name()
+        # strip .exe suffix, lowercase, collapse non-alphanumeric runs to _
+        raw = _re.sub(r'\.exe$', '', raw, flags=_re.IGNORECASE).lower()
+        raw = _re.sub(r'[^a-z0-9]+', '_', raw).strip('_')
+        return raw or "desktop"
+    except Exception:
+        return "desktop"
+
+
 class MainWindow:
     W = 220
     H = 568
@@ -143,6 +168,7 @@ class MainWindow:
         self._screenshot_ts      = 0.0
         self._screenshot_lbl     = None   # preview tk.Label in dialog
         self._screenshot_monitor = 0      # selected monitor index
+        self._screenshot_app     = "desktop"  # foreground app name at capture
 
         self._win = tk.Toplevel(root)
         self._win.title("Iris")
@@ -815,6 +841,7 @@ class MainWindow:
 
     def start_screenshot(self, slot=None):
         """Open the screenshot dialog page over the button box."""
+        self._screenshot_app     = _get_foreground_app_name()
         self._screenshot_slot    = slot or {}
         self._screenshot_monitor = int((slot or {}).get("screenshot_monitor", 0))
         self._screenshot_active  = True
@@ -997,7 +1024,8 @@ class MainWindow:
                 folder = os.path.join(os.path.expanduser("~"), "Documents", "Iris", "Screenshots")
             folder = os.path.abspath(folder)
             os.makedirs(folder, exist_ok=True)
-            fname = "iris_%s.png" % _time.strftime("%Y%m%d_%H%M%S")
+            app_tag = self._screenshot_app or "desktop"
+            fname = "iris_%s_%s.png" % (app_tag, _time.strftime("%Y%m%d_%H%M%S"))
             path = os.path.join(folder, fname)
             img.save(path, format="PNG")
             log.info("screenshot saved: %s", path)

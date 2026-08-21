@@ -681,6 +681,8 @@
       renderAlarms();
     } else if (currentPage === "notifications") {
       renderNotifications();
+    } else if (currentPage === "library") {
+      renderLibrary();
     } else if (currentPage === "plugins") {
       if (selectedPlugin) {
         renderPluginSettings(selectedPlugin);
@@ -1662,6 +1664,335 @@
     if (d < 7) return `${d}d ago`;
     const dt = new Date(ts * 1000);
     return dt.toLocaleDateString();
+  }
+
+  // ── Library ───────────────────────────────────────────────────────────────
+
+  var libraryTab = "screenshots";   // "screenshots" | "notes"
+  var libraryFilter = "all";        // app name or "all"
+  var libraryItems = [];            // cached from last fetch
+
+  function renderLibrary() {
+    main.innerHTML = `
+      <header>
+        <div class="header-left">
+          <button class="hamburger" id="hamburger" aria-label="Menu">
+            <span class="material-icons-outlined">menu</span>
+          </button>
+          <div>
+            <h1>Library</h1>
+          </div>
+        </div>
+        <button class="done-btn" id="done-btn">Done</button>
+      </header>
+      <section class="content lib-content">
+        <div class="lib-toolbar">
+          <div class="lib-tab-group">
+            <button class="lib-tab-btn ${libraryTab === 'screenshots' ? 'active' : ''}" id="lib-tab-screenshots">
+              <span class="material-icons-outlined" style="font-size:17px;">photo_library</span>
+              Screenshots
+            </button>
+            <button class="lib-tab-btn ${libraryTab === 'notes' ? 'active' : ''}" id="lib-tab-notes">
+              <span class="material-icons-outlined" style="font-size:17px;">sticky_note_2</span>
+              Notes
+            </button>
+          </div>
+          <div class="lib-filter-wrap">
+            <span class="material-icons-outlined" style="font-size:16px;color:var(--fg-dim);">filter_list</span>
+            <select id="lib-filter-select" class="lib-filter-select">
+              <option value="all">All Apps</option>
+            </select>
+          </div>
+          ${libraryTab === 'notes' ? `<button class="lib-new-note-btn" id="lib-new-note-btn">
+            <span class="material-icons-outlined" style="font-size:16px;">add</span> New Note
+          </button>` : ''}
+        </div>
+        <div id="lib-items-container" class="lib-items-container"></div>
+      </section>`;
+
+    rebindHamburger();
+    wireLibraryEvents();
+    fetchLibraryItems();
+  }
+
+  function wireLibraryEvents() {
+    const tabScreenshots = document.getElementById("lib-tab-screenshots");
+    const tabNotes = document.getElementById("lib-tab-notes");
+    if (tabScreenshots) {
+      tabScreenshots.addEventListener("click", () => {
+        libraryTab = "screenshots";
+        renderLibrary();
+      });
+    }
+    if (tabNotes) {
+      tabNotes.addEventListener("click", () => {
+        libraryTab = "notes";
+        renderLibrary();
+      });
+    }
+    const filterSel = document.getElementById("lib-filter-select");
+    if (filterSel) {
+      filterSel.addEventListener("change", () => {
+        libraryFilter = filterSel.value;
+        renderLibraryItems();
+      });
+    }
+    const newNoteBtn = document.getElementById("lib-new-note-btn");
+    if (newNoteBtn) {
+      newNoteBtn.addEventListener("click", () => openNotepad(null));
+    }
+  }
+
+  async function fetchLibraryItems() {
+    try {
+      const r = await apiFetch(`${API_BASE}/api/library/items`);
+      const data = await r.json();
+      libraryItems = data.items || [];
+      populateLibraryFilter();
+      renderLibraryItems();
+    } catch (e) {
+      const c = document.getElementById("lib-items-container");
+      if (c) c.innerHTML = `<p class="lib-empty">Could not load library.</p>`;
+    }
+  }
+
+  function populateLibraryFilter() {
+    const sel = document.getElementById("lib-filter-select");
+    if (!sel) return;
+    const apps = [...new Set(libraryItems.map(i => i.app))].sort();
+    const counts = {};
+    libraryItems.forEach(i => { counts[i.app] = (counts[i.app] || 0) + 1; });
+    sel.innerHTML = `<option value="all">All Apps</option>` +
+      apps.map(a => `<option value="${a}" ${libraryFilter === a ? 'selected' : ''}>${a} (${counts[a]})</option>`).join('');
+    if (libraryFilter !== 'all' && !apps.includes(libraryFilter)) libraryFilter = 'all';
+    sel.value = libraryFilter;
+  }
+
+  function renderLibraryItems() {
+    const container = document.getElementById("lib-items-container");
+    if (!container) return;
+
+    const filtered = libraryItems.filter(item => {
+      if (libraryTab === "screenshots" && item.type !== "screenshot") return false;
+      if (libraryTab === "notes" && item.type !== "note") return false;
+      if (libraryFilter !== "all" && item.app !== libraryFilter) return false;
+      return true;
+    });
+
+    if (!filtered.length) {
+      container.innerHTML = `<p class="lib-empty">No ${libraryTab} yet${libraryFilter !== 'all' ? ' for "' + libraryFilter + '"' : ''}.</p>`;
+      return;
+    }
+
+    if (libraryTab === "screenshots") {
+      container.innerHTML = `<div class="lib-grid">${filtered.map(item => libScreenshotCardHtml(item)).join('')}</div>`;
+      container.querySelectorAll(".lib-card-screenshot").forEach(card => {
+        const filename = card.dataset.filename;
+        card.querySelector(".lib-card-img-wrap").addEventListener("click", () => openLibraryViewer(filename));
+        const titleEl = card.querySelector(".lib-card-title");
+        if (titleEl) {
+          titleEl.addEventListener("click", (e) => { e.stopPropagation(); titleEl.focus(); });
+          titleEl.addEventListener("blur", () => saveLibrarySidecar(filename, titleEl.textContent.trim()));
+          titleEl.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); titleEl.blur(); } });
+        }
+        card.querySelector(".lib-card-delete").addEventListener("click", (e) => {
+          e.stopPropagation();
+          confirmLibraryDelete(filename, "screenshot and its annotations");
+        });
+      });
+    } else {
+      container.innerHTML = `<div class="lib-notes-list">${filtered.map(item => libNoteCardHtml(item)).join('')}</div>`;
+      container.querySelectorAll(".lib-card-note").forEach(card => {
+        const filename = card.dataset.filename;
+        card.querySelector(".lib-note-body").addEventListener("click", () => openNotepad(filename));
+        card.querySelector(".lib-card-delete").addEventListener("click", (e) => {
+          e.stopPropagation();
+          confirmLibraryDelete(filename, "note");
+        });
+      });
+    }
+  }
+
+  function libScreenshotCardHtml(item) {
+    const ts = new Date(item.ts * 1000).toLocaleString([], {dateStyle:"short", timeStyle:"short"});
+    const title = item.title || "";
+    return `<div class="lib-card-screenshot" data-filename="${item.filename}">
+      <div class="lib-card-img-wrap">
+        <img class="lib-card-img" src="${API_BASE}/api/library/image/${encodeURIComponent(item.filename)}" alt="${item.filename}" loading="lazy">
+      </div>
+      <div class="lib-card-meta">
+        <span class="lib-card-app">${item.app}</span>
+        <span class="lib-card-ts">${ts}</span>
+      </div>
+      <div class="lib-card-title-row">
+        <span class="lib-card-title" contenteditable="true" spellcheck="false" placeholder="Add title…">${escapeHtml(title)}</span>
+        <button class="lib-card-delete" title="Delete screenshot">
+          <span class="material-icons-outlined" style="font-size:16px;">delete</span>
+        </button>
+      </div>
+    </div>`;
+  }
+
+  function libNoteCardHtml(item) {
+    const ts = new Date(item.ts * 1000).toLocaleString([], {dateStyle:"short", timeStyle:"short"});
+    const preview = item.preview ? (item.preview.startsWith("title:") ? item.preview.slice(6).trim() : item.preview) : "";
+    return `<div class="lib-card-note" data-filename="${item.filename}">
+      <div class="lib-note-body">
+        <div class="lib-note-header">
+          <span class="lib-card-app">${item.app}</span>
+          <span class="lib-card-ts">${ts}</span>
+        </div>
+        <p class="lib-note-preview">${escapeHtml(preview) || '<em style="opacity:0.4">Empty note</em>'}</p>
+      </div>
+      <button class="lib-card-delete" title="Delete note">
+        <span class="material-icons-outlined" style="font-size:16px;">delete</span>
+      </button>
+    </div>`;
+  }
+
+  function escapeHtml(str) {
+    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  async function saveLibrarySidecar(filename, title) {
+    try {
+      await apiFetch(`${API_BASE}/api/library/sidecar/${encodeURIComponent(filename)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title })
+      });
+      // Update cached item
+      const item = libraryItems.find(i => i.filename === filename);
+      if (item) item.title = title;
+    } catch (e) { /* silent */ }
+  }
+
+  function openLibraryViewer(filename) {
+    const existing = document.getElementById("iris-screenshot-viewer");
+    if (existing) existing.remove();
+    const item = libraryItems.find(i => i.filename === filename);
+    const title = item ? (item.title || item.app) : filename;
+    const el = document.createElement("div");
+    el.id = "iris-screenshot-viewer";
+    el.innerHTML =
+      `<div class="ssv-bar">` +
+        `<span class="ssv-ts">${escapeHtml(title)}</span>` +
+        `<button class="ssv-close" aria-label="Close">&#x2715;</button>` +
+      `</div>` +
+      `<img src="${API_BASE}/api/library/image/${encodeURIComponent(filename)}" alt="Screenshot" draggable="false">`;
+    document.body.appendChild(el);
+    el.querySelector(".ssv-close").addEventListener("click", () => el.remove());
+    let startY = 0;
+    el.addEventListener("touchstart", (e) => { startY = e.touches[0].clientY; }, { passive: true });
+    el.addEventListener("touchend", (e) => { if (e.changedTouches[0].clientY - startY > 80) el.remove(); }, { passive: true });
+    if (typeof screensaverWakeOnEvent === "function") screensaverWakeOnEvent();
+  }
+
+  function confirmLibraryDelete(filename, label) {
+    if (!confirm(`Delete this ${label}? This cannot be undone.`)) return;
+    apiFetch(`${API_BASE}/api/library/delete/${encodeURIComponent(filename)}`, { method: "POST" })
+      .then(() => {
+        libraryItems = libraryItems.filter(i => i.filename !== filename);
+        populateLibraryFilter();
+        renderLibraryItems();
+      })
+      .catch(() => alert("Delete failed."));
+  }
+
+  // ── Notepad dialog ────────────────────────────────────────────────────────
+
+  function openNotepad(filename) {
+    const existing = document.getElementById("iris-notepad");
+    if (existing) existing.remove();
+
+    const el = document.createElement("div");
+    el.id = "iris-notepad";
+    el.innerHTML = `
+      <div class="notepad-dialog">
+        <div class="notepad-header">
+          <h2>${filename ? 'Edit Note' : 'New Note'}</h2>
+          <button class="notepad-close" aria-label="Close">&#x2715;</button>
+        </div>
+        <div class="notepad-field">
+          <label>Title</label>
+          <input type="text" id="notepad-title" class="notepad-input" placeholder="Note title…" autocomplete="off">
+        </div>
+        <div class="notepad-field">
+          <label>App</label>
+          <div class="notepad-app-row">
+            <input type="text" id="notepad-app" class="notepad-input" placeholder="app name" autocomplete="off">
+            <select id="notepad-app-select" class="notepad-app-select" title="Pick a running app">
+              <option value="">Pick app…</option>
+            </select>
+          </div>
+        </div>
+        <div class="notepad-field notepad-field-grow">
+          <label>Note</label>
+          <textarea id="notepad-body" class="notepad-textarea" placeholder="Write your note here…" spellcheck="true"></textarea>
+        </div>
+        <div class="notepad-actions">
+          <button class="notepad-btn notepad-btn-save" id="notepad-save">Save</button>
+          <button class="notepad-btn notepad-btn-cancel" id="notepad-cancel">Cancel</button>
+        </div>
+      </div>`;
+    document.body.appendChild(el);
+
+    const titleEl = document.getElementById("notepad-title");
+    const appEl = document.getElementById("notepad-app");
+    const appSel = document.getElementById("notepad-app-select");
+    const bodyEl = document.getElementById("notepad-body");
+
+    // Load running apps into dropdown
+    apiFetch(`${API_BASE}/api/library/running_apps`)
+      .then(r => r.json())
+      .then(data => {
+        (data.apps || []).forEach(a => {
+          const opt = document.createElement("option");
+          opt.value = a; opt.textContent = a;
+          appSel.appendChild(opt);
+        });
+      }).catch(() => {});
+
+    appSel.addEventListener("change", () => {
+      if (appSel.value) { appEl.value = appSel.value; appSel.value = ""; }
+    });
+
+    if (filename) {
+      // Load existing note
+      apiFetch(`${API_BASE}/api/library/note/${encodeURIComponent(filename)}`)
+        .then(r => r.json())
+        .then(data => {
+          titleEl.value = data.title || "";
+          appEl.value = data.app || "";
+          bodyEl.value = data.content || "";
+        }).catch(() => {});
+    } else {
+      // Default app = current filter or empty
+      appEl.value = libraryFilter !== "all" ? libraryFilter : "";
+    }
+
+    el.querySelector(".notepad-close").addEventListener("click", () => el.remove());
+    document.getElementById("notepad-cancel").addEventListener("click", () => el.remove());
+    document.getElementById("notepad-save").addEventListener("click", async () => {
+      const payload = {
+        title: titleEl.value.trim(),
+        app: appEl.value.trim() || "general",
+        content: bodyEl.value,
+        filename: filename || ""
+      };
+      try {
+        const r = await apiFetch(`${API_BASE}/api/library/note`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const data = await r.json();
+        if (data.ok) {
+          el.remove();
+          fetchLibraryItems();  // refresh
+        }
+      } catch (e) { alert("Save failed."); }
+    });
   }
 
   function renderNotifications() {

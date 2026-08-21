@@ -449,6 +449,14 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         super().end_headers()
 
     def do_GET(self):
+        # Library images are the user's own local files; img tags can't carry
+        # auth headers, so serve these with host-only protection only.
+        if self.path.startswith("/api/library/image/"):
+            if not self._host_ok():
+                self._reject_unauthorized()
+                return
+            self._handle_library_image(self.path[len("/api/library/image/"):])
+            return
         if self.path.startswith("/api/"):
             if not self._host_ok() or not self._authorized():
                 self._reject_unauthorized()
@@ -493,6 +501,14 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             self._send_json(_get_vision_sensors())
         elif self.path == "/api/screenshot/latest":
             self._handle_screenshot_latest()
+        elif self.path == "/api/library/items":
+            self._handle_library_items()
+        elif self.path.startswith("/api/library/sidecar/"):
+            self._handle_library_get_sidecar(self.path[len("/api/library/sidecar/"):])
+        elif self.path.startswith("/api/library/note/"):
+            self._handle_library_get_note(self.path[len("/api/library/note/"):])
+        elif self.path == "/api/library/running_apps":
+            self._handle_library_running_apps()
         elif self.path == "/api/volume/master":
             self._send_json(_get_master_volume())
         elif self.path == "/api/volume":
@@ -605,6 +621,12 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             self._handle_save_panel_password()
         elif self.path == "/api/open_url":
             self._handle_open_url()
+        elif self.path.startswith("/api/library/sidecar/"):
+            self._handle_library_save_sidecar(self.path[len("/api/library/sidecar/"):])
+        elif self.path == "/api/library/note":
+            self._handle_library_save_note()
+        elif self.path.startswith("/api/library/delete/"):
+            self._handle_library_delete(self.path[len("/api/library/delete/"):])
         else:
             self.send_error(404)
 
@@ -1183,6 +1205,315 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             self._send_json({"available": False})
             return
         self._send_json({"available": True, **data})
+
+    # ── Library ────────────────────────────────────────────────────────────
+
+    def _library_folder(self):
+        """Return the resolved screenshot / library folder path."""
+        folder = ""
+        if _app is not None:
+            try:
+                folder = (_app.cfg.get("screenshot_dir") or "").strip()
+            except Exception:
+                pass
+        if not folder:
+            folder = os.path.join(os.path.expanduser("~"), "Documents", "Iris", "Screenshots")
+        return os.path.abspath(folder)
+
+    def _parse_library_filename(self, fname):
+        """Extract app name and timestamp from an iris_* filename.
+
+        New format: iris_APPNAME_YYYYMMDD_HHMMSS.png
+        Old format: iris_YYYYMMDD_HHMMSS.png  (app → 'unknown')
+        Note format: iris_note_APPNAME_YYYYMMDD_HHMMSS.txt
+        """
+        import re as _re
+        # Note file
+        m = _re.match(r'^iris_note_(.+)_(\d{8}_\d{6})\.txt$', fname)
+        if m:
+            return {"type": "note", "app": m.group(1), "ts_str": m.group(2)}
+        # New screenshot format
+        m = _re.match(r'^iris_([a-z0-9_]+)_(\d{8})_(\d{6})\.png$', fname)
+        if m:
+            app = m.group(1)
+            ts_str = m.group(2) + "_" + m.group(3)
+            return {"type": "screenshot", "app": app, "ts_str": ts_str}
+        # Old screenshot format iris_YYYYMMDD_HHMMSS.png
+        m = _re.match(r'^iris_(\d{8})_(\d{6})\.png$', fname)
+        if m:
+            ts_str = m.group(1) + "_" + m.group(2)
+            return {"type": "screenshot", "app": "unknown", "ts_str": ts_str}
+        return None
+
+    def _ts_from_str(self, ts_str):
+        """Convert YYYYMMDD_HHMMSS → unix timestamp."""
+        try:
+            import time as _t
+            return _t.mktime(_t.strptime(ts_str, "%Y%m%d_%H%M%S"))
+        except Exception:
+            return 0.0
+
+    def _sidecar_path(self, folder, img_fname):
+        base = os.path.splitext(img_fname)[0]
+        return os.path.join(folder, base + ".json")
+
+    def _handle_library_items(self):
+        """List all screenshots and notes in the library folder."""
+        folder = self._library_folder()
+        items = []
+        try:
+            if not os.path.isdir(folder):
+                self._send_json({"items": []})
+                return
+
+            # Collect all filenames; track PNG basenames to detect orphaned sidecars
+            all_files = os.listdir(folder)
+            png_basenames = {
+                os.path.splitext(f)[0]
+                for f in all_files
+                if f.lower().endswith(".png")
+            }
+
+            for fname in all_files:
+                meta = self._parse_library_filename(fname)
+
+                # Unrecognised PNG — show as orphan using file mtime
+                if meta is None:
+                    if fname.lower().endswith(".png"):
+                        fpath = os.path.join(folder, fname)
+                        ts = os.path.getmtime(fpath) if os.path.isfile(fpath) else 0.0
+                        sc_path = self._sidecar_path(folder, fname)
+                        title = ""
+                        if os.path.isfile(sc_path):
+                            try:
+                                with open(sc_path, encoding="utf-8") as f:
+                                    sc = json.load(f)
+                                title = sc.get("title", "")
+                            except Exception:
+                                pass
+                        items.append({
+                            "type": "screenshot",
+                            "filename": fname,
+                            "app": "orphan",
+                            "ts": ts,
+                            "title": title,
+                        })
+                    continue
+
+                ts = self._ts_from_str(meta["ts_str"])
+
+
+                if meta["type"] == "screenshot":
+                    # Read title from sidecar if present
+                    sc_path = self._sidecar_path(folder, fname)
+                    title = ""
+                    if os.path.isfile(sc_path):
+                        try:
+                            with open(sc_path, encoding="utf-8") as f:
+                                sc = json.load(f)
+                            title = sc.get("title", "")
+                        except Exception:
+                            pass
+                    items.append({
+                        "type": "screenshot",
+                        "filename": fname,
+                        "app": meta["app"],
+                        "ts": ts,
+                        "title": title,
+                    })
+
+                elif meta["type"] == "note":
+                    preview = ""
+                    fpath = os.path.join(folder, fname)
+                    try:
+                        with open(fpath, encoding="utf-8") as f:
+                            content = f.read(200)
+                        preview = content.split("\n")[0][:80]
+                    except Exception:
+                        pass
+                    items.append({
+                        "type": "note",
+                        "filename": fname,
+                        "app": meta["app"],
+                        "ts": ts,
+                        "preview": preview,
+                    })
+
+            # Auto-delete orphaned sidecar JSON files
+            for fname in all_files:
+                if fname.lower().endswith(".json"):
+                    base = os.path.splitext(fname)[0]
+                    if base not in png_basenames:
+                        try:
+                            os.remove(os.path.join(folder, fname))
+                            log.info("library: removed orphaned sidecar %s", fname)
+                        except Exception:
+                            pass
+
+            # Sort newest first
+            items.sort(key=lambda x: x["ts"], reverse=True)
+            self._send_json({"items": items})
+        except Exception as e:
+            log.warning("library items error: %s", e)
+            self._send_json({"items": []})
+
+    def _handle_library_image(self, filename):
+        """Serve a PNG from the library folder."""
+        from urllib.parse import unquote
+        filename = unquote(filename.split("?")[0])  # strip query string, decode %xx
+        filename = os.path.basename(filename)
+        if not filename.lower().endswith(".png"):
+            self.send_error(400)
+            return
+        path = os.path.join(self._library_folder(), filename)
+        if not os.path.isfile(path):
+            self.send_error(404)
+            return
+        try:
+            with open(path, "rb") as f:
+                data = f.read()
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(data)
+        except Exception as e:
+            log.warning("library image serve error: %s", e)
+            self.send_error(500)
+
+    def _handle_library_get_sidecar(self, filename):
+        """Return sidecar JSON for a screenshot (empty object if none exists)."""
+        filename = os.path.basename(filename)
+        sc_path = self._sidecar_path(self._library_folder(), filename)
+        if not os.path.isfile(sc_path):
+            self._send_json({})
+            return
+        try:
+            with open(sc_path, encoding="utf-8") as f:
+                self._send_json(json.load(f))
+        except Exception:
+            self._send_json({})
+
+    def _handle_library_save_sidecar(self, filename):
+        """Save sidecar JSON for a screenshot."""
+        filename = os.path.basename(filename)
+        folder = self._library_folder()
+        img_path = os.path.join(folder, filename)
+        if not os.path.isfile(img_path):
+            self.send_error(404)
+            return
+        try:
+            body = self._read_json()
+            sc_path = self._sidecar_path(folder, filename)
+            # Preserve existing annotation data; only update allowed keys
+            existing = {}
+            if os.path.isfile(sc_path):
+                try:
+                    with open(sc_path, encoding="utf-8") as f:
+                        existing = json.load(f)
+                except Exception:
+                    pass
+            existing["title"] = str(body.get("title", existing.get("title", "")))
+            with open(sc_path, "w", encoding="utf-8") as f:
+                json.dump(existing, f, ensure_ascii=False)
+            self._send_json({"ok": True})
+        except Exception as e:
+            log.warning("library sidecar save error: %s", e)
+            self.send_error(500)
+
+    def _handle_library_get_note(self, filename):
+        """Return the content of a note file."""
+        filename = os.path.basename(filename)
+        path = os.path.join(self._library_folder(), filename)
+        if not os.path.isfile(path):
+            self._send_json({"content": "", "app": "", "title": ""})
+            return
+        try:
+            with open(path, encoding="utf-8") as f:
+                content = f.read()
+            # First line is the title (prefixed "title:"), rest is body
+            lines = content.split("\n", 2)
+            title = ""
+            body = content
+            if lines and lines[0].startswith("title:"):
+                title = lines[0][6:].strip()
+                body = "\n".join(lines[1:]).lstrip("\n")
+            meta = self._parse_library_filename(filename) or {}
+            self._send_json({"content": body, "title": title, "app": meta.get("app", "")})
+        except Exception as e:
+            log.warning("library note read error: %s", e)
+            self.send_error(500)
+
+    def _handle_library_save_note(self):
+        """Create or overwrite a note file."""
+        import time as _t
+        import re as _re
+        try:
+            body = self._read_json()
+            app = body.get("app", "general") or "general"
+            app = _re.sub(r'[^a-z0-9]+', '_', app.lower()).strip('_') or "general"
+            title = str(body.get("title", "")).strip()
+            content = str(body.get("content", ""))
+            filename = body.get("filename", "")
+
+            folder = self._library_folder()
+            os.makedirs(folder, exist_ok=True)
+
+            if not filename:
+                ts = _t.strftime("%Y%m%d_%H%M%S")
+                filename = "iris_note_%s_%s.txt" % (app, ts)
+
+            path = os.path.join(folder, os.path.basename(filename))
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("title:%s\n%s" % (title, content))
+            self._send_json({"ok": True, "filename": os.path.basename(path)})
+        except Exception as e:
+            log.warning("library note save error: %s", e)
+            self.send_error(500)
+
+    def _handle_library_delete(self, filename):
+        """Delete a library item (PNG + sidecar, or note txt)."""
+        filename = os.path.basename(filename)
+        folder = self._library_folder()
+        try:
+            path = os.path.join(folder, filename)
+            if not os.path.isfile(path):
+                self.send_error(404)
+                return
+            os.remove(path)
+            # Also remove sidecar if it's a PNG
+            if filename.lower().endswith(".png"):
+                sc = self._sidecar_path(folder, filename)
+                if os.path.isfile(sc):
+                    os.remove(sc)
+            self._send_json({"ok": True})
+        except Exception as e:
+            log.warning("library delete error: %s", e)
+            self.send_error(500)
+
+    def _handle_library_running_apps(self):
+        """Return a list of currently running process names for the note app picker."""
+        try:
+            import psutil
+            seen = set()
+            apps = []
+            for proc in psutil.process_iter(["name"]):
+                try:
+                    name = proc.info["name"] or ""
+                    import re as _re
+                    key = _re.sub(r'\.exe$', '', name, flags=_re.IGNORECASE).lower()
+                    key = _re.sub(r'[^a-z0-9]+', '_', key).strip('_')
+                    if key and key not in seen:
+                        seen.add(key)
+                        apps.append(key)
+                except Exception:
+                    pass
+            apps.sort()
+            self._send_json({"apps": apps})
+        except Exception as e:
+            log.warning("library running apps error: %s", e)
+            self._send_json({"apps": []})
 
     def _handle_vision_capture(self):
         import vision
