@@ -13,7 +13,7 @@
     "configuration": true,
     "outputs": true,
     "live_data": true,
-    "actions": true,
+    "actions": false,
     "diagnostics": false
   },
 
@@ -21,8 +21,7 @@
     "status": "CONNECTION",
     "configuration": "RGB CONTROL",
     "outputs": "OUTPUT ROUTING",
-    "live_data": "DEVICES",
-    "actions": "COMMANDS"
+    "live_data": "DEVICES"
   },
 
   "status": [
@@ -44,11 +43,6 @@
       { "key": "active_profile", "label": "Active profile", "type": "string" }
     ]
   },
-
-  "actions": [
-    { "id": "refresh", "label": "Refresh", "icon": "refresh", "confirm": false },
-    { "id": "reconnect", "label": "Reconnect", "icon": "link", "confirm": false }
-  ],
 
   "settings": [
     {

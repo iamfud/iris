@@ -44,7 +44,10 @@ class _JSApi:
 
     def close_panel(self):
         if self._window:
-            self._window.destroy()
+            try:
+                self._window.hide()
+            except Exception:
+                pass
 
     def hide_panel(self):
         if self._window:
@@ -60,19 +63,95 @@ class _JSApi:
             except Exception:
                 pass
 
+    def restore_default_size(self):
+        """Restore the settings panel to its default 950x680 resolution."""
+        if not self._window:
+            return
+        try:
+            self._window.resize(_DEFAULT_WIDTH, _DEFAULT_HEIGHT)
+            self._state["width"] = _DEFAULT_WIDTH
+            self._state["height"] = _DEFAULT_HEIGHT
+            _save_geometry(self._state)
+        except Exception:
+            pass
+
+    def open_fullscreen_viewer(self, filename):
+        """Open a standalone full-screen window for screenshot inspection & markup."""
+        try:
+            import webview
+            import urllib.parse
+            q = urllib.parse.urlencode({"view": "viewer", "file": filename})
+            url = f"http://127.0.0.1:15502/index.html?{q}"
+            vapi = _ViewerJSApi(None)
+            vw = webview.create_window(
+                "Iris Screenshot",
+                url,
+                fullscreen=True,
+                frameless=True,
+                easy_drag=False,
+                background_color="#0A0A0A",
+                js_api=vapi
+            )
+            vapi._window = vw
+            return True
+        except Exception as e:
+            log.warning("[panel] open_fullscreen_viewer failed: %s", e)
+            return False
+
+
+class _ViewerJSApi:
+    """Exposed to JavaScript in the standalone fullscreen viewer window."""
+
+    def __init__(self, window):
+        self._window = window
+
+    def close_panel(self):
+        if self._window:
+            try:
+                self._window.destroy()
+            except Exception:
+                pass
+
+    def close_viewer(self):
+        if self._window:
+            try:
+                self._window.destroy()
+            except Exception:
+                pass
+
 
 def _find_windows_for_pid(pid: int) -> list:
-    """Find visible top-level window handles owned by process pid."""
+    """Find top-level window handles owned by process pid."""
+    if not pid:
+        return []
     user32 = ctypes.windll.user32
     hwnds = []
 
     def enum_cb(hwnd, _):
-        if not user32.IsWindow(hwnd) or not user32.IsWindowVisible(hwnd):
+        if not user32.IsWindow(hwnd):
             return True
         lp_pid = ctypes.c_ulong()
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(lp_pid))
         if lp_pid.value == pid:
-            hwnds.append(hwnd)
+            buf = ctypes.create_unicode_buffer(256)
+            user32.GetClassNameW(hwnd, buf, 256)
+            cname = buf.value or ""
+
+            # Exclude helper / hook / crashpad / message windows
+            if any(ign in cname for ign in ("GDI+", ".NET", "MSCTFIME", "Default IME", "Message", "Chrome_WidgetWin")):
+                return True
+
+            tbuf = ctypes.create_unicode_buffer(256)
+            user32.GetWindowTextW(hwnd, tbuf, 256)
+            title = tbuf.value or ""
+
+            rect = ctypes.wintypes.RECT()
+            user32.GetWindowRect(hwnd, ctypes.byref(rect))
+            if (rect.right - rect.left > 80) and (rect.bottom - rect.top > 80):
+                if title == "Iris":
+                    hwnds.insert(0, hwnd)
+                else:
+                    hwnds.append(hwnd)
         return True
 
     WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
@@ -81,12 +160,6 @@ def _find_windows_for_pid(pid: int) -> list:
         user32.EnumWindows(cb, 0)
     except Exception as ex:
         log.warning("[panel] EnumWindows failed: %s", ex)
-
-    # Fallback by window title if none found by PID
-    if not hwnds:
-        h = user32.FindWindowW(None, "Iris")
-        if h and user32.IsWindow(h):
-            hwnds.append(h)
 
     return hwnds
 
@@ -140,11 +213,48 @@ def _bring_to_foreground(hwnd):
         log.warning("[panel] _bring_to_foreground failed: %s", ex)
 
 
-def open_panel(width=_DEFAULT_WIDTH, height=_DEFAULT_HEIGHT):
-    """Open the settings panel. If already open, brings the existing window to the foreground."""
+def is_panel_open():
+    """Return True if the settings panel / library window process is running."""
+    global _proc
+    return _proc is not None and _proc.is_alive()
+
+
+def open_panel(width=_DEFAULT_WIDTH, height=_DEFAULT_HEIGHT, query_params=None, page=None, tab=None, action=None, app_tag=None, viewer_file=None):
+    """Open the settings panel. If already open, navigates to target page/tab/action and brings to foreground."""
     global _proc
 
+    if page or tab or action or app_tag or viewer_file:
+        if query_params is None:
+            query_params = {}
+        elif not isinstance(query_params, dict):
+            query_params = {"q": str(query_params)}
+        if page:
+            query_params["page"] = str(page)
+        if tab:
+            query_params["tab"] = str(tab)
+        if action:
+            query_params["action"] = str(action)
+        if app_tag:
+            query_params["app"] = str(app_tag)
+        if viewer_file:
+            query_params["file"] = str(viewer_file)
+
     if _proc is not None and _proc.is_alive():
+        # Broadcast live navigation to connected webview
+        if page or tab or action or app_tag or viewer_file:
+            try:
+                import ws_bridge
+                ws_bridge.broadcast({
+                    "type": "navigate",
+                    "page": page or "library",
+                    "tab": tab or "notes",
+                    "action": action,
+                    "app": app_tag,
+                    "viewer_file": viewer_file,
+                })
+            except Exception:
+                pass
+
         hwnds = _find_windows_for_pid(_proc.pid)
         if hwnds:
             for hwnd in hwnds:
@@ -161,15 +271,10 @@ def open_panel(width=_DEFAULT_WIDTH, height=_DEFAULT_HEIGHT):
         cfg = load_config()
         x = cfg.get("panel_window_x")
         y = cfg.get("panel_window_y")
-        w = int(cfg.get("panel_window_width") or width)
-        h = int(cfg.get("panel_window_height") or height)
     except Exception:
         x = y = None
-        w, h = width, height
 
-    # Discard invalid/corrupt saved geometry.
-    if not _valid_size(w, h):
-        w, h = width, height
+    w, h = _DEFAULT_WIDTH, _DEFAULT_HEIGHT
     if x is not None and y is not None:
         try:
             x, y = int(x), int(y)
@@ -177,7 +282,7 @@ def open_panel(width=_DEFAULT_WIDTH, height=_DEFAULT_HEIGHT):
             x = y = None
 
     _proc = multiprocessing.Process(
-        target=_run, args=(w, h, x, y), daemon=True, name="panel"
+        target=_run, args=(w, h, x, y, query_params), daemon=True, name="panel"
     )
     _proc.start()
     log.info("[panel] process started (pid=%d)", _proc.pid)
@@ -291,14 +396,49 @@ def _save_geometry(state):
         cfg["panel_window_height"] = int(height)
         save_config(cfg)
     except Exception as e:
-        print("[panel] failed to save window position:", e)
+        log.warning("[panel] failed to save window position: %s", e)
 
 
-def _run(width, height, x=None, y=None):
+def _ensure_child_logger():
+    """Ensure the child process has a working file logger (print goes nowhere with console=False)."""
+    import os, sys
+    from logging.handlers import RotatingFileHandler
+    root = logging.getLogger()
+    if any(isinstance(h, RotatingFileHandler) for h in root.handlers):
+        return
+    if getattr(sys, "frozen", False):
+        log_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Iris")
+    else:
+        log_dir = os.path.dirname(os.path.abspath(__file__))
+    os.makedirs(log_dir, exist_ok=True)
+    handler = RotatingFileHandler(
+        os.path.join(log_dir, "iris.log"),
+        maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8",
+    )
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s  %(levelname)-5s  [%(name)s]  %(message)s", datefmt="%H:%M:%S"))
+    root.setLevel(logging.INFO)
+    root.addHandler(handler)
+
+
+def _run(width, height, x=None, y=None, query_params=None):
+    _ensure_child_logger()
+
+    try:
+        import os
+        import paths
+        wv_data = paths.get_webview_data_dir("WebView2")
+        os.environ["WEBVIEW2_USER_DATA_FOLDER"] = wv_data
+        # Prevent GPU composition/context hangs on cold window spawn
+        if "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS" not in os.environ:
+            os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = "--disable-gpu-compositing --disable-direct-composition"
+    except Exception as exc:
+        log.error("[panel] WebView2 data-folder setup failed: %s", exc)
+
     try:
         import webview
     except ImportError:
-        print("[panel] pywebview not installed — pip install pywebview")
+        log.error("[panel] pywebview not installed — pip install pywebview")
         return
 
     # Track geometry from events — never use w.x/w.y/w.width/w.height
@@ -312,19 +452,17 @@ def _run(width, height, x=None, y=None):
     }
 
     api = _JSApi(state)
-    panel_url = "http://127.0.0.1:15502/index.html"
+    import urllib.parse
+    if query_params:
+        if isinstance(query_params, dict):
+            qs = urllib.parse.urlencode(query_params)
+        else:
+            qs = str(query_params).lstrip("?")
+        panel_url = f"http://127.0.0.1:15502/index.html?{qs}"
+    else:
+        panel_url = "http://127.0.0.1:15502/index.html"
 
-    # Wait for the local HTTP bridge to be ready before opening the WebView
-    import time, urllib.request
-    for _ in range(50):
-        try:
-            with urllib.request.urlopen(panel_url, timeout=0.3) as resp:
-                if resp.status == 200:
-                    break
-        except Exception:
-            time.sleep(0.1)
-
-    print(f"[panel] loading {panel_url} ({width}x{height})")
+    log.info("[panel] loading %s (%dx%d)", panel_url, width, height)
     try:
         if x is not None and y is not None:
             x, y = _clamp_to_screen(x, y, width, height)
@@ -362,16 +500,8 @@ def _run(width, height, x=None, y=None):
                 pass
 
         def _on_resized(rw, rh):
-            # Ignore startup resize noise (was shrinking saved size each open).
-            if not state["ready"]:
-                return
-            try:
-                rw, rh = int(rw), int(rh)
-                if _valid_size(rw, rh):
-                    state["width"] = rw
-                    state["height"] = rh
-            except (TypeError, ValueError):
-                pass
+            # Ignore resize events so settings window geometry stays clean and fixed
+            pass
 
         def _on_shown():
             state["ready"] = True
@@ -397,6 +527,4 @@ def _run(width, height, x=None, y=None):
         # Fallback if closing event did not fire.
         _save_geometry(state)
     except Exception:
-        print("[panel] failed to open")
-        import traceback
-        traceback.print_exc()
+        log.error("[panel] failed to open", exc_info=True)

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'iris-pwa-v5';
+const CACHE_NAME = 'iris-pwa-v115';
 const ASSETS = [
   '/',
   '/index.html',
@@ -6,6 +6,7 @@ const ASSETS = [
   '/script.js',
   '/settings_renderer.js',
   '/manifest.json',
+  '/material-icons-outlined.woff2',
   '/Iris_full.png',
   '/icon-192.png',
   '/icon-512.png',
@@ -32,12 +33,13 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
 
-  // Bypass service worker cache for dynamic APIs and live media streams
   const url = event.request.url;
+  // Bypass service worker cache for dynamic APIs and live media streams
   if (url.includes('/api/') || url.includes('/media/') || url.includes('/pair')) {
     return;
   }
 
+  // Network-first strategy for live updates with offline cache fallback
   event.respondWith(
     fetch(event.request)
       .then((response) => {
@@ -48,8 +50,8 @@ self.addEventListener('fetch', (event) => {
         return response;
       })
       .catch(() => {
-        return caches.match(event.request, { ignoreSearch: true }).then((cached) => {
-          if (cached) return cached;
+        return caches.match(event.request, { ignoreSearch: true }).then((fallback) => {
+          if (fallback) return fallback;
           if (event.request.mode === 'navigate') {
             return caches.match('/index.html');
           }

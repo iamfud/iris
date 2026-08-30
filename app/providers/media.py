@@ -28,20 +28,22 @@ STATUS_ICONS = {
 
 _itunes_retry_at = 0.0
 _itunes_app = None
+_itunes_prev_key = ""
+_itunes_prev_art = None
 
 
 def _read_itunes():
-    global _itunes_retry_at, _itunes_app
+    global _itunes_retry_at, _itunes_app, _itunes_prev_key, _itunes_prev_art
     now = time.time()
     if now < _itunes_retry_at:
         return None
     try:
-        import psutil
-        import os
-        import tempfile
-        if not any(p.name().lower() == "itunes.exe" for p in psutil.process_iter(["name"])):
+        from win_platform import is_process_running
+        if not is_process_running("itunes.exe", ttl=1.0):
             _itunes_retry_at = time.time() + 30.0
             _itunes_app = None
+            _itunes_prev_key = ""
+            _itunes_prev_art = None
             return None
         if _itunes_app is None:
             from comtypes.client import CreateObject
@@ -50,35 +52,48 @@ def _read_itunes():
         track = _itunes_app.CurrentTrack
         if not track:
             return None
+        title = str(track.Name or "")
+        artist = str(track.Artist or "")
+        album = str(track.Album or "")
+        track_key = f"{title}|{artist}|{album}"
+
         result = {
-            "title": str(track.Name or ""),
-            "artist": str(track.Artist or ""),
-            "album": str(track.Album or ""),
+            "title": title,
+            "artist": artist,
+            "album": album,
         }
         result["status"] = "playing" if state == 1 else ("paused" if state == 2 else "stopped")
 
-        # Extract embedded artwork if available
-        art_bytes = None
-        try:
-            art_col = getattr(track, "Artwork", None)
-            if art_col and art_col.Count > 0:
-                art = art_col.Item(1)
-                tmp_path = os.path.join(tempfile.gettempdir(), f"iris_itunes_{abs(hash(track.Name or ''))}.jpg")
-                art.SaveArtworkToFile(tmp_path)
-                if os.path.isfile(tmp_path):
-                    with open(tmp_path, "rb") as f:
-                        art_bytes = f.read()
-                    try:
-                        os.remove(tmp_path)
-                    except Exception:
-                        pass
-        except Exception:
-            pass
-        result["art_bytes"] = art_bytes
+        # Extract embedded artwork only when track changes
+        if track_key == _itunes_prev_key:
+            result["art_bytes"] = _itunes_prev_art
+        else:
+            art_bytes = None
+            try:
+                art_col = getattr(track, "Artwork", None)
+                if art_col and art_col.Count > 0:
+                    art = art_col.Item(1)
+                    tmp_path = os.path.join(tempfile.gettempdir(), f"iris_itunes_{abs(hash(title))}.jpg")
+                    art.SaveArtworkToFile(tmp_path)
+                    if os.path.isfile(tmp_path):
+                        with open(tmp_path, "rb") as f:
+                            art_bytes = f.read()
+                        try:
+                            os.remove(tmp_path)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+            _itunes_prev_key = track_key
+            _itunes_prev_art = art_bytes
+            result["art_bytes"] = art_bytes
+
         return result
     except Exception:
         _itunes_retry_at = time.time() + 30.0
         _itunes_app = None
+        _itunes_prev_key = ""
+        _itunes_prev_art = None
         return None
 
 
@@ -93,6 +108,8 @@ class MediaProvider:
         self._art_bytes = None
         self._art_mime = "image/jpeg"
         self._art_id = ""
+        self._prev_smtc_key = ""
+        self._prev_smtc_art = None
         self._last_notify_key = ""
         self._lock = threading.Lock()
         self._running = False
@@ -136,25 +153,35 @@ class MediaProvider:
             if not props or not props.title:
                 return None
 
-            art_bytes = None
-            if props.thumbnail:
-                try:
-                    import winrt.windows.storage.streams as streams
-                    t_stream = loop.run_until_complete(props.thumbnail.open_read_async())
-                    size = t_stream.size
-                    if size > 0:
-                        reader = streams.DataReader(t_stream)
-                        loop.run_until_complete(reader.load_async(size))
-                        buf = bytearray(size)
-                        reader.read_bytes(buf)
-                        art_bytes = bytes(buf)
-                except Exception as ex:
-                    log.debug("[media] SMTC thumbnail read error: %s", ex)
+            title = props.title or ""
+            artist = props.artist or ""
+            album = props.album_title or ""
+            track_key = f"{title}|{artist}|{album}"
+
+            if track_key == self._prev_smtc_key:
+                art_bytes = self._prev_smtc_art
+            else:
+                art_bytes = None
+                if props.thumbnail:
+                    try:
+                        import winrt.windows.storage.streams as streams
+                        t_stream = loop.run_until_complete(props.thumbnail.open_read_async())
+                        size = t_stream.size
+                        if size > 0:
+                            reader = streams.DataReader(t_stream)
+                            loop.run_until_complete(reader.load_async(size))
+                            buf = bytearray(size)
+                            reader.read_bytes(buf)
+                            art_bytes = bytes(buf)
+                    except Exception as ex:
+                        log.debug("[media] SMTC thumbnail read error: %s", ex)
+                self._prev_smtc_key = track_key
+                self._prev_smtc_art = art_bytes
 
             return {
-                "title": props.title or "",
-                "artist": props.artist or "",
-                "album": props.album_title or "",
+                "title": title,
+                "artist": artist,
+                "album": album,
                 "status": status,
                 "art_bytes": art_bytes,
             }

@@ -168,16 +168,52 @@ class EDConnector:
                 self._event_log.pop(0)
             et = event.get("event", "?")
             self._event_types.add(et)
+            merged = dict(self._state)
+            merged.update(self._status)
+
+        try:
+            import automations
+            automations.get_engine().dispatch_state("plugin", "elite_dangerous", merged)
+        except Exception:
+            pass
 
     def _on_status(self, flags):
         with self._lock:
-            # shields_up is driven by the journal ShieldState event. Status.json's
-            # Flags bit 0x08 can lag the event during shield regeneration, so a
-            # stale "down" value here would produce a spurious down-blip right as
-            # shields come back online. Exclude it from the flag snapshot; the
-            # journal is authoritative for this key.
-            flags.pop("shields_up", None)
+            # Status.json Flags bit 0x08 ("shields_up") is the real-time source
+            # that drives the shield-down alert. The journal ShieldState event is
+            # sparse and not written on every transition during combat, so relying
+            # on it left the shield red alert not firing. Keep the flag.
             self._status.update(flags)
+            merged = dict(self._state)
+            merged.update(self._status)
+
+        try:
+            import automations
+            automations.get_engine().dispatch_state("plugin", "elite_dangerous", merged)
+        except Exception:
+            pass
+
+    @classmethod
+    def get_settings(cls):
+        """Declare settings sections and controls for Elite Dangerous plugin."""
+        from .binds_scanner import list_available_binds_files
+        files = list_available_binds_files()
+        options = [{"value": f, "label": f} for f in files]
+        return [
+            {
+                "title": "Binds File Selection",
+                "controls": [
+                    {
+                        "key": "selected_binds_file",
+                        "label": "Active Binds File",
+                        "type": "select",
+                        "options": options,
+                        "options_key": "available_binds_files",
+                        "description": "Select the active in-game .binds file to parse and sync into Iris buttons."
+                    }
+                ]
+            }
+        ]
 
 
 

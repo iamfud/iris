@@ -15,7 +15,7 @@
     "buttons": true,
     "outputs": true,
     "live_data": true,
-    "actions": false,
+    "actions": true,
     "diagnostics": false
   },
 
@@ -24,14 +24,43 @@
     "configuration": "GAME DETECTION",
     "buttons": "BUTTON CONTROLS",
     "outputs": "OUTPUT ROUTING",
+    "actions": "KEY BINDINGS & BACKUPS",
     "live_data": "GAME STATE"
   },
+
+  "settings": [
+    {
+      "title": "Binds File Selection",
+      "controls": [
+        {
+          "key": "selected_binds_file",
+          "label": "Active Binds File",
+          "type": "select",
+          "options_key": "available_binds_files",
+          "description": "Select the in-game .binds file to parse and sync into Iris buttons."
+        }
+      ]
+    }
+  ],
+
+  "actions": [
+    { "id": "import_binds", "label": "Import Keys", "icon": "sync" },
+    { "id": "backup_binds", "label": "Backup", "icon": "backup" },
+    { "id": "restore_binds", "label": "Restore", "icon": "restore" }
+  ],
 
   "status": [
     { "key": "status_code", "label": "Status", "source": "lifecycle" },
     { "key": "commander", "label": "Commander", "source": "plugin" },
     { "key": "system", "label": "System", "source": "plugin" }
   ],
+
+  "theme": {
+    "mode": "custom",
+    "neon": "#ffaa00",
+    "accent": "#ff5500",
+    "description": "Elite Dangerous Orange Cockpit HUD"
+  },
 
   "buttons": [
     {
@@ -40,9 +69,10 @@
       "widget_type": "status_toggle",
       "icon": "airplane-landing",
       "icon_off": "airplane-takeoff",
+      "color": "#ffb703",
       "state_key": "landing_gear",
       "labels": { "on": "DOWN", "off": "UP" },
-      "colors": { "on": "#00ff88", "off": "#444444" },
+      "colors": { "on": "#ffaa00", "off": "#444444" },
       "default_hotkey": "L",
       "description": "Toggle ship landing gear with live journal status"
     },
@@ -51,6 +81,7 @@
       "name": "Cargo Scoop",
       "widget_type": "status_toggle",
       "icon": "bag-personal",
+      "color": "#ffb703",
       "state_key": "cargo_scoop",
       "labels": { "on": "DEPLOYED", "off": "RETRACTED" },
       "colors": { "on": "#ffaa00", "off": "#444444" },
@@ -62,9 +93,10 @@
       "name": "Flight Assist",
       "widget_type": "status_toggle",
       "icon": "steering",
+      "color": "#ffb703",
       "state_key": "flight_assist",
-      "labels": { "on": "ON", "off": "OFF" },
-      "colors": { "on": "#48b2e9", "off": "#ff4444" },
+      "labels": { "on": "OFF", "off": "ON" },
+      "colors": { "on": "#ff3355", "off": "#00ff88" },
       "default_hotkey": "Z",
       "description": "Flight assist toggle"
     },
@@ -73,9 +105,10 @@
       "name": "Ship Lights",
       "widget_type": "status_toggle",
       "icon": "flare",
+      "color": "#ffb703",
       "state_key": "lights_on",
       "labels": { "on": "ON", "off": "OFF" },
-      "colors": { "on": "#ffee55", "off": "#444444" },
+      "colors": { "on": "#ffaa00", "off": "#444444" },
       "default_hotkey": "Insert",
       "description": "Ship exterior lights"
     },
@@ -84,9 +117,10 @@
       "name": "Hardpoints",
       "widget_type": "status_toggle",
       "icon": "crosshairs",
+      "color": "#ffb703",
       "state_key": "hardpoints",
       "labels": { "on": "DEPLOYED", "off": "RETRACTED" },
-      "colors": { "on": "#ff3344", "off": "#444444" },
+      "colors": { "on": "#ff3355", "off": "#444444" },
       "default_hotkey": "U",
       "description": "Deploy weapons / mining tools"
     },
@@ -95,9 +129,10 @@
       "name": "Night Vision",
       "widget_type": "status_toggle",
       "icon": "eye",
+      "color": "#ffb703",
       "state_key": "night_vision",
       "labels": { "on": "ON", "off": "OFF" },
-      "colors": { "on": "#00ffcc", "off": "#444444" },
+      "colors": { "on": "#00ff88", "off": "#444444" },
       "default_hotkey": "N",
       "description": "Toggle night vision HUD"
     },
@@ -106,9 +141,10 @@
       "name": "Silent Running",
       "widget_type": "status_toggle",
       "icon": "ghost",
+      "color": "#ffb703",
       "state_key": "silent_running",
       "labels": { "on": "ACTIVE", "off": "OFF" },
-      "colors": { "on": "#ff8800", "off": "#444444" },
+      "colors": { "on": "#ff3355", "off": "#444444" },
       "default_hotkey": "Delete",
       "description": "Close heat radiators for stealth"
     },
@@ -117,6 +153,7 @@
       "name": "Supercruise",
       "widget_type": "status_toggle",
       "icon": "rocket-launch",
+      "color": "#ffb703",
       "state_key": "supercruise",
       "labels": { "on": "ACTIVE", "off": "IDLE" },
       "colors": { "on": "#48b2e9", "off": "#444444" },
@@ -128,9 +165,10 @@
       "name": "Shields",
       "widget_type": "display",
       "icon": "shield",
+      "color": "#ffb703",
       "state_key": "shields_up",
       "labels": { "on": "ONLINE", "off": "DOWN" },
-      "colors": { "on": "#48b2e9", "off": "#ff2244" },
+      "colors": { "on": "#00ff88", "off": "#ff3355" },
       "description": "Live ship shield generator state"
     },
     {
@@ -138,9 +176,10 @@
       "name": "Mass Lock",
       "widget_type": "display",
       "icon": "weight",
+      "color": "#ffb703",
       "state_key": "mass_locked",
       "labels": { "on": "LOCKED", "off": "CLEAR" },
-      "colors": { "on": "#ff4444", "off": "#00ff88" },
+      "colors": { "on": "#ff3355", "off": "#00ff88" },
       "description": "Gravitational mass lock indicator"
     },
     {
@@ -148,6 +187,7 @@
       "name": "FSD Charge",
       "widget_type": "display",
       "icon": "speedometer",
+      "color": "#ffb703",
       "state_key": "fsd_charging",
       "labels": { "on": "CHARGING", "off": "READY" },
       "colors": { "on": "#ffaa00", "off": "#555555" },
@@ -158,6 +198,7 @@
       "name": "Fuel Scoop",
       "widget_type": "display",
       "icon": "gas-station",
+      "color": "#ffb703",
       "state_key": "scooping_fuel",
       "labels": { "on": "SCOOPING", "off": "IDLE" },
       "colors": { "on": "#ffee00", "off": "#555555" },
@@ -178,11 +219,107 @@
   ],
 
   "live_data": {
-    "title": "Telemetry",
-    "fields": [
-      { "key": "ship", "label": "Ship", "type": "string" },
-      { "key": "system", "label": "System", "type": "string" },
-      { "key": "fuel", "label": "Fuel", "type": "float" }
+    "title": "Game State & Telemetry",
+    "layout": [
+      {
+        "title": "Navigation & Location",
+        "fields": [
+          { "key": "system", "label": "Star System", "type": "string", "source": "state" },
+          { "key": "system_addr", "label": "System Address", "type": "string", "source": "state" },
+          { "key": "body", "label": "Body / Station", "type": "string", "source": "state" },
+          { "key": "body_type", "label": "Body Type", "type": "string", "source": "state" },
+          { "key": "allegiance", "label": "Allegiance", "type": "string", "source": "state" },
+          { "key": "economy", "label": "Economy", "type": "string", "source": "state" },
+          { "key": "government", "label": "Government", "type": "string", "source": "state" },
+          { "key": "security", "label": "Security Level", "type": "string", "source": "state" },
+          { "key": "population", "label": "Population", "type": "string", "source": "state" },
+          { "key": "jump_type", "label": "Jump Type", "type": "string", "source": "state" }
+        ]
+      },
+      {
+        "title": "Ship Telemetry & Vitals",
+        "fields": [
+          { "key": "ship", "label": "Active Ship", "type": "string", "source": "state" },
+          { "key": "hull_health", "label": "Hull Integrity", "type": "percentage", "source": "state" },
+          { "key": "fuel_level", "label": "Fuel Level (t)", "type": "float", "source": "state" },
+          { "key": "fuel_capacity", "label": "Fuel Capacity (t)", "type": "float", "source": "state" },
+          { "key": "fuel_scooped", "label": "Fuel Scooped", "type": "float", "source": "state" },
+          { "key": "cargo", "label": "Cargo Count (t)", "type": "integer", "source": "state" },
+          { "key": "target_ship", "label": "Targeted Ship", "type": "string", "source": "state" }
+        ]
+      },
+      {
+        "title": "Flight Controls & Systems",
+        "fields": [
+          { "key": "landing_gear", "label": "Landing Gear", "type": "boolean", "source": "status", "display": "down_up" },
+          { "key": "cargo_scoop", "label": "Cargo Scoop", "type": "boolean", "source": "status", "display": "deployed_retracted" },
+          { "key": "flight_assist", "label": "Flight Assist", "type": "boolean", "source": "status", "display": "on_off" },
+          { "key": "hardpoints", "label": "Hardpoints", "type": "boolean", "source": "status", "display": "deployed_retracted" },
+          { "key": "lights_on", "label": "Exterior Lights", "type": "boolean", "source": "status", "display": "on_off" },
+          { "key": "night_vision", "label": "Night Vision", "type": "boolean", "source": "status", "display": "on_off" },
+          { "key": "silent_running", "label": "Silent Running", "type": "boolean", "source": "status", "display": "on_off" },
+          { "key": "shields_up", "label": "Shields", "type": "boolean", "source": "status", "display": "online_down" },
+          { "key": "supercruise", "label": "Supercruise", "type": "boolean", "source": "status", "display": "yes_no" },
+          { "key": "mass_locked", "label": "Mass Locked", "type": "boolean", "source": "status", "display": "yes_no" }
+        ]
+      },
+      {
+        "title": "Docking & Environment",
+        "fields": [
+          { "key": "docked", "label": "Docked", "type": "boolean", "source": "status", "display": "yes_no" },
+          { "key": "landed", "label": "Surface Landed", "type": "boolean", "source": "status", "display": "yes_no" },
+          { "key": "in_srv", "label": "In SRV", "type": "boolean", "source": "status", "display": "yes_no" },
+          { "key": "in_fighter", "label": "In Fighter", "type": "boolean", "source": "status", "display": "yes_no" },
+          { "key": "on_foot", "label": "On Foot (Odyssey)", "type": "boolean", "source": "status", "display": "yes_no" },
+          { "key": "taxi", "label": "Apex Taxi", "type": "boolean", "source": "status", "display": "yes_no" },
+          { "key": "multicrew", "label": "Multicrew Active", "type": "boolean", "source": "status", "display": "yes_no" }
+        ]
+      },
+      {
+        "title": "Commander & Career Ranks",
+        "fields": [
+          { "key": "commander", "label": "Commander Name", "type": "string", "source": "state" },
+          { "key": "credits", "label": "Credits / Wealth", "type": "credits", "source": "state" },
+          { "key": "rank_combat", "label": "Combat Rank", "type": "string", "source": "state" },
+          { "key": "progress_combat", "label": "Combat Progress", "type": "percentage", "source": "state" },
+          { "key": "rank_trade", "label": "Trade Rank", "type": "string", "source": "state" },
+          { "key": "progress_trade", "label": "Trade Progress", "type": "percentage", "source": "state" },
+          { "key": "rank_explore", "label": "Exploration Rank", "type": "string", "source": "state" },
+          { "key": "progress_explore", "label": "Exploration Progress", "type": "percentage", "source": "state" },
+          { "key": "rank_empire", "label": "Empire Rank", "type": "string", "source": "state" },
+          { "key": "rank_federation", "label": "Federation Rank", "type": "string", "source": "state" }
+        ]
+      },
+      {
+        "title": "Frame Shift & Exploration",
+        "fields": [
+          { "key": "fsd_charging", "label": "FSD Charging", "type": "boolean", "source": "status", "display": "yes_no" },
+          { "key": "fsd_cooldown", "label": "FSD Cooldown", "type": "boolean", "source": "status", "display": "yes_no" },
+          { "key": "fsd_jump", "label": "FSD Jump Active", "type": "boolean", "source": "status", "display": "yes_no" },
+          { "key": "hyperdrive", "label": "Hyperdrive Active", "type": "boolean", "source": "status", "display": "yes_no" },
+          { "key": "glide", "label": "Planetary Glide", "type": "boolean", "source": "status", "display": "yes_no" },
+          { "key": "scooping_fuel", "label": "Corona Fuel Scooping", "type": "boolean", "source": "status", "display": "yes_no" },
+          { "key": "last_scan", "label": "Last Scanned Body", "type": "string", "source": "state" },
+          { "key": "scan_distance", "label": "Scan Distance", "type": "string", "source": "state" },
+          { "key": "system_scan_pct", "label": "System Scan Progress", "type": "percentage", "source": "state" }
+        ]
+      },
+      {
+        "title": "Operations, Powerplay & Carrier",
+        "fields": [
+          { "key": "mission", "label": "Active Mission", "type": "string", "source": "state" },
+          { "key": "mission_reward", "label": "Mission Reward", "type": "credits", "source": "state" },
+          { "key": "bounty_reward", "label": "Claimed Bounty", "type": "credits", "source": "state" },
+          { "key": "wing_visible", "label": "Wing Visible", "type": "boolean", "source": "status", "display": "yes_no" },
+          { "key": "last_repair", "label": "Last Repair", "type": "string", "source": "state" },
+          { "key": "last_repair_cost", "label": "Last Repair Cost", "type": "credits", "source": "state" },
+          { "key": "powerplay_power", "label": "Pledged Power", "type": "string", "source": "state" },
+          { "key": "powerplay_rank", "label": "Powerplay Rank", "type": "string", "source": "state" },
+          { "key": "powerplay_merits", "label": "Powerplay Merits", "type": "string", "source": "state" },
+          { "key": "carrier_name", "label": "Fleet Carrier Name", "type": "string", "source": "state" },
+          { "key": "carrier_callsign", "label": "Carrier Callsign", "type": "string", "source": "state" }
+        ]
+      }
     ]
   },
 

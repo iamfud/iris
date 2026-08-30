@@ -15,7 +15,7 @@ class Plugin:
         self._cfg = cfg
         self._serial = serial_sender
         self.overlays = overlays
-        self._manager = VisionSensorManager(cfg, serial_sender)
+        self._manager = VisionSensorManager(cfg, serial_sender, overlays=overlays)
 
     def start(self):
         self._manager.start()

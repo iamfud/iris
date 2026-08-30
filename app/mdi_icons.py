@@ -24,8 +24,35 @@ except ImportError:
     _PIL_OK = False
 
 _APP_DIR   = Path(__file__).parent
-FONT_PATH  = _APP_DIR / "mdi-webfont.ttf"
-_META_PATH = _APP_DIR / "mdi-meta.json"
+
+
+def _writable_asset_dir() -> Path:
+    """Return a persistent, writable dir for downloaded MDI assets.
+
+    Bundled files live read-only inside _MEIPASS (one-file extract) and are
+    re-extracted every launch, so downloads must go to a writable user dir
+    to persist. In source runs the app dir already holds the files.
+    """
+    try:
+        import paths as _paths
+        return Path(_paths.get_asset_dir())
+    except Exception:
+        return _APP_DIR
+
+
+def _resolve_asset(name: str) -> Path:
+    """Prefer the bundled asset; fall back to a persisted writable copy."""
+    bundled = _APP_DIR / name
+    if bundled.exists():
+        return bundled
+    writable = _writable_asset_dir() / name
+    if writable.exists():
+        return writable
+    return writable
+
+
+FONT_PATH  = _resolve_asset("mdi-webfont.ttf")
+_META_PATH = _resolve_asset("mdi-meta.json")
 
 _FONT_URL = ("https://raw.githubusercontent.com/Templarian/"
              "MaterialDesign-Webfont/master/fonts/materialdesignicons-webfont.ttf")

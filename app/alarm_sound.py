@@ -8,12 +8,16 @@ on a background thread.  Stop terminates the player process instantly.
 import logging
 import os
 import subprocess
+import sys
 import threading
 
 log = logging.getLogger("iris.sound")
 
-_media_dir = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "media")
+if getattr(sys, "frozen", False):
+    _media_dir = os.path.join(sys._MEIPASS, "media")
+else:
+    _media_dir = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "media")
 
 SOUNDS = {
     "remind":  os.path.join(_media_dir, "remind.mp3"),
@@ -40,14 +44,18 @@ def play(name="remind", loop=False):
         return False
     stop()
     try:
+        norm_path = os.path.abspath(path).replace("\\", "/")
         ps = (
-            "Add-Type -AssemblyName PresentationCore;"
-            "$p = New-Object System.Windows.Media.MediaPlayer;"
-            f"$p.Open([Uri]::new('{path}'));"
-            "$p.Play();"
-            "Start-Sleep -Milliseconds 200;"
-            "while ($p.Position -lt $p.NaturalDuration.TimeSpan)"
-            " { Start-Sleep -Milliseconds 200 }"
+            "Add-Type -AssemblyName PresentationCore; "
+            "$p = New-Object System.Windows.Media.MediaPlayer; "
+            f"$p.Open([Uri]::new('{norm_path}')); "
+            "$p.Play(); "
+            "Start-Sleep -Milliseconds 300; "
+            "$deadline = (Get-Date).AddSeconds(3.5); "
+            "while ((Get-Date) -lt $deadline) { "
+            "  if ($p.NaturalDuration.HasTimeSpan -and $p.Position -ge $p.NaturalDuration.TimeSpan) { break }; "
+            "  Start-Sleep -Milliseconds 100 "
+            "}"
         )
         with _lock:
             global _proc
@@ -61,6 +69,11 @@ def play(name="remind", loop=False):
     except Exception as e:
         log.warning("[sound] play failed: %s", e)
         return False
+
+
+def play_one_shot(name="remind"):
+    """Play an alert/notification sound once without looping."""
+    return play(name=name, loop=False)
 
 
 def stop():

@@ -193,11 +193,15 @@ def normalize_draft(draft):
     d.setdefault("threshold", 30.0)
     d.setdefault("direction", "below")
     d.setdefault("require_foreground", False)
+    d.setdefault("ocr_pattern", "")
+    d.setdefault("ocr_match_type", "contains")
+    d.setdefault("ocr_case_sensitive", False)
     return d
 
 
-_SENSOR_MODES = {"color_percentage", "pixel_match", "average_brightness"}
-_SENSOR_DIRECTIONS = {"above", "below"}
+_SENSOR_MODES = {"color_percentage", "pixel_match", "average_brightness", "ocr_text", "ocr_number"}
+_SENSOR_DIRECTIONS = {"above", "below", "equal"}
+_OCR_MATCH_TYPES = {"contains", "exact", "regex"}
 _SENSOR_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _SENSOR_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
@@ -309,6 +313,7 @@ def sanitize_sensor(raw):
     out["enabled"] = _bool_strict(raw.get("enabled"), True)
     out["output_display"] = _bool_strict(raw.get("output_display"), True)
     out["flash_name"] = _bool_strict(raw.get("flash_name"), False)
+    out["play_sound"] = _bool_strict(raw.get("play_sound"), False)
     out["require_foreground"] = _bool_strict(raw.get("require_foreground"), False)
 
     mode = raw.get("mode")
@@ -332,6 +337,11 @@ def sanitize_sensor(raw):
     out["region"] = _region_sanitized(raw.get("region"))
     out["anchor"] = _anchor_sanitized(raw.get("anchor"))
 
+    out["ocr_pattern"] = _text("ocr_pattern", limit=120)
+    match_type = raw.get("ocr_match_type")
+    out["ocr_match_type"] = match_type if match_type in _OCR_MATCH_TYPES else "contains"
+    out["ocr_case_sensitive"] = _bool_strict(raw.get("ocr_case_sensitive"), False)
+
     created = raw.get("created")
     if (isinstance(created, (int, float)) and not isinstance(created, bool)
             and math.isfinite(float(created)) and float(created) > 0):
@@ -346,9 +356,70 @@ def sanitize_sensor(raw):
 
 def capture(bbox):
     """Grab the screen region and return a PIL RGB image."""
-    from PIL import ImageGrab
-    img = ImageGrab.grab(bbox=bbox)
-    return img.convert("RGB")
+    x1, y1, x2, y2 = bbox
+    x = int(min(x1, x2))
+    y = int(min(y1, y2))
+    w = int(abs(x2 - x1))
+    h = int(abs(y2 - y1))
+    if w <= 0 or h <= 0:
+        from PIL import Image
+        return Image.new("RGB", (max(1, w), max(1, h)), (0, 0, 0))
+
+    try:
+        from PIL import Image
+        user32 = ctypes.windll.user32
+        gdi32 = ctypes.windll.gdi32
+
+        hdc_screen = user32.GetDC(None)
+        if not hdc_screen:
+            raise RuntimeError("GetDC failed")
+        hdc_mem = gdi32.CreateCompatibleDC(hdc_screen)
+        hbm = gdi32.CreateCompatibleBitmap(hdc_screen, w, h)
+        gdi32.SelectObject(hdc_mem, hbm)
+
+        # 0x00CC0020 is SRCCOPY, 0x40000000 is CAPTUREBLT (includes layered / transparent windows)
+        gdi32.BitBlt(hdc_mem, 0, 0, w, h, hdc_screen, x, y, 0x00CC0020 | 0x40000000)
+
+        class BITMAPINFOHEADER(ctypes.Structure):
+            _fields_ = [
+                ("biSize", wintypes.DWORD),
+                ("biWidth", ctypes.c_long),
+                ("biHeight", ctypes.c_long),
+                ("biPlanes", wintypes.WORD),
+                ("biBitCount", wintypes.WORD),
+                ("biCompression", wintypes.DWORD),
+                ("biSizeImage", wintypes.DWORD),
+                ("biXPelsPerMeter", ctypes.c_long),
+                ("biYPelsPerMeter", ctypes.c_long),
+                ("biClrUsed", wintypes.DWORD),
+                ("biClrImportant", wintypes.DWORD),
+            ]
+
+        bmi = BITMAPINFOHEADER()
+        bmi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+        bmi.biWidth = w
+        bmi.biHeight = -h  # top-down DIB
+        bmi.biPlanes = 1
+        bmi.biBitCount = 32
+        bmi.biCompression = 0  # BI_RGB
+
+        buf = ctypes.create_string_buffer(w * h * 4)
+        gdi32.GetDIBits(hdc_mem, hbm, 0, h, buf, ctypes.byref(bmi), 0)
+
+        # Clean up GDI handles
+        gdi32.DeleteObject(hbm)
+        gdi32.DeleteDC(hdc_mem)
+        user32.ReleaseDC(None, hdc_screen)
+
+        return Image.frombuffer("RGBA", (w, h), buf, "raw", "BGRA", 0, 1).convert("RGB")
+    except Exception as exc:
+        log.warning("GDI screen capture failed: %s, falling back to ImageGrab", exc)
+        try:
+            from PIL import ImageGrab
+            return ImageGrab.grab(bbox=bbox).convert("RGB")
+        except Exception:
+            from PIL import Image
+            return Image.new("RGB", (w, h), (0, 0, 0))
 
 
 def screenshot_b64(bbox):
@@ -357,6 +428,159 @@ def screenshot_b64(bbox):
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+# ── Windows Native OCR ─────────────────────────────────────────
+
+_ocr_engine = None
+_ocr_lock = threading.Lock()
+
+def get_ocr_engine():
+    global _ocr_engine
+    if _ocr_engine is None:
+        try:
+            import winrt.windows.media.ocr as ocr
+            _ocr_engine = ocr.OcrEngine.try_create_from_user_profile_languages()
+            if not _ocr_engine:
+                log.warning("No OCR language found in user profile; OCR disabled")
+                _ocr_engine = False
+        except Exception as ex:
+            log.warning("Failed to initialize Windows.Media.Ocr: %s", ex)
+            _ocr_engine = False
+    return _ocr_engine if _ocr_engine is not False else None
+
+
+async def _ocr_async(raw_bytes):
+    engine = get_ocr_engine()
+    if not engine:
+        return {"text": "", "lines": [], "words": []}
+    try:
+        import winrt.windows.graphics.imaging as imaging
+        import winrt.windows.storage.streams as streams
+
+        writer = streams.DataWriter()
+        writer.write_bytes(raw_bytes)
+        ibuffer = writer.detach_buffer()
+        stream = streams.InMemoryRandomAccessStream()
+        await stream.write_async(ibuffer)
+        stream.seek(0)
+        decoder = await imaging.BitmapDecoder.create_async(stream)
+        software_bitmap = await decoder.get_software_bitmap_async()
+        with _ocr_lock:
+            res = await engine.recognize_async(software_bitmap)
+
+        words = []
+        lines = []
+        for line in res.lines:
+            lines.append(line.text)
+            for word in line.words:
+                words.append({
+                    "text": word.text,
+                    "box": [word.bounding_rect.x, word.bounding_rect.y, word.bounding_rect.width, word.bounding_rect.height]
+                })
+        return {"text": (res.text or "").strip(), "lines": lines, "words": words}
+    except Exception as ex:
+        log.warning("OCR recognition failed: %s", ex)
+        return {"text": "", "lines": [], "words": []}
+
+
+def clean_ocr_text(text):
+    """Clean up common OCR glyph collisions, punctuation distortions, and font ambiguities in English text."""
+    if not text or not isinstance(text, str):
+        return text or ""
+
+    import re
+
+    # 1. Normalize stylized / smart quotes and apostrophes
+    s = text.replace("’", "'").replace("‘", "'").replace("“", '"').replace("”", '"').replace("`", "'")
+
+    # 2. Fix standalone '1m' or 'l'm' / '1'm' / '1 m' -> "I'm"
+    s = re.sub(r'\b[1l]\s*[\'’]?m\b', "I'm", s)
+
+    # 3. Fix "1" / "l" representing uppercase "I" in common pronouns and contractions
+    s = re.sub(r'\b[1l]\s*[\'’]ve\b', "I've", s)
+    s = re.sub(r'\b[1l]\s*[\'’]ll\b', "I'll", s)
+    s = re.sub(r'\b[1l]\s*[\'’]d\b', "I'd", s)
+
+    # 4. Common contraction fixes where apostrophes were dropped or digits inserted
+    s = re.sub(r'\b(don|can|won|didn|isn|aren|wasn|weren|haven|hasn|hadn|wouldn|couldn|shouldn)t\b', r"\1't", s, flags=re.IGNORECASE)
+    s = re.sub(r'\b(that|what|here|there|where|who|how)s\b', r"\1's", s, flags=re.IGNORECASE)
+    s = re.sub(r'\b1t[\'’]?s\b', "It's", s)
+    s = re.sub(r'\blt[\'’]?s\b', "It's", s)
+
+    # 5. Fix standalone "1" / "l" before common English verbs/words
+    s = re.sub(
+        r'\b[1l]\b(?=\s+(?:think|see|know|was|have|am|would|will|had|got|need|can|could|feel|want|hope|mean|said|did|do|went|guess|thought|only|also|just|love|like|hate|wish|told|found|made)\b)',
+        "I", s, flags=re.IGNORECASE
+    )
+
+    # 6. Fix isolated single-letter lowercase "i" or digit "1" at start of line/sentence
+    s = re.sub(r'(?:^|(?<=[\.\?\!\n]\s))[1l]\b', "I", s)
+
+    # 7. Clean up redundant spaces around punctuation
+    s = re.sub(r'\s+([,\.\?!;:])', r'\1', s)
+    s = re.sub(r'([\({\[])\s+', r'\1', s)
+    s = re.sub(r'\s+([\)\]}])', r'\1', s)
+
+    return s.strip()
+
+
+def ocr_extract(img, clean=True):
+    """Run native Windows OCR on a PIL image and return recognized text and word boxes."""
+    if img is None:
+        return {"text": "", "lines": [], "words": []}
+    try:
+        from PIL import ImageOps, ImageEnhance, Image
+
+        w, h = img.size
+        if w <= 0 or h <= 0:
+            return {"text": "", "lines": [], "words": []}
+
+        # 1. Target height scaling: Windows.Media.Ocr fails on small text (< 30px glyphs).
+        # Upscaling tight HUD crops to ~140px height dramatically improves character recognition.
+        scale = max(1.0, 140.0 / float(h))
+        if scale > 1.0:
+            nw = max(60, int(w * scale))
+            nh = max(60, int(h * scale))
+            proc_img = img.resize((nw, nh), Image.Resampling.BILINEAR)
+        else:
+            proc_img = img
+
+        # 2. Quiet border padding: OCR engines require breathing room around edge characters.
+        bg_sample = proc_img.getpixel((0, 0))
+        if isinstance(bg_sample, int):
+            bg_color = (bg_sample, bg_sample, bg_sample)
+        else:
+            bg_color = bg_sample[:3]
+        padded = ImageOps.expand(proc_img, border=18, fill=bg_color)
+
+        # 3. Contrast enhancement
+        enhancer = ImageEnhance.Contrast(padded)
+        enhanced = enhancer.enhance(1.4)
+
+        import asyncio
+        buf = io.BytesIO()
+        enhanced.save(buf, format="BMP")
+        raw_bytes = buf.getvalue()
+        res = asyncio.run(_ocr_async(raw_bytes))
+
+        # Pass 2 Fallback: if initial pass found nothing, try auto-contrasted grayscale
+        if not res.get("text"):
+            gray = ImageOps.autocontrast(padded.convert("L")).convert("RGB")
+            buf2 = io.BytesIO()
+            gray.save(buf2, format="BMP")
+            res = asyncio.run(_ocr_async(buf2.getvalue()))
+
+        if clean and res.get("text"):
+            res["text"] = clean_ocr_text(res["text"])
+            for line in res.get("lines", []):
+                if "text" in line:
+                    line["text"] = clean_ocr_text(line["text"])
+
+        return res
+    except Exception as ex:
+        log.warning("ocr_extract error: %s", ex)
+        return {"text": "", "lines": [], "words": []}
 
 
 # ── Measurement ────────────────────────────────────────────────
@@ -391,18 +615,18 @@ def _sample(data, total):
 def measure(draft):
     """Run one measurement against a sensor *draft*.
 
-    Returns ``{"value", "active", "mode", "sampled"}``.  Stateless —
+    Returns ``{"value", "active", "mode", "sampled", ...}``. Stateless —
     never touches the exe gate, so it works even when the app is
     closed (used by the wizard's Test step).
     """
-    d = sanitize_sensor(draft)
+    d = draft if (isinstance(draft, dict) and draft.get("_sanitized")) else sanitize_sensor(draft)
     mode = d.get("mode", "color_percentage")
     anchor = d.get("anchor")
     region = d.get("region")
     if not anchor or not region:
         return {"value": 0.0, "active": False, "mode": mode, "sampled": 0}
 
-    bbox = region_to_bbox(anchor, region)
+    bbox = d.get("_bbox") or region_to_bbox(anchor, region)
     if bbox[2] <= bbox[0] or bbox[3] <= bbox[1]:
         return {"value": 0.0, "active": False, "mode": mode, "sampled": 0}
 
@@ -416,6 +640,67 @@ def measure(draft):
     if w <= 0 or h <= 0:
         return {"value": 0.0, "active": False, "mode": mode, "sampled": 0}
 
+    if mode == "ocr_text":
+        ocr_res = ocr_extract(img)
+        text = ocr_res.get("text", "")
+        pattern = (d.get("ocr_pattern") or "").strip()
+        match_type = d.get("ocr_match_type", "contains")
+        case_sensitive = d.get("ocr_case_sensitive", False)
+
+        is_match = False
+        if pattern:
+            target = pattern if case_sensitive else pattern.lower()
+            candidate = text if case_sensitive else text.lower()
+            if match_type == "exact":
+                is_match = (candidate == target)
+            elif match_type == "regex":
+                try:
+                    flags = 0 if case_sensitive else re.IGNORECASE
+                    is_match = bool(re.search(pattern, text, flags))
+                except re.error:
+                    is_match = False
+            else:  # contains
+                is_match = (target in candidate)
+
+        return {
+            "value": text,
+            "text": text,
+            "active": bool(is_match),
+            "mode": mode,
+            "sampled": 1,
+            "words": ocr_res.get("words", []),
+        }
+
+    if mode == "ocr_number":
+        ocr_res = ocr_extract(img)
+        text = ocr_res.get("text", "")
+        match = re.search(r"[-+]?\d+(?:\.\d+)?", text)
+        if match:
+            try:
+                num_val = float(match.group(0))
+            except ValueError:
+                num_val = 0.0
+        else:
+            num_val = 0.0
+
+        threshold = float(d.get("threshold", 30.0))
+        direction = d.get("direction", "below")
+        if direction == "above":
+            is_match = (num_val > threshold)
+        elif direction == "equal":
+            is_match = (abs(num_val - threshold) < 1e-4)
+        else:  # below
+            is_match = (num_val < threshold)
+
+        return {
+            "value": round(num_val, 2),
+            "text": text,
+            "active": bool(is_match),
+            "mode": mode,
+            "sampled": 1,
+            "words": ocr_res.get("words", []),
+        }
+
     if mode == "pixel_match":
         px = d.get("pixel", {})
         px_x = int(px.get("x_pct", 50) / 100.0 * w)
@@ -428,19 +713,38 @@ def measure(draft):
         value = 100.0 if _rgb_dist(sample_px, target) <= tol else 0.0
         sampled = 1
     else:
-        data = list(img.getdata())
-        pixels = _sample(data, len(data))
-        sampled = len(pixels)
+        px_access = img.load()
+        # Calculate 2D stride to keep total sampled points <= _MAX_SAMPLES (4000)
+        total_px = w * h
+        if total_px <= _MAX_SAMPLES:
+            step_x = 1
+            step_y = 1
+        else:
+            scale = math.sqrt(total_px / float(_MAX_SAMPLES))
+            step_x = max(1, int(math.ceil(scale)))
+            step_y = max(1, int(math.ceil(scale)))
+
         if mode == "color_percentage":
             target = _hex_to_rgb(d.get("color"))
             tol = d.get("tolerance", 40)
             count = 0
-            for p in pixels:
-                if _rgb_dist(p, target) <= tol:
-                    count += 1
+            sampled = 0
+            for y in range(0, h, step_y):
+                for x in range(0, w, step_x):
+                    p = px_access[x, y]
+                    sampled += 1
+                    if _rgb_dist(p, target) <= tol:
+                        count += 1
             value = count / sampled * 100.0 if sampled else 0.0
         else:  # average_brightness
-            value = sum(_luma(p) for p in pixels) / sampled if sampled else 0.0
+            total_luma = 0.0
+            sampled = 0
+            for y in range(0, h, step_y):
+                for x in range(0, w, step_x):
+                    p = px_access[x, y]
+                    sampled += 1
+                    total_luma += _luma(p)
+            value = total_luma / sampled if sampled else 0.0
 
     threshold = d.get("threshold", 30.0)
     if d.get("direction", "below") == "above":
@@ -474,7 +778,8 @@ class RegionSelector:
     def __init__(self, root, on_done):
         self._root = root
         self._on_done = on_done
-        self._start = None
+        self._start_root = None
+        self._start_canvas = None
         self._rect_id = None
 
         self._win = tk.Toplevel(root)
@@ -484,7 +789,7 @@ class RegionSelector:
         self._win.attributes("-alpha", 0.3)
 
         x, y, w, h = virtual_screen_bounds()
-        self._win.geometry(f"{w}x{h}+{x}+{y}")
+        self._win.geometry(f"{w}x{h}{x:+d}{y:+d}")
         self._win.lift()
 
         self._canvas = tk.Canvas(
@@ -513,21 +818,22 @@ class RegionSelector:
         self._on_done(result)
 
     def _on_press(self, event):
-        self._start = (event.x_root, event.y_root)
+        self._start_root = (event.x_root, event.y_root)
+        self._start_canvas = (event.x, event.y)
         self._rect_id = self._canvas.create_rectangle(
             event.x, event.y, event.x, event.y,
             outline="#48B2E9", width=2, fill="", dash=(6, 3))
 
     def _on_drag(self, event):
-        if self._start is None:
+        if self._start_canvas is None or self._rect_id is None:
             return
         self._canvas.coords(
-            self._rect_id, self._start[0], self._start[1], event.x_root, event.y_root)
+            self._rect_id, self._start_canvas[0], self._start_canvas[1], event.x, event.y)
 
     def _on_release(self, event):
-        if self._start is None:
+        if self._start_root is None:
             return
-        x0, y0 = self._start
+        x0, y0 = self._start_root
         x1, y1 = event.x_root, event.y_root
         x, y = min(x0, x1), min(y0, y1)
         w = abs(x1 - x0)

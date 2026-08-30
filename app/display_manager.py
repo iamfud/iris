@@ -68,8 +68,8 @@ class DisplayManager:
         with that key.
         """
         key = self._norm_key(key)
-        title = self._clean(title, 60)
-        message = self._clean(message, 120)
+        title = self._clean(title, 100)
+        message = self._clean(message, 500)
         display = self._display_text(title, message)
         now = time.monotonic()
         now_ts = time.time()
@@ -82,22 +82,24 @@ class DisplayManager:
             import notifications_store
             import ws_bridge
             import panel_runtime
-            res = notifications_store.add_notification(app_name, title, message, theme=theme, timestamp=now_ts)
-            if res.get("demoted"):
+            is_alert = (str(theme).lower() in ("alert", "red"))
+            store_theme = "red" if is_alert else theme
+            res = notifications_store.add_notification(app_name, title, message, theme=store_theme, timestamp=now_ts)
+            if res.get("ok"):
+                notif = res["notification"]
+                ws_bridge.broadcast({
+                    "type": "notification",
+                    **notif
+                })
+            elif res.get("demoted") or is_alert:
                 ws_bridge.broadcast({
                     "type": "event",
                     "app": app_name,
                     "title": title,
                     "body": message,
-                    "status": "info",
+                    "status": "bad" if is_alert else "info",
+                    "theme": "alert" if is_alert else "normal",
                     "timestamp": now_ts,
-                })
-            elif res.get("ok"):
-                notif = res["notification"]
-                panel_runtime._set_plugin_toast(notif)
-                ws_bridge.broadcast({
-                    "type": "notification",
-                    **notif
                 })
         except Exception as ex:
             log.debug("[display_mgr] error saving notification: %s", ex)
@@ -120,8 +122,8 @@ class DisplayManager:
         ``status``: ``good`` (Green) or ``bad`` (Red) or ``info``.
         """
         key = self._norm_key(key)
-        title = self._clean(title, 60)
-        message = self._clean(message, 120)
+        title = self._clean(title, 100)
+        message = self._clean(message, 500)
         display = self._display_text(title, message)
         norm_status = "good" if str(status).lower() in ("good", "success", "ok", "positive") else (
             "bad" if str(status).lower() in ("bad", "danger", "warning", "alert", "error") else "info"

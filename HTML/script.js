@@ -3,21 +3,26 @@
 (function () {
   "use strict";
 
-  if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("sw.js?v=5").catch(() => {});
+  if ("serviceWorker" in navigator && !window.pywebview && !window.location.search.includes("_t=")) {
+    navigator.serviceWorker.register("sw.js?v=24").catch(() => {});
+  }
+
+  const _searchParams = new URLSearchParams(window.location.search);
+  const isDesktopCompanion = _searchParams.get("mode") === "desktop";
+  if (isDesktopCompanion) {
+    document.documentElement.classList.add("is-desktop-companion");
   }
 
   // ── Platform detection ──────────────────────────────────────
-
   const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent)
     || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
   if (isIOS) {
     document.documentElement.setAttribute("data-theme", "ios");
   }
-  // Android Chrome reports 0 for safe-area insets (the status bar isn't exposed
-  // unless installed as a PWA), so the panel's notch/status-bar clearance has to
-  // be supplied explicitly. Mark it so CSS can add the gap the iPhone gets free.
   const isAndroid = /Android/i.test(navigator.userAgent);
+  const isRealMobileDevice = /Android|iPhone|iPad|iPod|Windows Phone|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent || "") || isIOS || isAndroid;
+  const IS_MOBILE = isRealMobileDevice;
+  let IS_APP = !!(window.pywebview && window.pywebview.api);
   if (isAndroid) {
     document.documentElement.classList.add("is-android");
     // iPhone renders at DPR 3.0; most Androids are ~2.6, so the same CSS px
@@ -65,7 +70,7 @@
   }
 
   function getMediaPlayerAppName(pathOrName) {
-    let p = pathOrName || (panelLive && panelLive.config && panelLive.config.media_player_path) || (panelDraft && panelDraft.media_player_path) || (config && config.media_player_path) || "";
+    let p = pathOrName || (panelLive && panelLive.config && panelLive.config.media_player_path) || (panelDraft && panelDraft.media_player_path) || "";
     if (!p) return "Spotify";
     const s = String(p).toLowerCase();
     if (s.includes("spotify")) return "Spotify";
@@ -96,57 +101,119 @@
   const POLL_MS = 1000;
 
   // ── Theme Engine ─────────────────────────────────────────────
+  let _lastAppliedThemeKey = "";
   window.applyTheme = function (theme) {
     theme = theme || {};
     const mode = theme.mode || "iris";
-    let c1 = "#B23AF6"; // Accent (gradient start)
-    let c2 = "#79E8FC"; // Neon (gradient end / primary active)
-    let glow = "rgba(121, 232, 252, 0.35)";
+    const neon = theme.neon || "";
+    const accent = theme.accent || "";
+    const themeKey = `${mode}|${neon}|${accent}`;
+    if (themeKey === _lastAppliedThemeKey) return;
+    _lastAppliedThemeKey = themeKey;
+
+    function hexToRgb(hex, def) {
+      if (!hex || hex[0] !== "#" || (hex.length !== 7 && hex.length !== 4)) return def;
+      const r = parseInt(hex.length === 7 ? hex.slice(1, 3) : hex[1] + hex[1], 16) || 0;
+      const g = parseInt(hex.length === 7 ? hex.slice(3, 5) : hex[2] + hex[2], 16) || 0;
+      const b = parseInt(hex.length === 7 ? hex.slice(5, 7) : hex[3] + hex[3], 16) || 0;
+      return [r, g, b];
+    }
+
+    let c1 = "#48B2E9"; // Primary Neon (gradient start / active highlights)
+    let c2 = "#B23AF6"; // Neon Accent (gradient end / secondary accent)
 
     if (mode === "monochrome") {
-      c1 = "#666666";
-      c2 = "#FFFFFF";
-      glow = "rgba(255, 255, 255, 0.35)";
+      c1 = "#FFFFFF"; // Primary White
+      c2 = "#666666"; // Secondary Dim Grey
     } else if (mode === "custom") {
-      c1 = theme.accent || "#B23AF6";
-      c2 = theme.neon || "#79E8FC";
-      glow = (function (hex) {
-        if (!hex || hex[0] !== "#" || (hex.length !== 7 && hex.length !== 4)) return "rgba(72,178,233,.35)";
-        const r = parseInt(hex.length === 7 ? hex.slice(1, 3) : hex[1] + hex[1], 16) || 0;
-        const g = parseInt(hex.length === 7 ? hex.slice(3, 5) : hex[2] + hex[2], 16) || 0;
-        const b = parseInt(hex.length === 7 ? hex.slice(5, 7) : hex[3] + hex[3], 16) || 0;
-        return `rgba(${r},${g},${b},0.35)`;
-      })(c2);
+      c1 = theme.neon || "#48B2E9";
+      c2 = theme.accent || "#B23AF6";
     }
+
+    const [r1, g1, b1] = hexToRgb(c1, [72, 178, 233]);
+    const [r2, g2, b2] = hexToRgb(c2, [178, 58, 246]);
+
+    const glow = `rgba(${r1}, ${g1}, ${b1}, 0.35)`;
+
+    // Muted Neon 1 background tint
+    const bgR = Math.min(255, Math.max(0, Math.round(8 + r1 * 0.05)));
+    const bgG = Math.min(255, Math.max(0, Math.round(8 + g1 * 0.05)));
+    const bgB = Math.min(255, Math.max(0, Math.round(10 + b1 * 0.05)));
+    const bgDarkR = Math.max(0, bgR - 4);
+    const bgDarkG = Math.max(0, bgG - 4);
+    const bgDarkB = Math.max(0, bgB - 4);
+
+    const themeBg = `rgb(${bgR}, ${bgG}, ${bgB})`;
+    const themeBgDark = `rgb(${bgDarkR}, ${bgDarkG}, ${bgDarkB})`;
+    const themeBgGlow = `rgba(${r1}, ${g1}, ${b1}, 0.08)`;
+
+    // Calculate perceived luminance of Neon 1 and Neon 2 (0.0 = dark, 1.0 = light)
+    const lum1 = (0.299 * r1 + 0.587 * g1 + 0.114 * b1) / 255;
+    const lum2 = (0.299 * r2 + 0.587 * g2 + 0.114 * b2) / 255;
+    const badgeFg = lum1 > 0.52 ? "#000000" : "#ffffff";
+
+    // Low luminance Neon 1 fallback: replace with Neon 2 if Neon 1 is dark (< 0.42) and Neon 2 is brighter
+    const neonBright = (lum1 < 0.42 && lum2 > lum1) ? c2 : c1;
+    const neonText = (lum1 < 0.42 && lum2 > lum1) ? c2 : c1;
+
+    const bgCard = `linear-gradient(135deg, rgba(${Math.round(14 + r1 * 0.05)}, ${Math.round(16 + g1 * 0.05)}, ${Math.round(20 + b1 * 0.05)}, 0.9) 0%, rgba(${Math.round(10 + r1 * 0.03)}, ${Math.round(12 + g1 * 0.03)}, ${Math.round(16 + b1 * 0.03)}, 0.95) 100%)`;
 
     const root = document.documentElement;
     root.style.setProperty("--theme-color-1", c1);
     root.style.setProperty("--theme-color-2", c2);
-    root.style.setProperty("--neon", c2);
-    root.style.setProperty("--neon-purple", c1);
+    root.style.setProperty("--neon", c1);
+    root.style.setProperty("--neon-text", neonText);
+    root.style.setProperty("--neon-bright", neonBright);
+    root.style.setProperty("--neon-accent", c2);
+    root.style.setProperty("--neon-purple", c2);
+    root.style.setProperty("--theme-badge-fg", badgeFg);
     root.style.setProperty("--theme-gradient-h", `linear-gradient(90deg, ${c1} 0%, ${c2} 100%)`);
     root.style.setProperty("--theme-gradient-v", `linear-gradient(180deg, ${c1} 0%, ${c2} 100%)`);
     root.style.setProperty("--theme-gradient-conic", `conic-gradient(${c1} 0deg, ${c2} 360deg)`);
     root.style.setProperty("--scrollbar-thumb", `linear-gradient(180deg, ${c1} 0%, ${c2} 100%)`);
     root.style.setProperty("--scrollbar-thumb-hover", `linear-gradient(180deg, ${c1} 0%, ${c2} 100%)`);
     root.style.setProperty("--theme-glow", glow);
+    root.style.setProperty("--theme-bg", themeBg);
+    root.style.setProperty("--theme-bg-dark", themeBgDark);
+    root.style.setProperty("--theme-bg-glow", themeBgGlow);
+    root.style.setProperty("--bg-card", bgCard);
+
+    // Instantly force repaint of SVG gauge gradient arcs
+    document.querySelectorAll("#pdev-ggrad, .pdev-ggrad").forEach((grad) => {
+      const stops = grad.querySelectorAll("stop");
+      if (stops[0]) stops[0].setAttribute("stop-color", c1);
+      if (stops[1]) stops[1].setAttribute("stop-color", c2);
+    });
+
+    if (typeof _lastGaugeVals !== "undefined") _lastGaugeVals = {};
+    document.querySelectorAll(".pdev-garc").forEach((arc) => {
+      arc.style.stroke = "none";
+      arc.style.stroke = "";
+    });
+    if (typeof updatePanelView === "function" && typeof panelLive !== "undefined" && panelLive) {
+      try { updatePanelView(); } catch (_) {}
+    }
   };
 
-  // True inside the desktop app's panel window (pywebview). Only that window
-  // may see the Network page / access token / QR code.
-  const IS_APP = !!(window.pywebview && window.pywebview.api);
+  window.addEventListener("pywebviewready", () => {
+    IS_APP = true;
+    try { updateNavForDevice(); } catch (_) {}
+    if (document.documentElement.classList.contains("is-desktop-companion")) {
+      _lastAutoFitH = 0;
+      setTimeout(autoFitCompanionWindow, 50);
+      setTimeout(autoFitCompanionWindow, 200);
+      setTimeout(autoFitCompanionWindow, 500);
+    }
+  });
 
-  // The portal's "straight to panel" landing is for phones only. The desktop
-  // (browser or the desktop app window) still opens the dashboard.
-  const IS_MOBILE = (window.matchMedia && window.matchMedia("(max-width: 768px)").matches) || isIOS;
+  function isDesktopEnvironment() {
+    if (window.pywebview && window.pywebview.api) return true;
+    if (IS_APP) return true;
+    if (IS_MOBILE) return false;
+    return true;
+  }
 
   // ── Keep-screen-awake (phones) ──────────────────────────────
-  // The live panel should stay lit while the phone is on it. Uses the
-  // Screen Wake Lock API (navigator.wakeLock.request) — works on iOS
-  // Safari 16.4+ (and iOS 18.4+ in installed PWAs) and Android Chrome 84+.
-  // Engaged only on phones — the desktop panel window and desktop browsers
-  // skip it. Configurable via the "keep_alive" setting (Settings > Phone),
-  // applied on each live poll.
   let keepAliveEnabled = true;
   let wakeLockSentinel = null;
   let videoWakeLock = null;
@@ -155,7 +222,10 @@
   function enableMediaWakeLock() {
     if (!keepAliveEnabled) return;
     if (videoWakeLock) {
-      if (videoWakeLock.paused) videoWakeLock.play().catch(function () {});
+      if (videoWakeLock.paused) {
+        const p = videoWakeLock.play();
+        if (p && p.catch) p.catch(function () {});
+      }
       return;
     }
     try {
@@ -205,7 +275,8 @@
         }
       }, 1000);
 
-      videoWakeLock.play().catch(function () {});
+      const p = videoWakeLock.play();
+      if (p && p.catch) p.catch(function () {});
     } catch (_) {}
   }
 
@@ -235,24 +306,30 @@
 
   function requestWakeLock() {
     if (!keepAliveEnabled) return;
-    enableMediaWakeLock();
-    if (!navigator.wakeLock || !navigator.wakeLock.request) return;
-    if (wakeLockSentinel && !wakeLockSentinel.released) return;
-    let p;
-    try {
-      p = navigator.wakeLock.request("screen");
-    } catch (e) {
-      return;
-    }
-    if (p && p.then) {
-      p.then(function (sentinel) {
-        wakeLockSentinel = sentinel;
-        sentinel.addEventListener("release", function () {
-          if (keepAliveEnabled && document.visibilityState === "visible") {
-            requestWakeLock();
-          }
+    if (navigator.wakeLock && navigator.wakeLock.request) {
+      if (wakeLockSentinel && !wakeLockSentinel.released) return;
+      let p;
+      try {
+        p = navigator.wakeLock.request("screen");
+      } catch (e) {
+        enableMediaWakeLock();
+        return;
+      }
+      if (p && p.then) {
+        p.then(function (sentinel) {
+          wakeLockSentinel = sentinel;
+          sentinel.addEventListener("release", function () {
+            wakeLockSentinel = null;
+            if (keepAliveEnabled && document.visibilityState === "visible") {
+              requestWakeLock();
+            }
+          });
+        }).catch(function () {
+          enableMediaWakeLock();
         });
-      }).catch(function () {});
+      }
+    } else {
+      enableMediaWakeLock();
     }
   }
 
@@ -260,6 +337,7 @@
     keepAliveEnabled = enabled !== false;
     if (keepAliveEnabled) {
       requestWakeLock();
+      enableMediaWakeLock();
     } else {
       releaseWakeLock();
     }
@@ -269,18 +347,27 @@
     if (!IS_MOBILE || IS_APP) return;
     function onGesture() {
       requestWakeLock();
+      enableMediaWakeLock();
+      if (videoWakeLock && videoWakeLock.paused) {
+        const p = videoWakeLock.play();
+        if (p && p.catch) p.catch(function () {});
+      }
     }
-    document.addEventListener("touchstart", onGesture, true);
-    document.addEventListener("pointerdown", onGesture, true);
-    document.addEventListener("click", onGesture, true);
+    document.addEventListener("touchstart", onGesture, { passive: true, capture: true });
+    document.addEventListener("pointerdown", onGesture, { passive: true, capture: true });
+    document.addEventListener("click", onGesture, { capture: true });
     document.addEventListener("visibilitychange", function () {
       if (document.visibilityState === "visible") {
-        // The wake lock is dropped when the tab is hidden.
         requestWakeLock();
+        enableMediaWakeLock();
+        if (videoWakeLock && videoWakeLock.paused) {
+          const p = videoWakeLock.play();
+          if (p && p.catch) p.catch(function () {});
+        }
       }
     });
-    // Wake Lock needs no user gesture, so request it right away.
     requestWakeLock();
+    enableMediaWakeLock();
   })();
 
   // ── Landscape mode ──────────────────────────────────────────
@@ -291,10 +378,10 @@
   // landscape windows stay unrotated). Re-evaluated on load/resize/rotate.
   function updateViewportMode() {
     const prevLand = document.documentElement.classList.contains("is-landscape");
-    const coarse = !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+    const isTouch = IS_MOBILE || isIOS || ("ontouchstart" in window) || (navigator.maxTouchPoints > 0) || !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
     const w = window.innerWidth;
     const h = window.innerHeight;
-    const isLand = coarse && w > h && Math.min(w, h) <= 768;
+    const isLand = isTouch && ((w > h && Math.min(w, h) <= 768) || (typeof window.orientation !== "undefined" && Math.abs(window.orientation) === 90));
     document.documentElement.classList.toggle("is-landscape", isLand);
     // OLED vs LCD: deep blacks only look rich on a true-OLED panel. High
     // dynamic range + wide gamut is the reliable proxy (OLED phones report
@@ -302,11 +389,11 @@
     const isOled = !!(window.matchMedia &&
       window.matchMedia("(dynamic-range: high) and (color-gamut: p3)").matches);
     document.documentElement.classList.toggle("is-oled", isOled);
-    // Measured visible viewport, in px. CSS units (100vh/100vw) resolve to the
-    // *large* viewport on Android Chrome (the area behind the URL bar), which
-    // oversized the rotated screen; innerWidth/innerHeight are the visible area.
+    const axis = isLand ? h : w;
+    const gridW = Math.max(220, Math.min(Math.round(axis), 393) - 32);
     document.documentElement.style.setProperty("--pv-vw", w + "px");
     document.documentElement.style.setProperty("--pv-vh", h + "px");
+    document.documentElement.style.setProperty("--pv-grid-w", gridW + "px");
     if (panelViewMode) {
       const ov = document.getElementById("panel-view");
       if (ov) {
@@ -405,6 +492,7 @@
   let alarmSaveTimer = null;
   let settingsRenderer = null;
   let panelEntities = [];
+  let audioOutputDevices = [];
 
   let visionSensors = [];
   let visionLive = null;
@@ -466,8 +554,10 @@
           }
           currentPage = "panel";
           selectedPlugin = null;
+          portalAutoPanel = false;
           panelViewMode = false;
           panelNav = [];
+          exitPanelView();
           if (panelLiveTimer) { clearInterval(panelLiveTimer); panelLiveTimer = null; }
           renderPage();
           fetchPanel();
@@ -588,8 +678,11 @@
           var dataEl = main.querySelector(".plugin-data-container");
           if (dataEl && next[selectedPlugin]) {
             var snap = pluginSnapshots[selectedPlugin] || next[selectedPlugin];
-            dataEl.innerHTML = '<span class="plugin-edit-label">DATA</span>' +
+            var newHtml = '<span class="plugin-edit-label">DATA</span>' +
               settingsRenderer._renderPluginData(selectedPlugin, snap, next[selectedPlugin]);
+            if (dataEl.innerHTML !== newHtml) {
+              dataEl.innerHTML = newHtml;
+            }
           }
         } else if (currentPage === "dashboard") {
           // Only rebuild dashboard when plugin availability/status cards would change.
@@ -615,11 +708,50 @@
 
   function renderInitialView() {
     const params = new URLSearchParams(window.location.search);
+    const isViewerParam = params.get("view") === "viewer";
+    const viewerFile = params.get("file");
+    if (isViewerParam && viewerFile) {
+      document.body.classList.add("standalone-viewer-mode");
+      openLibraryViewer(viewerFile);
+      return;
+    }
+
+    const isNotepadParam = params.get("view") === "notepad";
+    if (isNotepadParam) {
+      document.body.classList.add("standalone-notepad-mode");
+      const noteFile = params.get("file");
+      const noteApp = params.get("app") || "general";
+      const noteTitle = params.get("title") || "";
+      const noteBody = params.get("body") || "";
+      openNotepad(noteFile, noteApp, true, noteTitle, noteBody);
+      return;
+    }
+
+    const isLibParam = params.get("view") === "library" || params.get("page") === "library";
+    if (isLibParam) {
+      currentPage = "library";
+      const tab = params.get("tab");
+      if (tab === "notes" || tab === "screenshots") {
+        libraryTab = tab;
+      }
+      navItems.forEach((n) => n.classList.toggle("active", n.dataset.page === "library"));
+      renderPage();
+      if (viewerFile) {
+        setTimeout(() => openLibraryViewer(viewerFile), 300);
+      }
+      if (params.get("action") === "new_note" || params.get("action") === "note") {
+        setTimeout(() => openNotepad(null, params.get("app") || "general"), 150);
+      }
+      return;
+    }
+
     const isPanelParam = params.get("view") === "panel" || params.get("panel") === "1";
     if (isPanelParam) {
       currentPage = "panel";
-      portalAutoPanel = true;
+      portalAutoPanel = false;
+      openPanelView();
       fetchPanel();
+      return;
     } else if (IS_APP || !IS_MOBILE) {
       renderPage();
     } else {
@@ -648,30 +780,44 @@
   }
 
   function startPolling() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const isMobilePanel = (IS_MOBILE && !IS_APP) || urlParams.get("view") === "panel" || urlParams.get("panel") === "1";
+
+    if (isMobilePanel) {
+      currentPage = "panel";
+      portalAutoPanel = true;
+      openPanelView();
+      fetchConfig();
+      fetchPanel();
+      fetchPanelLive();
+      if (!panelLiveTimer) panelLiveTimer = setInterval(fetchPanelLive, 1000);
+      connectWs();
+      return;
+    }
+
     settingsRenderer = new SettingsRenderer(API_BASE);
     updateNavForDevice();
     window.addEventListener("resize", updateNavForDevice);
+    
+    // Render initial page immediately to avoid any black window / unpainted frame
+    renderInitialView();
+
     fetchConfig();
     fetchPanel();
     fetchEntities();
+    fetchAudioDevices();
+
     settingsRenderer.loadPages().then(function (pages) {
-      if (!pages || !pages.length) {
-        setTimeout(function () {
-          settingsRenderer.loadPages().then(renderInitialView).catch(renderInitialView);
-        }, 600);
-        return;
+      if (pages && pages.length && currentPage === "settings") {
+        renderPage();
       }
-      renderInitialView();
-    }).catch(function () {
-      setTimeout(function () {
-        settingsRenderer.loadPages().then(renderInitialView).catch(renderInitialView);
-      }, 600);
-    });
+    }).catch(function () {});
+
     fetchState();
     fetchPluginsConfig();
     fetchDeviceStatus();
     fetchPanelLive();
-    if (!panelLiveTimer) panelLiveTimer = setInterval(fetchPanelLive, 500);
+    if (!panelLiveTimer) panelLiveTimer = setInterval(fetchPanelLive, 1000);
     connectWs();
   }
 
@@ -707,6 +853,8 @@
       renderFeatures();
     } else if (currentPage === "vision") {
       renderVision();
+    } else if (currentPage === "automations") {
+      renderAutomations();
     } else if (currentPage === "panel") {
       renderPanel();
     } else {
@@ -719,36 +867,41 @@
   // ── Declarative page rendering ────────────────────────────────
 
   function renderDeclarativePage(pageId) {
-    var page = settingsRenderer.getPage(pageId);
-    if (!page) { renderPlaceholder(); return; }
+    try {
+      var page = settingsRenderer ? settingsRenderer.getPage(pageId) : null;
+      if (!page) { renderPlaceholder(); return; }
 
-    var contentHtml = settingsRenderer.renderBuiltInPage(
-      pageId, featureConfig, pluginsConfig, pluginState, deviceStatus
-    );
+      var contentHtml = settingsRenderer.renderBuiltInPage(
+        pageId, featureConfig, pluginsConfig, pluginState, deviceStatus
+      );
 
-    main.innerHTML =
-      '<header>' +
-        '<div class="header-left">' +
-          '<button class="hamburger" id="hamburger" aria-label="Menu">' +
-            '<span class="material-icons-outlined">menu</span>' +
-          '</button>' +
-          '<div>' +
-            '<h1>' + esc(page.title) + '</h1>' +
+      main.innerHTML =
+        '<header>' +
+          '<div class="header-left">' +
+            '<button class="hamburger" id="hamburger" aria-label="Menu">' +
+              '<span class="material-icons-outlined">menu</span>' +
+            '</button>' +
+            '<div>' +
+              '<h1>' + esc(page.title) + '</h1>' +
+            '</div>' +
           '</div>' +
-        '</div>' +
-        '<button class="done-btn" id="done-btn">Done</button>' +
-      '</header>' +
-      (contentHtml || '');
+          '<button class="done-btn" id="done-btn">Done</button>' +
+        '</header>' +
+        (contentHtml || '');
 
-    rebindHamburger();
+      rebindHamburger();
 
-    if (page.sections && page.sections.length > 0) {
-      var container = main.querySelector('.settings-content');
-      if (container && settingsRenderer) {
-        settingsRenderer.bindBuiltInPage(container, pageId, featureConfig, function (patch) {
-          saveFeature(patch);
-        });
+      if (page.sections && page.sections.length > 0) {
+        var container = main.querySelector('.settings-content');
+        if (container && settingsRenderer) {
+          settingsRenderer.bindBuiltInPage(container, pageId, featureConfig, function (patch) {
+            saveFeature(patch);
+          });
+        }
       }
+    } catch (ex) {
+      console.error("renderDeclarativePage error:", ex);
+      renderPlaceholder();
     }
   }
 
@@ -801,26 +954,38 @@
     } catch (_) {}
   }
 
-  async function fetchDeviceStatus() {
+  async function fetchAudioDevices() {
     try {
-      const res = await apiFetch(`${API_BASE}/api/status`);
+      const res = await apiFetch(`${API_BASE}/api/audio/devices`);
       if (res.ok) {
-        const next = await res.json();
-        const prev = deviceStatus;
-        deviceStatus = next;
-        var changed = !prev
-          || prev.connected !== next.connected
-          || prev.port !== next.port
-          || prev.last_notification !== next.last_notification;
-        if (currentPage === "dashboard") {
-          if (changed) renderDashboard();
-        } else if (currentPage === "features") {
-          var prevConnected = prev ? prev.connected : undefined;
-          if (prevConnected !== next.connected) renderPage();
-        }
+        const data = await res.json();
+        audioOutputDevices = data.devices || [];
       }
     } catch (_) {}
-    setTimeout(fetchDeviceStatus, 5000);
+  }
+
+  async function fetchDeviceStatus() {
+    if (currentPage === "dashboard" || currentPage === "features") {
+      try {
+        const res = await apiFetch(`${API_BASE}/api/status`);
+        if (res.ok) {
+          const next = await res.json();
+          const prev = deviceStatus;
+          deviceStatus = next;
+          var changed = !prev
+            || prev.connected !== next.connected
+            || prev.port !== next.port
+            || prev.last_notification !== next.last_notification;
+          if (currentPage === "dashboard") {
+            if (changed) renderDashboard();
+          } else if (currentPage === "features") {
+            var prevConnected = prev ? prev.connected : undefined;
+            if (prevConnected !== next.connected) renderPage();
+          }
+        }
+      } catch (_) {}
+      setTimeout(fetchDeviceStatus, 5000);
+    }
   }
 
   function getClockMode() {
@@ -1317,10 +1482,18 @@
       '</header>' +
       contentHtml;
 
-    document.getElementById("back-btn").addEventListener("click", function () {
+    function returnToDashboard() {
       selectedPlugin = null;
+      currentPage = "dashboard";
+      navItems.forEach((n) => n.classList.toggle("active", n.dataset.page === "dashboard"));
       renderPage();
-    });
+    }
+
+    var backBtn = document.getElementById("back-btn");
+    if (backBtn) backBtn.addEventListener("click", returnToDashboard);
+
+    var doneBtn = document.getElementById("done-btn");
+    if (doneBtn) doneBtn.addEventListener("click", returnToDashboard);
 
     rebindHamburger();
 
@@ -1352,7 +1525,22 @@
         }, function (pluginName, actionId) {
           apiFetch(API_BASE + "/api/plugins/" + encodeURIComponent(pluginName) + "/action/" + encodeURIComponent(actionId), {
             method: "POST",
-          }).catch(function () {});
+          }).then(function(r) { return r.json(); })
+            .then(function(res) {
+              if (res && res.ok) {
+                var msg = (res.result && res.result.message) || "Action completed";
+                alert(msg);
+                if (typeof fetchConfig === "function") fetchConfig();
+                if (typeof fetchPanel === "function") fetchPanel();
+                apiFetch(API_BASE + "/api/plugins/config").then(function(r) { return r.json(); }).then(function(next) {
+                  pluginsConfig = next;
+                  if (selectedPlugin === pluginName && currentPage === "plugins") renderPage();
+                }).catch(function(){});
+              } else {
+                alert((res && res.error) || "Action failed");
+              }
+            })
+            .catch(function (e) { alert("Action error: " + e); });
         });
       }
     }
@@ -1396,16 +1584,740 @@
     }).catch(() => {});
   }
 
+  // ── Automations Section ──────────────────────────────────────
+
+  let automationsList = [];
+  let automationsDisclaimerAck = false;
+  let autoModalOpen = false;
+
+  async function fetchAutomations() {
+    try {
+      const res = await apiFetch(`${API_BASE}/api/automations`);
+      if (res.ok) {
+        const data = await res.json();
+        automationsList = data.rules || [];
+        automationsDisclaimerAck = !!data.disclaimer_acknowledged;
+      }
+    } catch (_) {}
+  }
+
+  function renderAutomations() {
+    Promise.all([fetchAutomations(), fetchEntities()]).then(() => {
+      main.innerHTML = `
+        <header>
+          <div class="header-left">
+            <button class="hamburger" id="hamburger" aria-label="Menu">
+              <span class="material-icons-outlined">menu</span>
+            </button>
+            <div>
+              <h1>Automations</h1>
+              <span class="header-sub">Entity triggers, background macros, and button box actions</span>
+            </div>
+          </div>
+          <button class="done-btn" id="done-btn">Done</button>
+        </header>
+
+        <section class="content vision-content">
+          <div class="vision-toolbar">
+            <span class="vision-toolbar-title">Active Rules</span>
+            <button class="settings-btn settings-btn-primary" id="auto-new-btn">
+              <span class="material-icons-outlined">add</span>
+              New Automation
+            </button>
+          </div>
+
+          ${!automationsDisclaimerAck ? `
+            <div class="auto-disclaimer-card">
+              <span class="material-icons-outlined auto-disclaimer-icon">warning_amber</span>
+              <div class="auto-disclaimer-text">
+                <strong>Fair-Play & Anti-Cheat Notice (Input Automation Caution)</strong><br>
+                Automating hardware keystrokes in online games or third-party applications may violate terms of service or trigger automated anti-cheat systems. You assume all responsibility when enabling hotkey macros. Non-intrusive actions (lighting, audio, display) carry zero risk.
+                <br>
+                <button class="auto-ack-btn" id="auto-ack-disclaimer-btn">I Understand & Acknowledge Risk</button>
+              </div>
+            </div>
+          ` : ""}
+
+          <div class="vision-grid">
+            ${automationsList.length === 0 ? `
+              <div class="vision-empty">
+                <span class="material-icons-outlined">auto_mode</span>
+                <div>No automations configured</div>
+                <div class="vision-empty-sub">Click "New Automation" to create an entity trigger pipeline.</div>
+              </div>
+            ` : automationsList.map(rule => `
+              <div class="vision-card" data-id="${esc(rule.id)}">
+                <div class="vision-card-head">
+                  <div class="vision-card-title-group">
+                    <span class="vision-status-dot ${rule.enabled !== false ? 'online' : 'offline'}" style="background:${rule.enabled !== false ? 'var(--neon-grn)' : 'var(--fg-dim)'}"></span>
+                    <span class="vision-card-name" title="${esc(rule.name || 'Untitled')}">${esc(rule.name || "Untitled")}</span>
+                  </div>
+                  <div class="settings-toggle ${rule.enabled !== false ? 'on' : ''} auto-rule-toggle" data-id="${esc(rule.id)}" title="Toggle automation rule">
+                    <div class="settings-toggle-thumb"></div>
+                  </div>
+                </div>
+
+                <div style="font-size:11px;color:var(--fg-dim);margin-top:-2px">
+                  ${esc(rule.profile_id ? ("PROFILE: " + rule.profile_id) : (rule.exe ? rule.exe : "GLOBAL AUTOMATION"))}
+                </div>
+
+                <div class="auto-card-pipeline">
+                  <div class="auto-pipe-row">
+                    <span class="auto-badge auto-badge-trigger">IF</span>
+                    <span>${esc(rule.trigger_key)} ${esc(rule.operator)} ${esc(String(rule.target_value))}</span>
+                  </div>
+                  <div class="auto-pipe-row">
+                    <span class="auto-badge auto-badge-action">THEN</span>
+                    <span>${(rule.actions || []).map(a => a.type === "hotkey" ? `Key '${a.hotkey}'` : a.type === "sound" ? `Sound '${a.sound}'` : a.type === "openrgb" ? `OpenRGB '${a.profile}'` : a.type === "notification" ? `Toast '${a.message}'` : a.type).join(" + ") || "No Action"}</span>
+                  </div>
+                </div>
+
+                <div class="vision-card-actions" style="margin-top:6px">
+                  <button class="settings-btn auto-btn-box-export" data-id="${esc(rule.id)}" title="Add interactive button to active Button Box">
+                    <span class="material-icons-outlined" style="font-size:16px">add_to_photos</span>
+                    Add to Button Box
+                  </button>
+                  <div class="vision-card-btns">
+                    <button class="settings-btn auto-test-btn" data-id="${esc(rule.id)}" title="Test trigger actions">Test</button>
+                    <button class="settings-btn auto-edit-btn" data-id="${esc(rule.id)}" title="Edit">Edit</button>
+                    <button class="settings-btn settings-btn-danger auto-del-btn" data-id="${esc(rule.id)}" title="Delete">✕</button>
+                  </div>
+                </div>
+              </div>
+            `).join("")}
+          </div>
+        </section>
+      `;
+
+      wireAutomations();
+    });
+  }
+
+  function wireAutomations() {
+    const doneBtn = document.getElementById("done-btn");
+    if (doneBtn) doneBtn.onclick = () => { currentPage = "dashboard"; renderPage(); };
+
+    const newBtn = document.getElementById("auto-new-btn");
+    if (newBtn) newBtn.onclick = () => openAutomationModal();
+
+    const ackBtn = document.getElementById("auto-ack-disclaimer-btn");
+    if (ackBtn) {
+      ackBtn.onclick = async () => {
+        await apiFetch(`${API_BASE}/api/automations/disclaimer_ack`, { method: "POST" });
+        automationsDisclaimerAck = true;
+        renderAutomations();
+      };
+    }
+
+    document.querySelectorAll(".auto-rule-toggle").forEach(tog => {
+      tog.onclick = async (e) => {
+        e.stopPropagation();
+        const id = tog.getAttribute("data-id");
+        const rule = automationsList.find(r => r.id === id);
+        if (rule) {
+          rule.enabled = !tog.classList.contains("on");
+          tog.classList.toggle("on", rule.enabled);
+          await apiFetch(`${API_BASE}/api/automations`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(rule),
+          });
+          renderAutomations();
+        }
+      };
+    });
+
+    document.querySelectorAll(".auto-del-btn").forEach(btn => {
+      btn.onclick = async () => {
+        const id = btn.getAttribute("data-id");
+        if (confirm("Delete this automation rule?")) {
+          await apiFetch(`${API_BASE}/api/automations/${encodeURIComponent(id)}/delete`, { method: "POST" });
+          renderAutomations();
+        }
+      };
+    });
+
+    document.querySelectorAll(".auto-edit-btn").forEach(btn => {
+      btn.onclick = () => {
+        const id = btn.getAttribute("data-id");
+        const rule = automationsList.find(r => r.id === id);
+        if (rule) openAutomationModal(rule);
+      };
+    });
+
+    document.querySelectorAll(".auto-test-btn").forEach(btn => {
+      btn.onclick = async () => {
+        const id = btn.getAttribute("data-id");
+        const rule = automationsList.find(r => r.id === id);
+        if (rule) {
+          await apiFetch(`${API_BASE}/api/automations/test`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(rule),
+          });
+        }
+      };
+    });
+
+    document.querySelectorAll(".auto-btn-box-export").forEach(btn => {
+      btn.onclick = async () => {
+        const id = btn.getAttribute("data-id");
+        const res = await apiFetch(`${API_BASE}/api/automations/${encodeURIComponent(id)}/export_button`, { method: "POST" });
+        if (res.ok) {
+          btn.innerHTML = `<span class="material-icons-outlined" style="font-size:16px">check</span> Added!`;
+          setTimeout(() => renderAutomations(), 1200);
+        }
+      };
+    });
+  }
+
+  function openAutomationModal(existing) {
+    const profiles = ((panelDraft && panelDraft.panel_profiles) || (featureConfig && featureConfig.panel_profiles) || []).map(p => ({
+      id: p.id,
+      name: p.name || p.id,
+      exe: p.exe || "",
+    }));
+
+    const draft = existing ? JSON.parse(JSON.stringify(existing)) : {
+      id: "",
+      name: "",
+      enabled: true,
+      profile_id: "",
+      exe: "",
+      trigger_key: "",
+      operator: "==",
+      target_value: "",
+      require_foreground: true,
+      cooldown_s: 10.0,
+      actions: [
+        { type: "sound", sound: "chime" }
+      ]
+    };
+
+    if (!Array.isArray(draft.actions)) draft.actions = [];
+
+    // Group entities by plugin / domain for 2-step plugin + searchable entity picker
+    const pluginGroups = { "all": "All Plugins & Core" };
+    (panelEntities || []).forEach(ent => {
+      const plg = ent.plugin || (ent.id && ent.id.includes(".") ? ent.id.split(".")[0] : "core");
+      const dName = ent.domain || plg.toUpperCase();
+      if (!pluginGroups[plg]) pluginGroups[plg] = dName;
+    });
+
+    let autoPluginOptionsHtml = Object.keys(pluginGroups).map(k => `<option value="${esc(k)}">${esc(pluginGroups[k])}</option>`).join("");
+
+    // Prepare sources/categories for Action Pipeline
+    const actionCategories = [
+      { id: "core_hotkey", label: "Hardware Hotkey / Macro" },
+      { id: "core_sound", label: "Audio Alert / Sound" },
+      { id: "core_notif", label: "Toast Notification" },
+      { id: "core_media", label: "Core: Media Controls" },
+      { id: "core_system", label: "Core: System Actions" },
+    ];
+
+    // Add installed plugins dynamically
+    Object.keys(pluginsConfig || {}).forEach(k => {
+      const p = pluginsConfig[k] || {};
+      actionCategories.push({
+        id: `plugin_${k}`,
+        plugin_id: k,
+        label: `Plugin: ${p.display_name || k}`
+      });
+    });
+
+    const backdrop = document.createElement("div");
+    backdrop.className = "panel-modal-backdrop";
+    backdrop.id = "auto-modal-backdrop";
+    backdrop.innerHTML = `
+      <div class="panel-modal panel-modal-wide" id="auto-modal">
+        <div class="panel-modal-header">
+          <h3>${existing ? "Edit Automation" : "New Automation"}</h3>
+          <span class="panel-modal-subtitle">Configure trigger condition, target application, duration, and multi-action pipeline</span>
+        </div>
+
+        <div class="panel-modal-body-grid">
+          <div class="panel-modal-col">
+            <div class="settings-control">
+              <label class="settings-label">Automation Name</label>
+              <input type="text" class="settings-input" id="m-name" value="${esc(draft.name || "")}" placeholder="e.g. Critical Alert / Auto Trigger">
+            </div>
+
+            <div class="settings-control">
+              <label class="settings-label">Trigger Entity / State</label>
+              <div class="settings-picker-row" style="gap:6px;margin-bottom:6px">
+                <select class="settings-select" id="m-trig-plugin" style="width:140px;flex:0 0 auto">
+                  ${autoPluginOptionsHtml}
+                </select>
+                <input type="text" class="settings-input" id="m-trig-search" placeholder="Search trigger entities..." style="flex:1">
+              </div>
+              <select class="settings-select" id="m-key" style="width:100%"></select>
+            </div>
+
+            <div class="settings-picker-row" style="gap:8px">
+              <div class="settings-control" style="flex:1">
+                <label class="settings-label">Condition</label>
+                <select class="settings-select" id="m-op" style="width:100%">
+                  <option value="==" ${draft.operator === "==" ? "selected" : ""}>Equals (==)</option>
+                  <option value="!=" ${draft.operator === "!=" ? "selected" : ""}>Not Equals (!=)</option>
+                  <option value="<" ${draft.operator === "<" ? "selected" : ""}>Less Than (<)</option>
+                  <option value="<=" ${draft.operator === "<=" ? "selected" : ""}>Less or Equal (<=)</option>
+                  <option value=">" ${draft.operator === ">" ? "selected" : ""}>Greater Than (>)</option>
+                  <option value=">=" ${draft.operator === ">=" ? "selected" : ""}>Greater or Equal (>=)</option>
+                </select>
+              </div>
+              <div class="settings-control" style="flex:1">
+                <label class="settings-label">Target Value</label>
+                <input type="text" class="settings-input" id="m-val" value="${esc(String(draft.target_value !== undefined ? draft.target_value : ""))}" placeholder="e.g. true, 30">
+              </div>
+            </div>
+          </div>
+
+          <div class="panel-modal-col">
+            <div class="settings-control">
+              <label class="settings-label">Linked Button Profile</label>
+              <select class="settings-select" id="m-profile">
+                <option value="">(None / Global Automation)</option>
+                ${profiles.map(p => `<option value="${esc(p.id)}" data-exe="${esc(p.exe)}" ${draft.profile_id === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}
+              </select>
+            </div>
+
+            <div class="settings-control">
+              <label class="settings-label">Target Process (Exe)</label>
+              <div class="settings-picker-row">
+                <input type="text" class="settings-input" id="m-exe" value="${esc(draft.exe || "")}" placeholder="Auto-filled from profile or custom">
+                <button type="button" class="settings-btn" id="m-browse-exe" title="Browse executable on PC">
+                  <span class="material-icons-outlined" style="font-size:16px">folder_open</span>
+                  Browse
+                </button>
+              </div>
+            </div>
+
+            <div class="settings-picker-row" style="gap:8px">
+              <div class="settings-control" style="flex:1">
+                <label class="settings-label">Cooldown (s)</label>
+                <input type="number" class="settings-input" id="m-cooldown" value="${draft.cooldown_s || 10}" min="1" max="3600">
+              </div>
+              <div class="settings-control" style="flex:1">
+                <label class="settings-label">Duration (s, 0=Stay)</label>
+                <input type="number" class="settings-input" id="m-duration" value="${draft.duration_s !== undefined ? draft.duration_s : 5}" min="0" max="3600" title="Revert to previous lighting/state after this duration (0 = stay changed)">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;border-top:1px solid rgba(255,255,255,0.06);padding-top:10px">
+          <span class="settings-label" style="color:var(--neon-text)">Action Pipeline</span>
+          <button type="button" class="settings-btn" id="m-add-action-btn">
+            <span class="material-icons-outlined" style="font-size:16px">add</span> Add Action
+          </button>
+        </div>
+
+        <div id="m-actions-list" style="display:flex;flex-direction:column;gap:8px">
+        </div>
+
+        <div class="panel-modal-actions">
+          <button class="settings-btn settings-btn-secondary" id="modal-cancel">Cancel</button>
+          <button class="settings-btn settings-btn-primary" id="modal-save">Save Automation</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(backdrop);
+
+    const actionsListEl = backdrop.querySelector("#m-actions-list");
+    let currentActions = JSON.parse(JSON.stringify(draft.actions || []));
+
+    function getSourceForAction(act) {
+      if (act.type === "hotkey") return "core_hotkey";
+      if (act.type === "sound") return "core_sound";
+      if (act.type === "notification") return "core_notif";
+      if (act.type === "openrgb" || (act.slot && (act.slot.plugin === "openrgb" || act.slot.openrgb_profile))) return "plugin_openrgb";
+      if (act.slot) {
+        if (act.slot.plugin) return `plugin_${act.slot.plugin}`;
+        if (act.slot.entity && act.slot.entity.startsWith("media.")) return "core_media";
+        if (act.slot.entity && act.slot.entity.startsWith("system.")) return "core_system";
+      }
+      return "core_hotkey";
+    }
+
+    function renderActionsList() {
+      if (currentActions.length === 0) {
+        actionsListEl.innerHTML = `<div style="font-size:12px;color:var(--fg-dim);padding:8px 0;text-align:center">No actions configured yet. Click "+ Add Action".</div>`;
+        return;
+      }
+
+      actionsListEl.innerHTML = currentActions.map((act, idx) => {
+        const currentSrc = getSourceForAction(act);
+        let detailHtml = "";
+
+        if (currentSrc === "core_hotkey") {
+          detailHtml = `
+            <input type="text" class="settings-input act-hotkey-val" data-idx="${idx}" value="${esc(act.hotkey || "")}" placeholder="Key / Keystroke (e.g. 7, F13, Ctrl+Alt+1)" style="flex:1">
+          `;
+        } else if (currentSrc === "core_sound") {
+          detailHtml = `
+            <select class="settings-select act-sound-val" data-idx="${idx}" style="flex:1">
+              <option value="chime" ${act.sound === "chime" ? "selected" : ""}>Chime</option>
+              <option value="alarm_fast" ${act.sound === "alarm_fast" ? "selected" : ""}>Fast Alarm</option>
+              <option value="remind" ${act.sound === "remind" ? "selected" : ""}>Remind</option>
+            </select>
+          `;
+        } else if (currentSrc === "core_notif") {
+          detailHtml = `
+            <input type="text" class="settings-input act-notif-val" data-idx="${idx}" value="${esc(act.message || "")}" placeholder="Toast message on screen" style="flex:1">
+          `;
+        } else if (currentSrc === "core_media") {
+          const mediaEntities = (panelEntities || []).filter(e => e.id && e.id.startsWith("media."));
+          const curEnt = (act.slot && act.slot.entity) || (mediaEntities[0] ? mediaEntities[0].id : "media.play_pause");
+          detailHtml = `
+            <select class="settings-select act-entity-val" data-idx="${idx}" style="flex:1">
+              ${mediaEntities.map(e => `<option value="${esc(e.id)}" ${curEnt === e.id ? "selected" : ""}>${esc(e.name || e.id)}</option>`).join("")}
+            </select>
+          `;
+        } else if (currentSrc === "core_system") {
+          const sysEntities = (panelEntities || []).filter(e => e.id && e.id.startsWith("system."));
+          const curEnt = (act.slot && act.slot.entity) || (sysEntities[0] ? sysEntities[0].id : "system.screenshot");
+          detailHtml = `
+            <select class="settings-select act-entity-val" data-idx="${idx}" style="flex:1">
+              ${sysEntities.map(e => `<option value="${esc(e.id)}" ${curEnt === e.id ? "selected" : ""}>${esc(e.name || e.id)}</option>`).join("")}
+            </select>
+          `;
+        } else if (currentSrc.startsWith("plugin_")) {
+          const pName = currentSrc.replace("plugin_", "");
+          const pEntities = (panelEntities || []).filter(e => e.plugin === pName || (e.id && e.id.startsWith(pName + ".")));
+
+          if (pName === "openrgb") {
+            const curProf = act.profile || (act.slot && act.slot.openrgb_profile) || "";
+            detailHtml = `
+              <select class="settings-select act-openrgb-val" data-idx="${idx}" style="flex:1">
+                ${pEntities.filter(e => e.openrgb_profile || e.name).map(e => {
+                  const pName = e.openrgb_profile || e.name;
+                  return `<option value="${esc(pName)}" ${curProf === pName ? "selected" : ""}>Profile: ${esc(pName)}</option>`;
+                }).join("")}
+                ${pEntities.length === 0 ? `<option value="Default">Default Profile</option>` : ""}
+              </select>
+            `;
+          } else {
+            const curEnt = (act.slot && (act.slot.entity || act.slot.button_id)) || (pEntities[0] ? pEntities[0].id : "");
+            detailHtml = `
+              <select class="settings-select act-entity-val" data-idx="${idx}" style="flex:1">
+                ${pEntities.map(e => `<option value="${esc(e.id)}" ${curEnt === e.id ? "selected" : ""}>${esc(e.name || e.id)}</option>`).join("")}
+                ${pEntities.length === 0 ? `<option value="">(No triggerable actions)</option>` : ""}
+              </select>
+            `;
+          }
+        }
+
+        return `
+          <div class="settings-picker-row" style="gap:8px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-small);padding:6px 10px">
+            <select class="settings-select act-src-sel" data-idx="${idx}" style="width:190px;flex:0 0 auto">
+              ${actionCategories.map(c => `<option value="${esc(c.id)}" ${currentSrc === c.id ? "selected" : ""}>${esc(c.label)}</option>`).join("")}
+            </select>
+            ${detailHtml}
+            <button type="button" class="settings-btn settings-btn-danger settings-btn-mini auto-action-del-btn" data-idx="${idx}" title="Remove action">✕</button>
+          </div>
+        `;
+      }).join("");
+
+      // Wire source selector changes
+      actionsListEl.querySelectorAll(".act-src-sel").forEach(sel => {
+        sel.onchange = (e) => {
+          const idx = parseInt(e.target.getAttribute("data-idx"), 10);
+          const src = e.target.value;
+          if (src === "core_hotkey") {
+            currentActions[idx] = { type: "hotkey", hotkey: "7" };
+          } else if (src === "core_sound") {
+            currentActions[idx] = { type: "sound", sound: "chime" };
+          } else if (src === "core_notif") {
+            currentActions[idx] = { type: "notification", message: "Triggered" };
+          } else if (src === "core_media") {
+            currentActions[idx] = { type: "slot", slot: { type: "action", entity: "media.play_pause", plugin: "media", button_id: "play_pause" } };
+          } else if (src === "core_system") {
+            currentActions[idx] = { type: "slot", slot: { type: "action", entity: "system.screenshot", plugin: "system", button_id: "screenshot" } };
+          } else if (src === "plugin_openrgb") {
+            currentActions[idx] = { type: "openrgb", profile: "Default" };
+          } else if (src.startsWith("plugin_")) {
+            const pName = src.replace("plugin_", "");
+            const pEntities = (panelEntities || []).filter(e => e.plugin === pName || (e.id && e.id.startsWith(pName + ".")));
+            const firstEnt = pEntities[0];
+            currentActions[idx] = {
+              type: "slot",
+              slot: {
+                type: "action",
+                entity: firstEnt ? firstEnt.id : pName,
+                plugin: pName,
+                button_id: firstEnt ? (firstEnt.button_id || firstEnt.id.split(".")[1] || "") : ""
+              }
+            };
+          }
+          renderActionsList();
+        };
+      });
+
+      // Wire input updates
+      actionsListEl.querySelectorAll(".act-hotkey-val").forEach(inp => {
+        inp.oninput = (e) => {
+          const idx = parseInt(e.target.getAttribute("data-idx"), 10);
+          currentActions[idx].hotkey = e.target.value;
+        };
+      });
+
+      actionsListEl.querySelectorAll(".act-sound-val").forEach(sel => {
+        sel.onchange = (e) => {
+          const idx = parseInt(e.target.getAttribute("data-idx"), 10);
+          currentActions[idx].sound = e.target.value;
+        };
+      });
+
+      actionsListEl.querySelectorAll(".act-notif-val").forEach(inp => {
+        inp.oninput = (e) => {
+          const idx = parseInt(e.target.getAttribute("data-idx"), 10);
+          currentActions[idx].message = e.target.value;
+        };
+      });
+
+      actionsListEl.querySelectorAll(".act-openrgb-val").forEach(sel => {
+        sel.onchange = (e) => {
+          const idx = parseInt(e.target.getAttribute("data-idx"), 10);
+          currentActions[idx].profile = e.target.value;
+        };
+      });
+
+      actionsListEl.querySelectorAll(".act-entity-val").forEach(sel => {
+        sel.onchange = (e) => {
+          const idx = parseInt(e.target.getAttribute("data-idx"), 10);
+          const entId = e.target.value;
+          const entObj = (panelEntities || []).find(x => x.id === entId);
+          currentActions[idx] = {
+            type: "slot",
+            slot: {
+              type: entObj ? (entObj.type || "action") : "action",
+              entity: entId,
+              plugin: entObj ? entObj.plugin : (entId.split(".")[0] || ""),
+              button_id: entObj ? (entObj.button_id || entId.split(".")[1] || "") : (entId.split(".")[1] || "")
+            }
+          };
+        };
+      });
+
+      actionsListEl.querySelectorAll(".auto-action-del-btn").forEach(btn => {
+        btn.onclick = (e) => {
+          const idx = parseInt(btn.getAttribute("data-idx"), 10);
+          currentActions.splice(idx, 1);
+          renderActionsList();
+        };
+      });
+    }
+
+    renderActionsList();
+
+    backdrop.querySelector("#m-add-action-btn").onclick = () => {
+      currentActions.push({ type: "hotkey", hotkey: "" });
+      renderActionsList();
+    };
+
+    // ── 2-Stage Filterable & Searchable Trigger Entity Picker ──
+    const trigPluginSel = backdrop.querySelector("#m-trig-plugin");
+    const trigSearchInput = backdrop.querySelector("#m-trig-search");
+    const triggerKeySel = backdrop.querySelector("#m-key");
+    const opSel = backdrop.querySelector("#m-op");
+    const valContainer = backdrop.querySelector("#m-val").parentElement;
+
+    function renderTriggerEntityOptions(targetKey) {
+      const curPlg = trigPluginSel.value || "all";
+      const q = (trigSearchInput.value || "").trim().toLowerCase();
+
+      let filtered = (panelEntities || []).filter(e => {
+        const plg = e.plugin || (e.id && e.id.includes(".") ? e.id.split(".")[0] : "core");
+        if (curPlg !== "all" && plg !== curPlg) return false;
+        if (q) {
+          const matchName = (e.name || "").toLowerCase().includes(q);
+          const matchId = (e.id || "").toLowerCase().includes(q);
+          const matchDomain = (e.domain || "").toLowerCase().includes(q);
+          if (!matchName && !matchId && !matchDomain) return false;
+        }
+        return true;
+      });
+
+      let h = `<option value="">(Select Trigger Entity...)</option>`;
+      filtered.forEach(ent => {
+        const val = ent.id || ent.state_key || "";
+        const sel = (targetKey && (targetKey === val || targetKey === ent.id)) ? "selected" : "";
+        const dType = ent.data_type || (ent.type === "data" ? "number" : (ent.type === "status" ? "boolean" : "string"));
+        const rawDType = ent.raw_data_type || ent.type || "state";
+        h += `<option value="${esc(val)}" data-type="${esc(dType)}" data-raw="${esc(rawDType)}" ${sel}>${esc(ent.name || val)} (${esc(rawDType)})</option>`;
+      });
+
+      triggerKeySel.innerHTML = h;
+      updateValueControl();
+    }
+
+    trigPluginSel.onchange = () => renderTriggerEntityOptions();
+    trigSearchInput.oninput = () => renderTriggerEntityOptions();
+
+    // Auto-select initial plugin if trigger_key exists
+    if (draft.trigger_key) {
+      const matchEnt = (panelEntities || []).find(e => (e.id === draft.trigger_key || e.state_key === draft.trigger_key));
+      if (matchEnt && matchEnt.plugin) {
+        trigPluginSel.value = matchEnt.plugin;
+      }
+    }
+    renderTriggerEntityOptions(draft.trigger_key);
+
+    function updateValueControl(initialVal) {
+      const selectedOpt = triggerKeySel.options[triggerKeySel.selectedIndex];
+      const trigKey = triggerKeySel.value;
+      const dType = selectedOpt ? (selectedOpt.getAttribute("data-type") || "string") : "string";
+      const curOp = opSel.value || "==";
+      const ent = (panelEntities || []).find(e => (e.id === trigKey || e.state_key === trigKey));
+
+      let valToSet = (initialVal !== undefined) ? initialVal : "";
+
+      if (ent && ent.labels && (ent.labels.on || ent.labels.off)) {
+        // Render discrete dropdown of declared states (e.g. ONLINE / DOWN, DEPLOYED / RETRACTED)
+        const onLabel = ent.labels.on || "ON";
+        const offLabel = ent.labels.off || "OFF";
+        
+        let onSel = (valToSet === true || String(valToSet).toUpperCase() === onLabel.toUpperCase()) ? "selected" : "";
+        let offSel = (valToSet === false || String(valToSet).toUpperCase() === offLabel.toUpperCase()) ? "selected" : "";
+        if (!onSel && !offSel) offSel = "selected"; // default to off/alert state
+
+        opSel.innerHTML = `
+          <option value="==" ${curOp === "==" ? "selected" : ""}>Is (==)</option>
+          <option value="!=" ${curOp === "!=" ? "selected" : ""}>Is Not (!=)</option>
+        `;
+
+        valContainer.innerHTML = `
+          <label class="settings-label">Target State</label>
+          <select class="settings-select" id="m-val" style="width:100%">
+            <option value="false" ${offSel}>${esc(offLabel)} (Off / Inactive)</option>
+            <option value="true" ${onSel}>${esc(onLabel)} (On / Active)</option>
+          </select>
+        `;
+      } else if (dType === "boolean") {
+        let onSel = (valToSet === true || String(valToSet).toLowerCase() === "true") ? "selected" : "";
+        let offSel = (valToSet === false || String(valToSet).toLowerCase() === "false") ? "selected" : "";
+        if (!onSel && !offSel) onSel = "selected";
+
+        opSel.innerHTML = `
+          <option value="==" ${curOp === "==" ? "selected" : ""}>Is (==)</option>
+          <option value="!=" ${curOp === "!=" ? "selected" : ""}>Is Not (!=)</option>
+        `;
+
+        valContainer.innerHTML = `
+          <label class="settings-label">Target State</label>
+          <select class="settings-select" id="m-val" style="width:100%">
+            <option value="true" ${onSel}>True / Active</option>
+            <option value="false" ${offSel}>False / Inactive</option>
+          </select>
+        `;
+      } else if (dType === "number") {
+        opSel.innerHTML = `
+          <option value="==" ${curOp === "==" ? "selected" : ""}>Equals (==)</option>
+          <option value="!=" ${curOp === "!=" ? "selected" : ""}>Not Equals (!=)</option>
+          <option value="<" ${curOp === "<" ? "selected" : ""}>Less Than (<)</option>
+          <option value="<=" ${curOp === "<=" ? "selected" : ""}>Less or Equal (<=)</option>
+          <option value=">" ${curOp === ">" ? "selected" : ""}>Greater Than (>)</option>
+          <option value=">=" ${curOp === ">=" ? "selected" : ""}>Greater or Equal (>=)</option>
+        `;
+        valContainer.innerHTML = `
+          <label class="settings-label">Target Value ${ent && ent.unit ? '(' + esc(ent.unit) + ')' : ''}</label>
+          <input type="number" step="any" class="settings-input" id="m-val" value="${esc(String(valToSet))}" placeholder="e.g. 30, 90">
+        `;
+      } else {
+        opSel.innerHTML = `
+          <option value="==" ${curOp === "==" ? "selected" : ""}>Equals (==)</option>
+          <option value="!=" ${curOp === "!=" ? "selected" : ""}>Not Equals (!=)</option>
+        `;
+        valContainer.innerHTML = `
+          <label class="settings-label">Target Value</label>
+          <input type="text" class="settings-input" id="m-val" value="${esc(String(valToSet))}" placeholder="e.g. Value or state name">
+        `;
+      }
+    }
+
+    triggerKeySel.onchange = () => updateValueControl();
+    updateValueControl(draft.target_value);
+
+    // Profile change auto-fills EXE
+    const profileSel = backdrop.querySelector("#m-profile");
+    const exeInput = backdrop.querySelector("#m-exe");
+    profileSel.onchange = () => {
+      const opt = profileSel.options[profileSel.selectedIndex];
+      const pExe = opt ? opt.getAttribute("data-exe") : "";
+      if (pExe) exeInput.value = pExe;
+    };
+
+    // Browse EXE dialog
+    backdrop.querySelector("#m-browse-exe").onclick = async () => {
+      try {
+        const res = await apiFetch(`${API_BASE}/api/dialog/browse?type=exe`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.path) {
+            exeInput.value = data.path;
+          }
+        }
+      } catch (_) {}
+    };
+
+    const closeModal = () => { try { backdrop.remove(); } catch (_) {} };
+    backdrop.onclick = (e) => { if (e.target === backdrop) closeModal(); };
+    backdrop.querySelector("#modal-cancel").onclick = closeModal;
+
+    backdrop.querySelector("#modal-save").onclick = async () => {
+      const name = backdrop.querySelector("#m-name").value.trim() || "Automation";
+      const profId = backdrop.querySelector("#m-profile").value.trim();
+      const exe = exeInput.value.trim();
+      const trigKey = backdrop.querySelector("#m-key").value.trim();
+      const op = backdrop.querySelector("#m-op").value;
+      let rawVal = backdrop.querySelector("#m-val").value.trim();
+      let tgtVal = rawVal;
+      if (rawVal === "false") tgtVal = false;
+      else if (rawVal === "true") tgtVal = true;
+      else if (!isNaN(Number(rawVal)) && rawVal !== "") tgtVal = Number(rawVal);
+
+      const cooldown = Number(backdrop.querySelector("#m-cooldown").value) || 10;
+      const duration = Number(backdrop.querySelector("#m-duration").value) || 0;
+
+      const payload = {
+        id: draft.id || undefined,
+        name: name,
+        enabled: draft.enabled !== false,
+        profile_id: profId,
+        exe: exe,
+        trigger_key: trigKey,
+        operator: op,
+        target_value: tgtVal,
+        require_foreground: !!exe,
+        cooldown_s: cooldown,
+        duration_s: duration,
+        actions: currentActions,
+      };
+
+      await apiFetch(`${API_BASE}/api/automations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      closeModal();
+      renderAutomations();
+    };
+  }
+
   // ── Vision page ──────────────────────────────────────────────
 
   const VISION_MODES = {
     color_percentage: "Colour Percentage",
     pixel_match: "Pixel Match",
     average_brightness: "Average Brightness",
+    ocr_text: "Text Match (OCR)",
+    ocr_number: "Number Value (OCR)",
   };
 
   const VISION_WIZARD_STEPS = [
-    "Capture Region", "Pick Pixel", "App", "Configure", "Test",
+    "Capture Region", "Detection Mode", "App", "Configure", "Test",
   ];
 
   function defaultDraft() {
@@ -1427,7 +2339,11 @@
       event_message: "",
       output_display: true,
       flash_name: false,
+      play_sound: false,
       require_foreground: false,
+      ocr_pattern: "",
+      ocr_match_type: "contains",
+      ocr_case_sensitive: false,
     };
   }
 
@@ -1475,21 +2391,32 @@
       const disabled = cfg && !cfg.enabled;
       const running = live.running;
       const active = live.active;
-      const color = disabled ? "var(--fg-dim)"
+      const dotColor = disabled ? "var(--fg-dim)"
         : (active ? "var(--neon-grn)" : "var(--neon-red)");
+      const statusColor = disabled ? "var(--fg-dim)"
+        : (active ? "var(--neon-grn)" : (running ? "var(--fg-dim)" : "var(--neon-red)"));
+
       const valEl = card.querySelector(".vision-card-value");
       if (valEl) {
-        valEl.textContent = String(live.value);
-        valEl.style.color = color;
+        let valueDisplay = "";
+        if (live.value !== null && live.value !== undefined && live.value !== "") {
+          valueDisplay = typeof live.value === "number" ? String(live.value) : `"${String(live.value)}"`;
+        }
+        valEl.textContent = valueDisplay;
+        valEl.title = valueDisplay;
+        valEl.style.color = active ? "#ffffff" : "var(--fg-dim)";
       }
       const statusEl = card.querySelector(".vision-card-status");
       if (statusEl) {
         statusEl.textContent = disabled ? "Disabled"
           : (!running ? "App not running"
             : (active ? "Triggered" : "Watching"));
+        statusEl.style.color = statusColor;
+        if (active) statusEl.classList.add("triggered");
+        else statusEl.classList.remove("triggered");
       }
       const dotEl = card.querySelector(".vision-status-dot");
-      if (dotEl) dotEl.style.background = color;
+      if (dotEl) dotEl.style.background = dotColor;
     });
   }
 
@@ -1586,31 +2513,60 @@
     const running = live ? live.running : false;
     const active = live ? live.active : false;
     const value = live ? live.value : null;
-    const color = !s.enabled ? "var(--fg-dim)"
+    const dotColor = !s.enabled ? "var(--fg-dim)"
       : (active ? "var(--neon-grn)" : "var(--neon-red)");
+    const statusColor = !s.enabled ? "var(--fg-dim)"
+      : (active ? "var(--neon-grn)" : (running ? "var(--fg-dim)" : "var(--neon-red)"));
     const statusLabel = !s.enabled ? "Disabled"
       : (running ? (active ? "Triggered" : "Watching") : "App not running");
+    
+    let valueDisplay = "";
+    if (value !== null && value !== undefined && value !== "") {
+      valueDisplay = typeof value === "number" ? String(value) : `"${String(value)}"`;
+    }
+
+    const isOcrText = s.mode === "ocr_text";
+    const isOcrNum = s.mode === "ocr_number";
+    let targetSummary = "";
+    if (isOcrText) {
+      targetSummary = s.ocr_pattern ? ` · "${s.ocr_pattern}"` : "";
+    } else if (isOcrNum) {
+      const op = s.direction === "above" ? ">" : (s.direction === "equal" ? "==" : "<");
+      targetSummary = ` · ${op} ${s.threshold}`;
+    }
+
+    const modeSummary = `${VISION_MODES[s.mode] || s.mode}${targetSummary}${s.require_foreground ? " · Focused" : ""}`;
+
     return `
       <div class="vision-card" data-id="${esc(s.id)}">
         <div class="vision-card-head">
-          <span class="vision-status-dot" style="background:${color}"></span>
-          <span class="vision-card-name">${esc(s.name || s.id)}</span>
+          <div class="vision-card-title-group">
+            <span class="vision-status-dot" style="background:${dotColor}"></span>
+            <span class="vision-card-name" title="${esc(s.name || s.id)}">${esc(s.name || s.id)}</span>
+          </div>
+          <div class="vision-card-status-group">
+            <span class="vision-card-status ${active ? "triggered" : ""}" style="color:${statusColor}">${statusLabel}</span>
+            ${valueDisplay ? `<span class="vision-card-value" style="color:${active ? "#ffffff" : "var(--fg-dim)"}" title="${esc(valueDisplay)}">${esc(valueDisplay)}</span>` : ""}
+          </div>
         </div>
         <div class="vision-card-meta">
-          <span class="material-icons-outlined">apps</span>${esc(s.exe || "—")}
+          <span class="vision-card-app" title="${esc(s.exe || "—")}">
+            <span class="material-icons-outlined">apps</span> ${esc(s.exe || "—")}
+          </span>
+          <span class="vision-meta-sep">•</span>
+          <span class="vision-card-mode" title="${esc(modeSummary)}">${esc(modeSummary)}</span>
         </div>
-        <div class="vision-card-mode">${esc(VISION_MODES[s.mode] || s.mode)}${s.require_foreground ? " · Focused" : ""}</div>
-        <div class="vision-card-value" style="color:${color}">${value !== null && value !== undefined ? esc(String(value)) : "—"}</div>
-        <div class="vision-card-status">${statusLabel}</div>
         <div class="vision-card-actions">
           <span class="vision-toggle-label">Enabled
             <div class="settings-toggle ${s.enabled ? "on" : ""} vision-card-toggle" data-id="${esc(s.id)}">
               <div class="settings-toggle-thumb"></div>
             </div>
           </span>
-          <button class="settings-btn vision-card-test" data-id="${esc(s.id)}">Test</button>
-          <button class="settings-btn vision-card-edit" data-id="${esc(s.id)}">Edit</button>
-          <button class="settings-btn vision-card-del danger" data-id="${esc(s.id)}">Delete</button>
+          <div class="vision-card-btns">
+            <button class="settings-btn vision-card-test" data-id="${esc(s.id)}">Test</button>
+            <button class="settings-btn vision-card-edit" data-id="${esc(s.id)}">Edit</button>
+            <button class="settings-btn vision-card-del danger" data-id="${esc(s.id)}">Delete</button>
+          </div>
         </div>
       </div>`;
   }
@@ -1648,6 +2604,8 @@
   let notifTimer = null;
 
   async function fetchNotifications() {
+    clearTimeout(notifTimer);
+    if (currentPage !== "notifications") return;
     try {
       const res = await apiFetch(`${API_BASE}/api/notifications`);
       if (res.ok) {
@@ -1657,7 +2615,6 @@
         }
       }
     } catch (_) {}
-    clearTimeout(notifTimer);
     if (currentPage === "notifications") {
       notifTimer = setTimeout(fetchNotifications, 2500);
     }
@@ -1881,24 +2838,828 @@
     } catch (e) { /* silent */ }
   }
 
-  function openLibraryViewer(filename) {
+  async function openLibraryViewer(filename) {
     const existing = document.getElementById("iris-screenshot-viewer");
     if (existing) existing.remove();
     const item = libraryItems.find(i => i.filename === filename);
     const title = item ? (item.title || item.app) : filename;
+
+    // Fetch existing annotations from sidecar
+    let sidecarData = { title: "", annotations: [] };
+    try {
+      const res = await apiFetch(`${API_BASE}/api/library/sidecar/${encodeURIComponent(filename)}`);
+      if (res.ok) {
+        sidecarData = await res.json();
+        if (!Array.isArray(sidecarData.annotations)) sidecarData.annotations = [];
+      }
+    } catch (_) {}
+
     const el = document.createElement("div");
     el.id = "iris-screenshot-viewer";
-    el.innerHTML =
-      `<div class="ssv-bar">` +
-        `<span class="ssv-ts">${escapeHtml(title)}</span>` +
-        `<button class="ssv-close" aria-label="Close">&#x2715;</button>` +
-      `</div>` +
-      `<img src="${API_BASE}/api/library/image/${encodeURIComponent(filename)}" alt="Screenshot" draggable="false">`;
+    el.innerHTML = `
+      <div class="ssv-bar">
+        <div class="ssv-title-wrap">
+          <span class="ssv-ts">${escapeHtml(title)}</span>
+        </div>
+        <div class="ssv-actions">
+          <span class="ssv-hint"><span class="material-icons-outlined" style="font-size:14px;">gesture</span> Drag arrow to annotate</span>
+          <button class="ssv-btn-icon" id="ssv-toggle-ann-btn" title="Show/Hide Annotations">
+            <span class="material-icons-outlined" style="font-size:18px;">visibility</span>
+          </button>
+          <button class="ssv-btn-icon" id="ssv-copy-btn" title="Copy image with annotations to clipboard">
+            <span class="material-icons-outlined" style="font-size:18px;">content_copy</span>
+          </button>
+          <button class="ssv-btn-icon" id="ssv-delete-btn" title="Delete screenshot">
+            <span class="material-icons-outlined" style="font-size:18px;">delete</span>
+          </button>
+          <button class="ssv-btn-icon" id="ssv-fullscreen-btn" title="Toggle Fullscreen">
+            <span class="material-icons-outlined" style="font-size:18px;">fullscreen</span>
+          </button>
+          <button class="ssv-close" aria-label="Close">&#x2715;</button>
+        </div>
+      </div>
+      <div class="ssv-canvas-stage" id="ssv-stage">
+        <img id="ssv-img" class="ssv-img" src="${API_BASE}/api/library/image/${encodeURIComponent(filename)}" alt="Screenshot" draggable="false">
+        <canvas id="ssv-canvas" class="ssv-annotation-canvas"></canvas>
+      </div>`;
     document.body.appendChild(el);
-    el.querySelector(".ssv-close").addEventListener("click", () => el.remove());
-    let startY = 0;
-    el.addEventListener("touchstart", (e) => { startY = e.touches[0].clientY; }, { passive: true });
-    el.addEventListener("touchend", (e) => { if (e.changedTouches[0].clientY - startY > 80) el.remove(); }, { passive: true });
+
+    const img = el.querySelector("#ssv-img");
+    const canvas = el.querySelector("#ssv-canvas");
+    const stage = el.querySelector("#ssv-stage");
+    const ctx = canvas.getContext("2d");
+    const annotations = sidecarData.annotations || [];
+
+    let isDrawing = false;
+    let startX = 0, startY = 0;
+    let currX = 0, currY = 0;
+    let activeTextBox = null;
+
+    let dpr = window.devicePixelRatio || 1;
+    let cssWidth = 0, cssHeight = 0;
+
+    function resizeCanvas() {
+      if (!img.complete || img.naturalWidth === 0) return;
+      const rect = img.getBoundingClientRect();
+      dpr = window.devicePixelRatio || 1;
+      cssWidth = rect.width;
+      cssHeight = rect.height;
+      
+      canvas.width = Math.round(rect.width * dpr);
+      canvas.height = Math.round(rect.height * dpr);
+      canvas.style.width = rect.width + "px";
+      canvas.style.height = rect.height + "px";
+      redraw();
+    }
+
+    img.addEventListener("load", resizeCanvas);
+    window.addEventListener("resize", resizeCanvas);
+    setTimeout(resizeCanvas, 50);
+
+
+    function wrapText(context, text, maxWidth) {
+      if (!maxWidth) return [text];
+      const words = text.split(" ");
+      const lines = [];
+      let currentLine = words[0] || "";
+
+      for (let i = 1; i < words.length; i++) {
+        const word = words[i];
+        const width = context.measureText(currentLine + " " + word).width;
+        if (width < maxWidth) {
+          currentLine += " " + word;
+        } else {
+          lines.push(currentLine);
+          currentLine = word;
+        }
+      }
+      lines.push(currentLine);
+      return lines;
+    }
+
+    function getAnnotationLayout(ann) {
+      const w = cssWidth || (canvas.width / dpr);
+      const h = cssHeight || (canvas.height / dpr);
+      const x1 = ann.x1 * w;
+      const y1 = ann.y1 * h;
+      const x2 = ann.x2 * w;
+      const y2 = ann.y2 * h;
+
+      ctx.save();
+      ctx.font = "600 13px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+      const padH = 12, padV = 6;
+      const text = ann.text || "";
+      
+      let lines = [text];
+      let boxW = 36;
+      let boxH = 26;
+      const lineHeight = 18;
+
+      if (ann.box_width) {
+        boxW = Math.max(ann.box_width * w, 50);
+        const maxTextW = boxW - padH * 2;
+        lines = wrapText(ctx, text, maxTextW);
+        boxH = Math.max(lines.length * lineHeight + padV * 2, 26);
+      } else {
+        const metrics = ctx.measureText(text);
+        boxW = Math.max(metrics.width + padH * 2, 36);
+        boxH = 26;
+      }
+
+      let boxX = x2 + 10;
+      let boxY = y2 - boxH / 2;
+      if (boxX + boxW > w) boxX = x2 - boxW - 10;
+      if (boxY + boxH > h) boxY = h - boxH - 6;
+      if (boxY < 6) boxY = 6;
+      ctx.restore();
+
+      return { x1, y1, x2, y2, boxX, boxY, boxW, boxH, lines, lineHeight, padH, padV };
+    }
+
+    function hitTestAnnotation(px, py) {
+      if (!annotationsVisible) return null;
+      const edgeThreshold = 8;
+
+      // Pass 1: Check label badges & resize edges FIRST (topmost interactive layer)
+      for (let i = annotations.length - 1; i >= 0; i--) {
+        const ann = annotations[i];
+        // Find the root annotation that actually owns the text if this is a secondary branch
+        let ownerIdx = i;
+        let ownerAnn = ann;
+        if (!ann.text) {
+          const rootIdx = annotations.findIndex(a => !!a.text && Math.hypot(a.x2 - ann.x2, a.y2 - ann.y2) < 0.02);
+          if (rootIdx !== -1) {
+            ownerIdx = rootIdx;
+            ownerAnn = annotations[rootIdx];
+          }
+        }
+
+        const layout = getAnnotationLayout(ownerAnn);
+
+        if (py >= layout.boxY && py <= layout.boxY + layout.boxH) {
+          if (Math.abs(px - (layout.boxX + layout.boxW)) <= edgeThreshold) {
+            return { index: ownerIdx, target: "resize_right", annotation: ownerAnn, layout };
+          }
+          if (Math.abs(px - layout.boxX) <= edgeThreshold) {
+            return { index: ownerIdx, target: "resize_left", annotation: ownerAnn, layout };
+          }
+          // Inside label box -> Click to edit
+          if (px > layout.boxX && px < layout.boxX + layout.boxW) {
+            return { index: ownerIdx, target: "label", annotation: ownerAnn, layout };
+          }
+        }
+      }
+
+      // Pass 2: Check arrow heads and tail anchors
+      for (let i = annotations.length - 1; i >= 0; i--) {
+        const ann = annotations[i];
+        const layout = getAnnotationLayout(ann);
+
+        // Check arrow head hit (radius 14px)
+        if (Math.hypot(px - layout.x1, py - layout.y1) <= 14) {
+          return { index: i, target: "head", annotation: ann, layout };
+        }
+
+        // Check tail dot hit (radius 12px)
+        if (Math.hypot(px - layout.x2, py - layout.y2) <= 12) {
+          // Resolve to the owner annotation holding the text
+          let ownerIdx = i;
+          let ownerAnn = ann;
+          if (!ann.text) {
+            const rootIdx = annotations.findIndex(a => !!a.text && Math.hypot(a.x2 - ann.x2, a.y2 - ann.y2) < 0.02);
+            if (rootIdx !== -1) {
+              ownerIdx = rootIdx;
+              ownerAnn = annotations[rootIdx];
+            }
+          }
+          return { index: ownerIdx, target: "tail", annotation: ownerAnn, layout };
+        }
+      }
+      return null;
+    }
+
+    function drawArrow(context, fromX, fromY, toX, toY, color, isMovingTail) {
+      const headlen = 15;
+      const dx = toX - fromX;
+      const dy = toY - fromY;
+      const angle = Math.atan2(dy, dx);
+
+      context.save();
+      context.strokeStyle = color;
+      context.fillStyle = color;
+      context.lineWidth = 3.5;
+      context.lineCap = "round";
+      context.lineJoin = "round";
+      context.shadowColor = "rgba(0,0,0,0.85)";
+      context.shadowBlur = 6;
+
+      // Line from head to tail
+      context.beginPath();
+      context.moveTo(fromX, fromY);
+      context.lineTo(toX, toY);
+      context.stroke();
+
+      // Arrow head at fromX, fromY pointing towards the point of interest
+      context.beginPath();
+      context.moveTo(fromX, fromY);
+      context.lineTo(fromX + headlen * Math.cos(angle - Math.PI / 6), fromY + headlen * Math.sin(angle - Math.PI / 6));
+      context.lineTo(fromX + headlen * Math.cos(angle + Math.PI / 6), fromY + headlen * Math.sin(angle + Math.PI / 6));
+      context.closePath();
+      context.fill();
+
+      // Tail handle circle
+      context.beginPath();
+      context.arc(toX, toY, isMovingTail ? 6.5 : 5, 0, Math.PI * 2);
+      context.fill();
+      context.strokeStyle = "#ffffff";
+      context.lineWidth = 2;
+      context.stroke();
+      context.restore();
+    }
+
+    function drawAnnotationLabel(context, layout, text, color) {
+      context.save();
+      context.font = "600 13px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+      const { boxX, boxY, boxW, boxH, lines, lineHeight, padH, padV } = layout;
+
+      // Background badge with high-contrast plate
+      context.fillStyle = "rgba(12, 14, 18, 0.95)";
+      context.strokeStyle = color;
+      context.lineWidth = 2;
+      context.shadowColor = "rgba(0,0,0,0.85)";
+      context.shadowBlur = 8;
+
+      context.beginPath();
+      if (context.roundRect) {
+        context.roundRect(boxX, boxY, boxW, boxH, 6);
+      } else {
+        context.rect(boxX, boxY, boxW, boxH);
+      }
+      context.fill();
+      context.stroke();
+
+      // Sharp white text (single line or multi-line block)
+      context.fillStyle = "#ffffff";
+      context.shadowBlur = 0;
+      context.textBaseline = "top";
+
+      const startTextY = boxY + Math.max((boxH - (lines.length * lineHeight)) / 2, padV);
+      lines.forEach((line, idx) => {
+        context.fillText(line, boxX + padH, startTextY + idx * lineHeight);
+      });
+
+      context.restore();
+    }
+
+    function redraw(dragArrow) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const w = cssWidth || (canvas.width / dpr);
+      const h = cssHeight || (canvas.height / dpr);
+      if (w === 0 || h === 0) return;
+
+      ctx.save();
+      ctx.scale(dpr, dpr);
+
+      if (annotationsVisible) {
+        // Pass 1: Draw all arrow lines and heads first (bottom layer)
+        annotations.forEach((ann, idx) => {
+          const layout = getAnnotationLayout(ann);
+          const isMoving = draggingTailIdx === idx;
+          drawArrow(ctx, layout.x1, layout.y1, layout.x2, layout.y2, ann.color || "#48B2E9", isMoving);
+        });
+      }
+
+      // Draw current in-progress new arrow (always draw while user is actively dragging)
+      if (dragArrow) {
+        drawArrow(ctx, dragArrow.x1, dragArrow.y1, dragArrow.x2, dragArrow.y2, "#48B2E9", true);
+      }
+
+      if (annotationsVisible) {
+        // Pass 2: Draw all label badges on top of all arrows (topmost layer)
+        annotations.forEach((ann) => {
+          if (ann.text) {
+            const layout = getAnnotationLayout(ann);
+            drawAnnotationLabel(ctx, layout, ann.text, ann.color || "#48B2E9");
+          }
+        });
+      }
+
+      ctx.restore();
+    }
+
+    async function saveAnnotations() {
+      try {
+        await apiFetch(`${API_BASE}/api/library/sidecar/${encodeURIComponent(filename)}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ annotations })
+        });
+      } catch (_) {}
+    }
+
+    function promptAnnotationText(x1, y1, x2, y2, existingIdx) {
+      if (activeTextBox) activeTextBox.remove();
+
+      const isEdit = typeof existingIdx === "number";
+      const initialText = isEdit ? (annotations[existingIdx].text || "") : "";
+      let selectedColor = isEdit ? (annotations[existingIdx].color || "#48B2E9") : "#48B2E9";
+
+      const NEON_COLORS = [
+        { name: "red", hex: "#ff3355" },
+        { name: "green", hex: "#00ff88" },
+        { name: "blue", hex: "#48B2E9" },
+        { name: "purple", hex: "#B23AF6" }
+      ];
+
+      const box = document.createElement("div");
+      box.className = "ssv-text-box";
+      const left = Math.min(Math.max(x2, 10), canvas.width - 200);
+      const top = Math.min(Math.max(y2, 10), canvas.height - 80);
+      box.style.left = left + "px";
+      box.style.top = top + "px";
+
+      const swatchesHtml = NEON_COLORS.map(c => `
+        <button type="button" class="ssv-swatch ${c.hex.toLowerCase() === selectedColor.toLowerCase() ? "active" : ""}" data-color="${c.hex}" style="background-color:${c.hex}; color:${c.hex};" title="${c.name}"></button>
+      `).join("");
+
+      box.innerHTML = `
+        <input type="text" class="ssv-text-input" placeholder="Type label…" value="${escapeHtml(initialText)}" autocomplete="off">
+        <div class="ssv-text-actions">
+          <div class="ssv-swatches">
+            ${swatchesHtml}
+          </div>
+          <div class="ssv-action-btns">
+            <button class="ssv-btn-sm ssv-btn-del" id="ssv-cancel">Cancel</button>
+            <button class="ssv-btn-sm ssv-btn-ok" id="ssv-ok">Done</button>
+          </div>
+        </div>`;
+
+      stage.appendChild(box);
+      activeTextBox = box;
+      const inp = box.querySelector(".ssv-text-input");
+      inp.focus();
+      inp.select();
+
+      // Swatch selection
+      box.querySelectorAll(".ssv-swatch").forEach(swatch => {
+        swatch.addEventListener("click", () => {
+          box.querySelectorAll(".ssv-swatch").forEach(s => s.classList.remove("active"));
+          swatch.classList.add("active");
+          selectedColor = swatch.dataset.color;
+          box.style.borderColor = selectedColor;
+        });
+      });
+
+      const commit = () => {
+        const val = inp.value.trim();
+        if (val) {
+          if (isEdit) {
+            const targetAnn = annotations[existingIdx];
+            targetAnn.text = val;
+            targetAnn.color = selectedColor;
+            // Update color for any linked branching arrows sharing this tail
+            annotations.forEach(a => {
+              if (Math.hypot(a.x2 - targetAnn.x2, a.y2 - targetAnn.y2) < 0.02) {
+                a.color = selectedColor;
+              }
+            });
+          } else {
+            annotations.push({
+              type: "arrow_text",
+              x1: x1 / (cssWidth || (canvas.width / dpr)),
+              y1: y1 / (cssHeight || (canvas.height / dpr)),
+              x2: x2 / (cssWidth || (canvas.width / dpr)),
+              y2: y2 / (cssHeight || (canvas.height / dpr)),
+              text: val,
+              color: selectedColor
+            });
+          }
+          saveAnnotations();
+          redraw();
+        } else if (isEdit) {
+          // Empty edit removes label
+          annotations.splice(existingIdx, 1);
+          saveAnnotations();
+          redraw();
+        } else {
+          redraw();
+        }
+        box.remove();
+        activeTextBox = null;
+      };
+
+      box.querySelector("#ssv-ok").addEventListener("click", commit);
+      box.querySelector("#ssv-cancel").addEventListener("click", () => {
+        box.remove();
+        activeTextBox = null;
+        redraw();
+      });
+      inp.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); commit(); }
+        if (e.key === "Escape") { box.remove(); activeTextBox = null; redraw(); }
+      });
+    }
+
+    let draggingTailIdx = null;
+    let draggingHeadIdx = null;
+    let resizingLabel = null; // { index, side, initialW, startPx, layout }
+
+    // Prevent native context menu on canvas so right-click delete works with confirmation
+    canvas.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const px = e.clientX - rect.left;
+      const py = e.clientY - rect.top;
+      const hit = hitTestAnnotation(px, py);
+      if (hit) {
+        // 1. Right click directly on an arrow head -> delete only this specific arrow
+        if (hit.target === "head") {
+          if (confirm("Delete this arrow? This cannot be undone.")) {
+            annotations.splice(hit.index, 1);
+            saveAnnotations();
+            redraw();
+          }
+          return;
+        }
+
+        // 2. Right click on label/tail -> delete label and all linked arrows
+        const targetAnn = annotations[hit.index];
+        const shared = annotations.filter(a => Math.hypot(a.x2 - targetAnn.x2, a.y2 - targetAnn.y2) < 0.02);
+        const countMsg = shared.length > 1 ? ` (${shared.length} arrows)` : "";
+        const labelName = targetAnn.text || "this annotation";
+
+        if (confirm(`Delete label "${labelName}"${countMsg}? This cannot be undone.`)) {
+          // Remove all arrows linked to this label/tail
+          for (let i = annotations.length - 1; i >= 0; i--) {
+            if (Math.hypot(annotations[i].x2 - targetAnn.x2, annotations[i].y2 - targetAnn.y2) < 0.02) {
+              annotations.splice(i, 1);
+            }
+          }
+          saveAnnotations();
+          redraw();
+        }
+      }
+    });
+
+    // Pointer events on canvas
+    canvas.addEventListener("pointerdown", (e) => {
+      if (e.button === 2) return; // Right click handled by contextmenu
+      if (activeTextBox) { activeTextBox.remove(); activeTextBox = null; }
+      const rect = canvas.getBoundingClientRect();
+      startX = e.clientX - rect.left;
+      startY = e.clientY - rect.top;
+
+      const hit = hitTestAnnotation(startX, startY);
+
+      // 1. Click on arrow head -> Drag to reposition arrow head (point of interest)
+      if (hit && hit.target === "head") {
+        draggingHeadIdx = hit.index;
+        canvas.setPointerCapture(e.pointerId);
+        redraw();
+        return;
+      }
+
+      // 2. Click on resize edges (left or right) -> Drag to resize box width
+      if (hit && (hit.target === "resize_right" || hit.target === "resize_left")) {
+        resizingLabel = {
+          index: hit.index,
+          side: hit.target,
+          initialBoxW: hit.layout.boxW,
+          startPx: startX,
+          ann: hit.annotation
+        };
+        canvas.setPointerCapture(e.pointerId);
+        return;
+      }
+
+      // 3. Click on tail anchor -> Drag to move tail (and all linked arrows)
+      if (hit && hit.target === "tail") {
+        draggingTailIdx = hit.index;
+        canvas.setPointerCapture(e.pointerId);
+        redraw();
+        return;
+      }
+
+      // 4. Click inside label box -> Edit text
+      if (hit && hit.target === "label") {
+        promptAnnotationText(hit.layout.x1, hit.layout.y1, hit.layout.x2, hit.layout.y2, hit.index);
+        return;
+      }
+
+      // 5. Otherwise start drawing a new arrow
+      isDrawing = true;
+      currX = startX;
+      currY = startY;
+      canvas.setPointerCapture(e.pointerId);
+    });
+
+    canvas.addEventListener("pointermove", (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const px = e.clientX - rect.left;
+      const py = e.clientY - rect.top;
+      const stageW = cssWidth || (canvas.width / dpr);
+      const stageH = cssHeight || (canvas.height / dpr);
+
+      // Handle arrow head repositioning
+      if (draggingHeadIdx !== null) {
+        const ann = annotations[draggingHeadIdx];
+        ann.x1 = Math.min(Math.max(px / stageW, 0.01), 0.99);
+        ann.y1 = Math.min(Math.max(py / stageH, 0.01), 0.99);
+        redraw();
+        return;
+      }
+
+      // Handle label width resizing
+      if (resizingLabel) {
+        const dx = px - resizingLabel.startPx;
+        let newWidthPx = resizingLabel.initialBoxW;
+        if (resizingLabel.side === "resize_right") {
+          newWidthPx += dx;
+        } else {
+          newWidthPx -= dx;
+        }
+        newWidthPx = Math.max(50, Math.min(newWidthPx, stageW * 0.8));
+        resizingLabel.ann.box_width = newWidthPx / stageW;
+        redraw();
+        return;
+      }
+
+      if (draggingTailIdx !== null) {
+        const primaryAnn = annotations[draggingTailIdx];
+        const oldX2 = primaryAnn.x2;
+        const oldY2 = primaryAnn.y2;
+        const newX2 = Math.min(Math.max(px / (cssWidth || (canvas.width / dpr)), 0.01), 0.99);
+        const newY2 = Math.min(Math.max(py / (cssHeight || (canvas.height / dpr)), 0.01), 0.99);
+
+        // Move all arrows that share this tail anchor
+        annotations.forEach(ann => {
+          if (Math.hypot(ann.x2 - oldX2, ann.y2 - oldY2) < 0.02) {
+            ann.x2 = newX2;
+            ann.y2 = newY2;
+          }
+        });
+        redraw();
+        return;
+      }
+
+      if (isDrawing) {
+        currX = px;
+        currY = py;
+        // Snap visual feedback if hovering over existing tail
+        const hit = hitTestAnnotation(px, py);
+        if (hit) {
+          redraw({ x1: startX, y1: startY, x2: hit.layout.x2, y2: hit.layout.y2 });
+        } else {
+          redraw({ x1: startX, y1: startY, x2: currX, y2: currY });
+        }
+        return;
+      }
+
+      // Hover cursor management
+      const hit = hitTestAnnotation(px, py);
+      if (hit) {
+        if (hit.target === "resize_right" || hit.target === "resize_left") {
+          canvas.style.cursor = "ew-resize";
+        } else if (hit.target === "head" || hit.target === "tail") {
+          canvas.style.cursor = "move";
+        } else {
+          canvas.style.cursor = "pointer";
+        }
+      } else {
+        canvas.style.cursor = "crosshair";
+      }
+    });
+
+    canvas.addEventListener("pointerup", (e) => {
+      if (draggingHeadIdx !== null) {
+        draggingHeadIdx = null;
+        saveAnnotations();
+        redraw();
+        return;
+      }
+
+      if (resizingLabel) {
+        resizingLabel = null;
+        saveAnnotations();
+        redraw();
+        return;
+      }
+
+      if (draggingTailIdx !== null) {
+        draggingTailIdx = null;
+        saveAnnotations();
+        redraw();
+        return;
+      }
+
+      if (isDrawing) {
+        isDrawing = false;
+        const rect = canvas.getBoundingClientRect();
+        const endX = e.clientX - rect.left;
+        const endY = e.clientY - rect.top;
+        const dist = Math.hypot(endX - startX, endY - startY);
+
+        if (dist > 15) {
+          // Check if ending on an existing tail or label box
+          const hit = hitTestAnnotation(endX, endY);
+          if (hit) {
+            // Link to the existing annotation's tail and text without opening a new prompt
+            const existingAnn = annotations[hit.index];
+            annotations.push({
+              type: "arrow_text",
+              x1: startX / (cssWidth || (canvas.width / dpr)),
+              y1: startY / (cssHeight || (canvas.height / dpr)),
+              x2: existingAnn.x2,
+              y2: existingAnn.y2,
+              text: "", // secondary arrow shares the main label
+              color: existingAnn.color || "#48B2E9"
+            });
+            saveAnnotations();
+            redraw();
+          } else {
+            promptAnnotationText(startX, startY, endX, endY);
+          }
+        } else {
+          redraw();
+        }
+      }
+    });
+
+    let annotationsVisible = true;
+    const toggleAnnBtn = el.querySelector("#ssv-toggle-ann-btn");
+    if (toggleAnnBtn) {
+      toggleAnnBtn.addEventListener("click", () => {
+        annotationsVisible = !annotationsVisible;
+        const icon = toggleAnnBtn.querySelector(".material-icons-outlined");
+        if (icon) icon.textContent = annotationsVisible ? "visibility" : "visibility_off";
+        toggleAnnBtn.style.color = annotationsVisible ? "var(--fg, #e8eaed)" : "var(--neon-dim, #666)";
+        redraw();
+      });
+    }
+
+    // Delete screenshot from viewer
+    const delBtn = el.querySelector("#ssv-delete-btn");
+    if (delBtn) {
+      delBtn.addEventListener("click", () => {
+        if (!confirm(`Delete screenshot "${title || filename}"? This cannot be undone.`)) return;
+        apiFetch(`${API_BASE}/api/library/delete/${encodeURIComponent(filename)}`, { method: "POST" })
+          .then(() => {
+            libraryItems = libraryItems.filter(i => i.filename !== filename);
+            populateLibraryFilter();
+            renderLibraryItems();
+            closeViewerAction();
+          })
+          .catch(() => alert("Delete failed."));
+      });
+    }
+
+    // Copy to clipboard with annotations
+    const copyBtn = el.querySelector("#ssv-copy-btn");
+    if (copyBtn) {
+      copyBtn.addEventListener("click", async () => {
+        if (!img.complete || img.naturalWidth === 0) return;
+        try {
+          // 1. Create full-resolution offscreen export canvas
+          const expCanvas = document.createElement("canvas");
+          expCanvas.width = img.naturalWidth;
+          expCanvas.height = img.naturalHeight;
+          const expCtx = expCanvas.getContext("2d");
+
+          // 2. Draw base screenshot image
+          expCtx.drawImage(img, 0, 0);
+
+          if (annotationsVisible) {
+            // 3. Render annotations scaled to natural image resolution
+            const scale = img.naturalWidth / (cssWidth || (canvas.width / dpr));
+            expCtx.save();
+            expCtx.scale(scale, scale);
+
+            // Pass 1: Draw all arrow lines and heads first
+            annotations.forEach((ann) => {
+              const layout = getAnnotationLayout(ann);
+              drawArrow(expCtx, layout.x1, layout.y1, layout.x2, layout.y2, ann.color || "#48B2E9", false);
+            });
+
+            // Pass 2: Draw all label badges topmost
+            annotations.forEach((ann) => {
+              if (ann.text) {
+                const layout = getAnnotationLayout(ann);
+                drawAnnotationLabel(expCtx, layout, ann.text, ann.color || "#48B2E9");
+              }
+            });
+
+            expCtx.restore();
+          }
+
+          // 4. Convert to PNG blob and copy to system clipboard
+          expCanvas.toBlob(async (blob) => {
+            if (!blob) return;
+            try {
+              if (navigator.clipboard && navigator.clipboard.write) {
+                await navigator.clipboard.write([
+                  new ClipboardItem({ "image/png": blob })
+                ]);
+              } else {
+                throw new Error("Clipboard API not available");
+              }
+
+              // Visual success feedback
+              copyBtn.classList.add("copied");
+              const icon = copyBtn.querySelector(".material-icons-outlined");
+              if (icon) icon.textContent = "check";
+              setTimeout(() => {
+                copyBtn.classList.remove("copied");
+                if (icon) icon.textContent = "content_copy";
+              }, 2000);
+            } catch (err) {
+              console.warn("Clipboard copy failed, fallback downloading:", err);
+              // Fallback: download as PNG if clipboard permissions restricted
+              const a = document.createElement("a");
+              a.href = URL.createObjectURL(blob);
+              a.download = `annotated_${filename}`;
+              a.click();
+              URL.revokeObjectURL(a.href);
+            }
+          }, "image/png");
+        } catch (e) {
+          console.error("Failed to copy image:", e);
+        }
+      });
+    }
+
+    const isStandaloneWindow = document.body.classList.contains("standalone-viewer-mode");
+    const fsBtn = el.querySelector("#ssv-fullscreen-btn");
+    if (fsBtn) {
+      if (isStandaloneWindow) {
+        // In the dedicated fullscreen window, button acts as 'Reduce to Preview' (closes standalone window)
+        fsBtn.title = "Reduce to Small Preview";
+        const icon = fsBtn.querySelector(".material-icons-outlined");
+        if (icon) icon.textContent = "fullscreen_exit";
+        fsBtn.addEventListener("click", () => {
+          closeViewerAction();
+        });
+      } else {
+        fsBtn.addEventListener("click", () => {
+          if (window.pywebview && window.pywebview.api && window.pywebview.api.open_fullscreen_viewer) {
+            window.pywebview.api.open_fullscreen_viewer(filename);
+            el.remove(); // Close embedded modal in the settings app
+          } else {
+            if (!document.fullscreenElement) {
+              if (el.requestFullscreen) el.requestFullscreen();
+              else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+            } else {
+              if (document.exitFullscreen) document.exitFullscreen();
+              else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+            }
+          }
+        });
+      }
+    }
+
+    const onFsChange = () => {
+      setTimeout(resizeCanvas, 100);
+      if (fsBtn && !isStandaloneWindow) {
+        const isFs = !!document.fullscreenElement;
+        fsBtn.querySelector(".material-icons-outlined").textContent = isFs ? "fullscreen_exit" : "fullscreen";
+      }
+    };
+    document.addEventListener("fullscreenchange", onFsChange);
+    document.addEventListener("webkitfullscreenchange", onFsChange);
+
+    const closeViewerAction = () => {
+      if (isStandaloneWindow) {
+        if (window.pywebview && window.pywebview.api) {
+          if (window.pywebview.api.close_viewer) {
+            window.pywebview.api.close_viewer();
+            return;
+          }
+          if (window.pywebview.api.close_panel) {
+            window.pywebview.api.close_panel();
+            return;
+          }
+        }
+        window.close();
+        return;
+      }
+      if (document.fullscreenElement) {
+        if (document.exitFullscreen) document.exitFullscreen().catch(() => {});
+      }
+      document.removeEventListener("fullscreenchange", onFsChange);
+      document.removeEventListener("webkitfullscreenchange", onFsChange);
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("resize", resizeCanvas);
+      el.remove();
+    };
+
+    const onKeyDown = (e) => {
+      if (e.key === "Escape") {
+        closeViewerAction();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+
+    el.querySelector(".ssv-close").addEventListener("click", closeViewerAction);
+
     if (typeof screensaverWakeOnEvent === "function") screensaverWakeOnEvent();
   }
 
@@ -1913,84 +3674,122 @@
       .catch(() => alert("Delete failed."));
   }
 
-  // ── Notepad dialog ────────────────────────────────────────────────────────
+  // ── Notepad Modal (Fixed 400x500, exact Edit Action Modal styling) ────────
 
-  function openNotepad(filename) {
+  function openNotepad(filename, defaultApp, forceLocal = false, initialTitle = "", initialBody = "") {
+    if (!forceLocal && !document.body.classList.contains("standalone-notepad-mode") && (IS_APP || !IS_MOBILE)) {
+      apiFetch(`${API_BASE}/api/notepad/open?file=${encodeURIComponent(filename || "")}&app=${encodeURIComponent(defaultApp || "")}&title=${encodeURIComponent(initialTitle || "")}&body=${encodeURIComponent(initialBody || "")}`)
+        .catch(() => openNotepad(filename, defaultApp, true, initialTitle, initialBody));
+      return;
+    }
+
     const existing = document.getElementById("iris-notepad");
     if (existing) existing.remove();
+
+    const noteApp = (defaultApp || (libraryFilter !== "all" ? libraryFilter : "general")).trim() || "general";
 
     const el = document.createElement("div");
     el.id = "iris-notepad";
     el.innerHTML = `
-      <div class="notepad-dialog">
-        <div class="notepad-header">
-          <h2>${filename ? 'Edit Note' : 'New Note'}</h2>
-          <button class="notepad-close" aria-label="Close">&#x2715;</button>
+      <div class="panel-modal panel-notepad-modal">
+        <div class="notepad-modal-header">
+          <div>
+            <h3>${filename ? 'Edit Note' : 'New Note'}</h3>
+            <span class="notepad-modal-subtitle">${filename ? esc(filename) : 'Iris Desktop Note'}</span>
+          </div>
+          <button type="button" class="notepad-modal-close" id="notepad-close-btn" aria-label="Close">✕</button>
         </div>
-        <div class="notepad-field">
-          <label>Title</label>
-          <input type="text" id="notepad-title" class="notepad-input" placeholder="Note title…" autocomplete="off">
-        </div>
-        <div class="notepad-field">
-          <label>App</label>
-          <div class="notepad-app-row">
-            <input type="text" id="notepad-app" class="notepad-input" placeholder="app name" autocomplete="off">
-            <select id="notepad-app-select" class="notepad-app-select" title="Pick a running app">
-              <option value="">Pick app…</option>
-            </select>
+        <div class="notepad-modal-body">
+          <div class="settings-control" style="padding:0;">
+            <label class="settings-label">Title</label>
+            <input type="text" class="settings-input" id="notepad-title" placeholder="Note title…" autocomplete="off">
+          </div>
+          <div class="settings-control" style="padding:0; flex:1 1 auto; display:flex; flex-direction:column; min-height:0;">
+            <label class="settings-label">Note</label>
+            <textarea class="settings-input panel-notepad-textarea" id="notepad-body" placeholder="Write your note here…" spellcheck="true"></textarea>
           </div>
         </div>
-        <div class="notepad-field notepad-field-grow">
-          <label>Note</label>
-          <textarea id="notepad-body" class="notepad-textarea" placeholder="Write your note here…" spellcheck="true"></textarea>
-        </div>
-        <div class="notepad-actions">
-          <button class="notepad-btn notepad-btn-save" id="notepad-save">Save</button>
-          <button class="notepad-btn notepad-btn-cancel" id="notepad-cancel">Cancel</button>
+        <div class="notepad-modal-actions">
+          <span id="notepad-status-msg" style="font-size:11px; color:var(--fg-dim);"></span>
+          <div style="display:flex; gap:8px;">
+            <button type="button" class="settings-btn" id="notepad-cancel">Cancel</button>
+            <button type="button" class="settings-btn settings-btn-primary" id="notepad-save">Save</button>
+          </div>
         </div>
       </div>`;
     document.body.appendChild(el);
 
     const titleEl = document.getElementById("notepad-title");
-    const appEl = document.getElementById("notepad-app");
-    const appSel = document.getElementById("notepad-app-select");
     const bodyEl = document.getElementById("notepad-body");
+    const statusEl = document.getElementById("notepad-status-msg");
+    const closeBtn = document.getElementById("notepad-close-btn");
+    const cancelBtn = document.getElementById("notepad-cancel");
+    const saveBtn = document.getElementById("notepad-save");
 
-    // Load running apps into dropdown
-    apiFetch(`${API_BASE}/api/library/running_apps`)
-      .then(r => r.json())
-      .then(data => {
-        (data.apps || []).forEach(a => {
-          const opt = document.createElement("option");
-          opt.value = a; opt.textContent = a;
-          appSel.appendChild(opt);
-        });
-      }).catch(() => {});
-
-    appSel.addEventListener("change", () => {
-      if (appSel.value) { appEl.value = appSel.value; appSel.value = ""; }
-    });
+    let currentApp = noteApp;
 
     if (filename) {
-      // Load existing note
       apiFetch(`${API_BASE}/api/library/note/${encodeURIComponent(filename)}`)
         .then(r => r.json())
         .then(data => {
           titleEl.value = data.title || "";
-          appEl.value = data.app || "";
+          currentApp = data.app || noteApp;
           bodyEl.value = data.content || "";
+          bodyEl.focus();
         }).catch(() => {});
     } else {
-      // Default app = current filter or empty
-      appEl.value = libraryFilter !== "all" ? libraryFilter : "";
+      if (initialTitle) titleEl.value = initialTitle;
+      if (initialBody) {
+        bodyEl.value = initialBody;
+        try {
+          if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+            navigator.clipboard.writeText(initialBody).catch(() => {});
+          }
+        } catch (_) {}
+      }
+      setTimeout(() => {
+        if (bodyEl && initialBody) {
+          bodyEl.focus();
+          bodyEl.setSelectionRange(bodyEl.value.length, bodyEl.value.length);
+        } else if (titleEl) {
+          titleEl.focus();
+        }
+      }, 50);
     }
 
-    el.querySelector(".notepad-close").addEventListener("click", () => el.remove());
-    document.getElementById("notepad-cancel").addEventListener("click", () => el.remove());
-    document.getElementById("notepad-save").addEventListener("click", async () => {
+    function closeNotepad() {
+      if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.close_window === "function") {
+        window.pywebview.api.close_window();
+        return;
+      }
+      if (document.body.classList.contains("standalone-notepad-mode")) {
+        window.close();
+        return;
+      }
+      if (el && el.parentNode) el.remove();
+    }
+
+    if (closeBtn) closeBtn.addEventListener("click", closeNotepad);
+    if (cancelBtn) cancelBtn.addEventListener("click", closeNotepad);
+
+    el.addEventListener("click", (e) => {
+      if (e.target === el) closeNotepad();
+    });
+
+    el.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeNotepad();
+      } else if (e.key === "s" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        saveNote(false);
+      }
+    });
+
+    async function saveNote(closeOnSave = true) {
       const payload = {
         title: titleEl.value.trim(),
-        app: appEl.value.trim() || "general",
+        app: currentApp || "general",
         content: bodyEl.value,
         filename: filename || ""
       };
@@ -2002,11 +3801,28 @@
         });
         const data = await r.json();
         if (data.ok) {
-          el.remove();
-          fetchLibraryItems();  // refresh
+          if (statusEl) {
+            statusEl.textContent = "✓ Saved to Library";
+            statusEl.style.color = "var(--neon-text, #48B2E9)";
+          }
+          if (closeOnSave) {
+            setTimeout(closeNotepad, 150);
+          }
+          if (currentPage === "library") {
+            fetchLibraryItems();
+          }
         }
-      } catch (e) { alert("Save failed."); }
-    });
+      } catch (e) {
+        if (statusEl) {
+          statusEl.textContent = "Save failed";
+          statusEl.style.color = "#ff5555";
+        }
+      }
+    }
+
+    if (saveBtn) {
+      saveBtn.addEventListener("click", () => saveNote(true));
+    }
   }
 
   function renderNotifications() {
@@ -2120,6 +3936,18 @@
     if (archCountEl) archCountEl.textContent = (notifData.archived || []).length;
 
     const items = notifTab === "archived" ? (notifData.archived || []) : (notifData.notifications || []);
+    const notifSig = notifTab + ":" + items.map((n) => (n.id || "") + ":" + (n.timestamp || 0) + ":" + (n.archived ? 1 : 0)).join(";");
+
+    if (container.getAttribute("data-sig") === notifSig) {
+      // Just update relative timestamps without touching DOM structure or listeners
+      const timeEls = container.querySelectorAll(".notif-card-time");
+      timeEls.forEach((el, i) => {
+        if (items[i]) el.textContent = formatRelativeTime(items[i].timestamp);
+      });
+      return;
+    }
+    container.setAttribute("data-sig", notifSig);
+
     if (!items.length) {
       container.innerHTML = `
         <div class="notif-empty-state">
@@ -2348,6 +4176,7 @@
           <h3>Test &amp; Configure</h3>
           <p>Live reading — ${esc(d.exe || "any app")} must be running to sample.</p>
           <div class="vision-test-readout" id="vision-test-readout">—</div>
+          <div class="vision-test-sub" id="vision-test-sub"></div>
           <div class="vision-test-status" id="vision-test-status">Waiting…</div>
           ${renderVisionConfigForm()}
         </div>
@@ -2356,6 +4185,10 @@
 
   function renderVisionConfigForm() {
     const d = visionDraft || defaultDraft();
+    const isOcrText = d.mode === "ocr_text";
+    const isOcrNum = d.mode === "ocr_number";
+    const isOcr = isOcrText || isOcrNum;
+
     return `
       <div class="vision-wizard-form">
         <div class="settings-control">
@@ -2364,15 +4197,51 @@
         </div>
         <div class="settings-control">
           <label class="settings-label">Event Message</label>
-          <input type="text" class="settings-input" id="wz-event-msg" value="${esc(d.event_message || "")}">
+          <input type="text" class="settings-input" id="wz-event-msg" value="${esc(d.event_message || "")}" placeholder="Optional: {value} replaces with reading">
         </div>
-        <div class="settings-control">
-          <label class="settings-label">Mode</label>
+        <div class="settings-control" style="grid-column:1 / -1">
+          <label class="settings-label">Detection Mode</label>
           <select class="settings-select" id="wz-mode">
             ${Object.keys(VISION_MODES).map((m) =>
               `<option value="${m}" ${m === d.mode ? "selected" : ""}>${VISION_MODES[m]}</option>`).join("")}
           </select>
         </div>
+
+        ${isOcrText ? `
+        <div class="settings-control" style="grid-column:1 / -1">
+          <label class="settings-label">Target Text / Pattern</label>
+          <input type="text" class="settings-input" id="wz-ocr-pattern" value="${esc(d.ocr_pattern || "")}" placeholder="e.g. WARNING, LOW OXYGEN, or Regex">
+        </div>
+        <div class="settings-control">
+          <label class="settings-label">Match Type</label>
+          <select class="settings-select" id="wz-ocr-match-type">
+            <option value="contains" ${d.ocr_match_type !== "exact" && d.ocr_match_type !== "regex" ? "selected" : ""}>Contains Text</option>
+            <option value="exact" ${d.ocr_match_type === "exact" ? "selected" : ""}>Exact Match</option>
+            <option value="regex" ${d.ocr_match_type === "regex" ? "selected" : ""}>Regular Expression</option>
+          </select>
+        </div>
+        <div class="settings-toggle-row">
+          <span class="settings-toggle-label">Case Sensitive</span>
+          <div class="settings-toggle ${d.ocr_case_sensitive ? "on" : ""}" id="wz-ocr-case"><div class="settings-toggle-thumb"></div></div>
+        </div>
+        ` : ""}
+
+        ${isOcrNum ? `
+        <div class="settings-control">
+          <label class="settings-label">Condition</label>
+          <select class="settings-select" id="wz-direction">
+            <option value="below" ${d.direction === "below" ? "selected" : ""}>Below Threshold (&lt;)</option>
+            <option value="above" ${d.direction === "above" ? "selected" : ""}>Above Threshold (&gt;)</option>
+            <option value="equal" ${d.direction === "equal" ? "selected" : ""}>Equal to (==)</option>
+          </select>
+        </div>
+        <div class="settings-control">
+          <label class="settings-label">Threshold Value</label>
+          <input type="number" class="settings-input" id="wz-threshold" value="${esc(String(d.threshold))}" step="0.1">
+        </div>
+        ` : ""}
+
+        ${!isOcr ? `
         <div class="settings-control">
           <label class="settings-label">Colour</label>
           <div class="vision-color-row">
@@ -2388,16 +4257,18 @@
           <input type="number" class="settings-input" id="wz-tolerance" value="${esc(String(d.tolerance))}" min="0" max="255">
         </div>
         <div class="settings-control">
-          <label class="settings-label">Threshold</label>
+          <label class="settings-label">Threshold ${d.mode === "average_brightness" ? "(0-255)" : "(%)"}</label>
           <input type="number" class="settings-input" id="wz-threshold" value="${esc(String(d.threshold))}" step="0.1">
         </div>
         <div class="settings-control">
           <label class="settings-label">Direction</label>
           <select class="settings-select" id="wz-direction">
-            <option value="below" ${d.direction !== "above" ? "selected" : ""}>Below threshold (colour present)</option>
+            <option value="below" ${d.direction !== "above" ? "selected" : ""}>Below threshold</option>
             <option value="above" ${d.direction === "above" ? "selected" : ""}>Above threshold</option>
           </select>
         </div>
+        ` : ""}
+
         <div class="settings-control">
           <label class="settings-label">Poll Rate (Hz)</label>
           <input type="number" class="settings-input" id="wz-poll-rate" value="${esc(String(d.poll_rate))}" min="0.1" max="10" step="0.1">
@@ -2413,6 +4284,10 @@
         <div class="settings-toggle-row">
           <span class="settings-toggle-label">Flash name</span>
           <div class="settings-toggle ${d.flash_name ? "on" : ""}" id="wz-flash-name" title="Persistently flash the first 4 letters of the sensor name while the threshold is met"><div class="settings-toggle-thumb"></div></div>
+        </div>
+        <div class="settings-toggle-row">
+          <span class="settings-toggle-label">Play Sound</span>
+          <div class="settings-toggle ${d.play_sound ? "on" : ""}" id="wz-play-sound" title="Play notification sound once when triggered"><div class="settings-toggle-thumb"></div></div>
         </div>
         <div class="settings-toggle-row">
           <span class="settings-toggle-label">Only when focused</span>
@@ -2437,13 +4312,56 @@
 
   function renderWizardStep2() {
     if (wizardStep !== 2 || !wizardCapture || !wizardCapture.screenshot_b64) return "";
+    const d = visionDraft || defaultDraft();
+    const isOcr = d.mode === "ocr_text" || d.mode === "ocr_number";
+    const detectedText = wizardCapture.detected_text || "";
+    const words = wizardCapture.words || [];
+
     return `
       <div class="vision-wizard-pane" id="pane-2">
-        <h3>2. Pick Pixel</h3>
+        <h3>2. Detection Mode &amp; Sampling</h3>
+        <p>Choose what to watch for in this captured region.</p>
+        
+        <div class="vision-mode-tabs">
+          <button type="button" class="vision-mode-tab ${!isOcr ? "active" : ""}" data-mode-cat="pixel">
+            <span class="material-icons-outlined">palette</span> Colour / Pixel
+          </button>
+          <button type="button" class="vision-mode-tab ${d.mode === "ocr_text" ? "active" : ""}" data-mode-cat="ocr_text">
+            <span class="material-icons-outlined">text_fields</span> Text Match (OCR)
+          </button>
+          <button type="button" class="vision-mode-tab ${d.mode === "ocr_number" ? "active" : ""}" data-mode-cat="ocr_number">
+            <span class="material-icons-outlined">pin</span> Number (OCR)
+          </button>
+        </div>
+
+        ${!isOcr ? `
         <p>Click on the preview to sample the colour to watch for.
         <span class="vision-swatch" id="vision-swatch" style="background:${esc(visionDraft.color)}"></span>
         <span id="vision-color-hex">${esc(visionDraft.color)}</span></p>
         <canvas id="vision-preview-canvas" class="vision-preview-canvas"></canvas>
+        ` : `
+        <div class="ocr-detected-box">
+          <div class="ocr-detected-label">Recognized Text</div>
+          <div class="ocr-detected-row">
+            <div class="ocr-detected-text" id="ocr-detected-text" title="${esc(detectedText)}">${esc(detectedText || "No text detected in this crop")}</div>
+            <button type="button" class="settings-btn ocr-copy-btn" id="ocr-copy-btn" title="Copy recognized text">
+              <span class="material-icons-outlined">content_copy</span>
+            </button>
+          </div>
+          ${words.length ? `
+          <div class="ocr-detected-label">Click a word to set target pattern:</div>
+          <div class="ocr-words-list" style="margin-bottom:12px;">
+            ${words.map(w => `<button type="button" class="ocr-word-chip ${visionDraft.ocr_pattern === w.text ? "selected" : ""}" data-word="${esc(w.text)}">${esc(w.text)}</button>`).join("")}
+          </div>
+          ` : ""}
+          <div class="settings-control" style="margin-top:8px;">
+            <label class="settings-label">${d.mode === "ocr_text" ? "Target Text / Keyword" : "Target Number / Filter"}</label>
+            <input type="text" class="settings-input" id="wz-step2-pattern" value="${esc(visionDraft.ocr_pattern || (d.mode === 'ocr_text' ? detectedText : ''))}" placeholder="e.g. WARNING, LOW OXYGEN, or number">
+          </div>
+        </div>
+        <img src="data:image/png;base64,${wizardCapture.screenshot_b64}" class="vision-preview-canvas" style="object-fit:contain;" alt="Crop Preview">
+        `}
+
         <div class="vision-wizard-nav">
           <button class="settings-btn" id="wizard-back-btn">Back</button>
           <button class="settings-btn" id="wizard-next-btn">Continue</button>
@@ -2488,6 +4406,7 @@
         <h3>5. Test</h3>
         <p>Live reading — ${esc(visionDraft.exe || "any app")} must be running to sample.</p>
         <div class="vision-test-readout" id="vision-test-readout">—</div>
+        <div class="vision-test-sub" id="vision-test-sub"></div>
         <div class="vision-test-status" id="vision-test-status">Waiting…</div>
         <div class="vision-wizard-nav">
           <button class="settings-btn" id="wizard-back-btn">Back</button>
@@ -2517,12 +4436,32 @@
         .then((r) => r.json())
         .then((data) => {
           const el = document.getElementById("vision-test-readout");
+          const sub = document.getElementById("vision-test-sub");
           const st = document.getElementById("vision-test-status");
           if (el) {
-            el.textContent = String(data.value);
-            el.style.color = data.active ? "var(--neon-grn)" : "var(--neon-red)";
+            const isOcr = data.mode === "ocr_text" || data.mode === "ocr_number";
+            if (isOcr) el.classList.remove("is-num");
+            else el.classList.add("is-num");
+
+            const valStr = data.value !== null && data.value !== undefined ? String(data.value) : "—";
+            el.textContent = valStr;
+            el.title = valStr;
+            el.style.color = data.active ? "#ffffff" : "var(--fg-dim)";
           }
-          if (st) st.textContent = data.active ? "Triggered" : "Not triggered";
+          if (sub) {
+            if (data.mode === "ocr_text" || data.mode === "ocr_number") {
+              sub.textContent = data.text ? `Extracted: "${data.text}"` : "";
+              sub.title = data.text ? `Extracted: "${data.text}"` : "";
+            } else {
+              sub.textContent = "";
+            }
+          }
+          if (st) {
+            st.textContent = data.active ? "Triggered" : "Not triggered";
+            st.style.color = data.active ? "var(--neon-grn)" : "var(--fg-dim)";
+            if (data.active) st.classList.add("triggered");
+            else st.classList.remove("triggered");
+          }
         })
         .catch(() => {});
     }, 500);
@@ -2608,7 +4547,13 @@
 
   let _fetchPanelBusy = false;
   function fetchPanel() {
-    if (_fetchPanelBusy) return;
+    if (_fetchPanelBusy) {
+      if (portalAutoPanel || panelViewMode) {
+        portalAutoPanel = false;
+        openPanelView();
+      }
+      return;
+    }
     _fetchPanelBusy = true;
     fetchEntities();
     apiFetch(`${API_BASE}/api/panel`)
@@ -2627,7 +4572,7 @@
         };
         panelDirty = false;
         panelEdit = null;
-        if (portalAutoPanel) {
+        if (portalAutoPanel || panelViewMode) {
           portalAutoPanel = false;
           openPanelView();
         } else {
@@ -2640,7 +4585,7 @@
           panel_layout: [], panel_gauges: { enabled: true }, media_player_path: "",
           panel_profiles: [],
         };
-        if (portalAutoPanel) {
+        if (portalAutoPanel || panelViewMode) {
           portalAutoPanel = false;
           openPanelView();
         } else {
@@ -2670,18 +4615,56 @@
     }
   }
 
-  function layoutOn(id) {
-    const row = (panelDraft.panel_layout || []).find((x) => x.id === id);
-    return row ? row.enabled !== false : true;
+  function isComponentEnabled(component, target) {
+    if (!component) return true;
+    if (target === "desktop" || target === "local") {
+      return component.local !== undefined ? component.local !== false : component.enabled !== false;
+    }
+    return component.remote !== undefined ? component.remote !== false : component.enabled !== false;
   }
 
-  function setLayoutOn(id, on) {
+  function layoutOn(id, target) {
+    const list = (panelDraft && panelDraft.panel_layout) ? panelDraft.panel_layout : [];
+    const row = list.find((x) => x.id === id);
+    if (!row) return true;
+    return isComponentEnabled(row, target);
+  }
+
+  function setLayoutTargetOn(id, target, on) {
+    if (!panelDraft) return;
     if (!panelDraft.panel_layout) panelDraft.panel_layout = [];
     let row = panelDraft.panel_layout.find((x) => x.id === id);
     if (!row) {
-      row = { id: id, enabled: on };
+      row = { id: id, enabled: true, local: true, remote: true };
+      row[target] = !!on;
+      row.enabled = !!(row.local || row.remote);
       panelDraft.panel_layout.push(row);
-    } else row.enabled = on;
+    } else {
+      if (row.local === undefined) row.local = row.enabled !== false;
+      if (row.remote === undefined) row.remote = row.enabled !== false;
+      row[target] = !!on;
+      row.enabled = !!(row.local || row.remote);
+    }
+    if (id === "gauges") {
+      panelDraft.panel_gauges = panelDraft.panel_gauges || {};
+      panelDraft.panel_gauges.enabled = row.enabled;
+    }
+    setPanelDirty(true);
+    renderPanel();
+  }
+
+  function setLayoutOn(id, on) {
+    if (!panelDraft) return;
+    if (!panelDraft.panel_layout) panelDraft.panel_layout = [];
+    let row = panelDraft.panel_layout.find((x) => x.id === id);
+    if (!row) {
+      row = { id: id, enabled: on, local: on, remote: on };
+      panelDraft.panel_layout.push(row);
+    } else {
+      row.enabled = on;
+      row.local = on;
+      row.remote = on;
+    }
     setPanelDirty(true);
     renderPanel();
   }
@@ -2716,13 +4699,14 @@
   // ── Panel profiles ───────────────────────────────────────────
 
   function panelProfileCurrent() {
-    const list = panelDraft ? (panelDraft.panel_profiles || []) : [];
+    const cfg = panelViewConfig();
+    const list = (panelDraft && panelDraft.panel_profiles) || (cfg && cfg.panel_profiles) || [];
     let profile = null;
     if (panelProfileSel !== "__default__") {
       profile = list.find((x) => x.id === panelProfileSel) || null;
       if (!profile) panelProfileSel = "__default__";
     }
-    let board = panelDraft ? (panelDraft.panel_board || []) : [];
+    let board = (panelDraft && panelDraft.panel_board) || (cfg && cfg.panel_board) || [];
     if (profile) {
       if (!Array.isArray(profile.board)) profile.board = [];
       board = profile.board;
@@ -2817,6 +4801,9 @@
     backdrop.querySelector("#confirm-ok").addEventListener("click", () => close(true));
   }
 
+  let panelPreviewPage = 0;
+  let panelPreviewTarget = (typeof IS_APP !== "undefined" && IS_APP) || (typeof IS_MOBILE !== "undefined" && !IS_MOBILE) ? "desktop" : "remote";
+
   function actionLabel(type) {
     const a = panelActions.find((x) => x.type === type);
     return a ? a.label : type;
@@ -2840,10 +4827,6 @@
     const prevContentScroll = main.querySelector('.settings-content') ? main.querySelector('.settings-content').scrollTop : 0;
     const prevEditorScroll = main.querySelector('.panel-editor-col') ? main.querySelector('.panel-editor-col').scrollTop : 0;
 
-    const gOn = layoutOn("gauges") && (panelDraft.panel_gauges || {}).enabled !== false;
-    const boxOn = layoutOn("button_box");
-    const slidOn = layoutOn("sliders");
-    const utilOn = layoutOn("utility");
     const hwOn = !!panelDraft.hardware_connected;
     const board = panelProfileCurrent().board;
     const util = panelDraft.panel_utility || [];
@@ -2868,26 +4851,24 @@
         '<div class="panel-editor-col">' +
           // Gauges
           sectionCard("Gauges", "speed",
-            toggleRow("Show gauges", gOn, "panel-tog-gauges") +
+            targetToggleRow("Gauges", "gauges") +
             '<p class="settings-hint">PC stats: CPU · GPU · FPS</p>') +
           // Button box
           sectionCard("Button box", "apps",
-            toggleRow("Show button box", boxOn, "panel-tog-box") +
+            targetToggleRow("Button box", "button_box") +
             profileSelectHtml() +
-            (boxOn ? renderBoardEditor(board, []) : '')) +
+            renderBoardEditor(board, [])) +
           // Sliders (brightness only when hardware is connected)
           sectionCard("Sliders", "tune",
-            toggleRow("Show sliders section", slidOn, "panel-tog-sliders") +
-            (slidOn ? (
-              toggleRow("App volume", sliderOn("app_volume"), "panel-tog-vol") +
-              toggleRow("Master volume", sliderOn("master_volume"), "panel-tog-mvol") +
-              toggleRow("App mixer", sliderOn("app_mixer"), "panel-tog-mix") +
-              (hwOn ? toggleRow("Display brightness", sliderOn("brightness"), "panel-tog-bri") : "")
-            ) : '')) +
+            targetToggleRow("Sliders section", "sliders") +
+            toggleRow("App volume", sliderOn("app_volume"), "panel-tog-vol") +
+            toggleRow("Master volume", sliderOn("master_volume"), "panel-tog-mvol") +
+            toggleRow("App mixer", sliderOn("app_mixer"), "panel-tog-mix") +
+            (hwOn ? toggleRow("Display brightness", sliderOn("brightness"), "panel-tog-bri") : "")) +
           // Utility
           sectionCard("Utility row", "grid_view",
-            toggleRow("Show utility row", utilOn, "panel-tog-util") +
-            (utilOn ? renderUtilityEditor(util) : '')) +
+            targetToggleRow("Utility row", "utility") +
+            renderUtilityEditor(util)) +
         '</div>' +
         (panelProfileModal ? renderProfileModal() : '') +
         (panelEdit ? renderActionModal() : '') +
@@ -2902,6 +4883,22 @@
     if (newContent && prevContentScroll) newContent.scrollTop = prevContentScroll;
     const newEditor = main.querySelector('.panel-editor-col');
     if (newEditor && prevEditorScroll) newEditor.scrollTop = prevEditorScroll;
+  }
+
+  function targetToggleRow(label, sectionId) {
+    const locOn = layoutOn(sectionId, "local");
+    const remOn = layoutOn(sectionId, "remote");
+    return '<div class="panel-target-toggles">' +
+      '<span class="settings-toggle-label">' + esc(label) + '</span>' +
+      '<div class="panel-target-boxes">' +
+        '<label class="panel-target-checkbox" for="panel-chk-' + esc(sectionId) + '-remote" title="Toggle visibility on Remote (Phone panel)">' +
+          '<input type="checkbox" id="panel-chk-' + esc(sectionId) + '-remote" class="panel-target-chk" data-section="' + esc(sectionId) + '" data-target="remote"' + (remOn ? ' checked' : '') + '> Remote' +
+        '</label>' +
+        '<label class="panel-target-checkbox" for="panel-chk-' + esc(sectionId) + '-local" title="Toggle visibility on Local (Desktop Companion / Overlay)">' +
+          '<input type="checkbox" id="panel-chk-' + esc(sectionId) + '-local" class="panel-target-chk" data-section="' + esc(sectionId) + '" data-target="local"' + (locOn ? ' checked' : '') + '> Local' +
+        '</label>' +
+      '</div>' +
+    '</div>';
   }
 
   function sectionCard(title, icon, body) {
@@ -2927,7 +4924,7 @@
     '</div>';
   }
 
-  function previewSliderHtml(id, label, value, min, max) {
+  function panelSliderHtml(id, label, value, min, max) {
     const v = (value === null || value === undefined) ? 0 : value;
     return '<div class="pdev-slider prev-slider" data-slider="' + id + '">' +
       '<div class="pdev-slab">' +
@@ -2939,9 +4936,14 @@
 
   function renderPhonePreviewHtml(cfg, liveData, board, util) {
     const data = liveData || panelLive || {};
+    const target = panelPreviewTarget || "desktop";
     const layout = {};
-    ((cfg && cfg.panel_layout) || (panelDraft && panelDraft.panel_layout) || []).forEach((r) => { if (r && r.id) layout[r.id] = r.enabled !== false; });
-    const gOn = layout.gauges !== false && ((cfg && cfg.panel_gauges) || (panelDraft && panelDraft.panel_gauges) || {}).enabled !== false;
+    ((cfg && cfg.panel_layout) || (panelDraft && panelDraft.panel_layout) || []).forEach((r) => {
+      if (r && r.id) {
+        layout[r.id] = isComponentEnabled(r, target);
+      }
+    });
+    const gOn = layout.gauges !== false;
     const boxOn = layout.button_box !== false;
     const slidOn = layout.sliders !== false;
     const utilOn = layout.utility !== false;
@@ -2968,11 +4970,15 @@
         '</div>'
       : "";
 
+    const numPages = Math.max(1, Math.ceil(curBoard.length / 12));
+    if (panelPreviewPage >= numPages) panelPreviewPage = Math.max(0, numPages - 1);
+    const trackTransform = 'transform: translateX(-' + (panelPreviewPage * 100) + '%);';
+
     let frameHtml = '<div class="prev-frame">';
     if (boxOn) {
-      frameHtml += '<div class="prev-box">' +
-        '<div class="prev-track">' +
-          boardPagesHtml(curBoard) +
+      frameHtml += '<div class="prev-box" id="prev-box-wheel" title="Scroll mousewheel over widgets to switch pages">' +
+        '<div class="prev-track" style="' + trackTransform + '">' +
+          boardPagesHtml(curBoard, null, null, true) +
         '</div>' +
       '</div>';
     }
@@ -3000,6 +5006,10 @@
     return '<div class="panel-preview-col">' +
       '<div class="panel-preview-header">' +
         '<h2 class="panel-preview-title">PANEL PREVIEW</h2>' +
+        '<div class="panel-preview-target-toggle">' +
+          '<button type="button" class="preview-target-btn' + (target === "desktop" ? " active" : "") + '" data-target="desktop" title="Preview Desktop Companion / Local settings">Desktop</button>' +
+          '<button type="button" class="preview-target-btn' + (target === "remote" ? " active" : "") + '" data-target="remote" title="Preview Phone / Remote settings">Phone</button>' +
+        '</div>' +
       '</div>' +
       '<div class="panel-phone-frame">' +
         screenHtml +
@@ -3022,27 +5032,47 @@
   function renderBoardEditor(list, path) {
     const tokQs = sessionTokenQuery();
     let h = '<div class="panel-slot-list" data-path="' + path.join(",") + '">';
-    const PAGE = 12; // buttons per device page — separator between pages
+    const PAGE = Math.max(4, (typeof getPanelLayoutSpec === "function" && getPanelLayoutSpec().pageSize) || 12);
     for (let pg = 0; pg < list.length; pg += PAGE) {
-      if (pg > 0) h += '<div class="panel-slot-page-sep"></div>';
+      const pageNum = Math.floor(pg / PAGE) + 1;
+      if (pg === 0) {
+        h += '<div class="panel-slot-page-sep panel-slot-page-first" id="panel-editor-page-1" style="display:none;scroll-margin-top:20px;"></div>';
+      } else {
+        h += '<div class="panel-slot-page-sep" id="panel-editor-page-' + pageNum + '">' +
+          '<span class="panel-slot-page-header-title">Page ' + pageNum + '</span>' +
+          '</div>';
+      }
       const chunk = list.slice(pg, pg + PAGE);
       chunk.forEach((slot, i) => {
         const idx = pg + i;
-        const appPath = slot.app_icon_path || (slot.type === "SHORTCUT" ? slot.shortcut_path : "") || ((slot.entity === "media.player" || slot.entity === "media.eject" || slot.type === "MEDIA_EJECT") ? ((panelDraft && panelDraft.media_player_path) || (config && config.media_player_path) || "") : "") || "";
+        let appPath = slot.app_icon_path || (slot.type === "SHORTCUT" ? slot.shortcut_path : "") || ((slot.entity === "media.player" || slot.entity === "media.eject" || slot.type === "MEDIA_EJECT") ? ((panelDraft && panelDraft.media_player_path) || "") : "") || "";
         const brandSvg = typeof getMediaPlayerBrandIcon === "function" ? getMediaPlayerBrandIcon(appPath) : null;
+        let slotIcon = slot.icon;
+        let slotName = slot.name;
+        if (slot.type === "AUDIO OUTPUT") {
+          const curDev = ((panelLive && panelLive.default_audio_output) || "").trim().toLowerCase();
+          const altId = (slot.audio_input_device_id_alt || "").trim().toLowerCase();
+          const isAlt = !!(altId && curDev && (curDev === altId || curDev.includes(altId) || altId.includes(curDev)));
+          slotIcon = isAlt ? (slot.audio_alt_icon || "headphones") : (slot.audio_primary_icon || slot.icon || "speaker");
+          if (!slotName || slotName === "Audio") {
+            slotName = isAlt ? (slot.audio_input_device_name_alt || "Headphones") : (slot.audio_input_device_name || "Speakers");
+          }
+        }
         let thumb = "";
         if (brandSvg) {
-          thumb = '<span class="panel-slot-thumb-brand" style="width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;margin-right:8px;flex-shrink:0;">' + brandSvg + '</span>';
+          thumb = '<span class="panel-slot-thumb-brand">' + brandSvg + '</span>';
         } else if (appPath) {
-          thumb = '<img class="panel-slot-thumb-img" src="' + API_BASE + '/api/panel/icon?path=' + encodeURIComponent(appPath) + tokQs + '" alt="" style="width:20px;height:20px;object-fit:contain;border-radius:3px;margin-right:8px;flex-shrink:0;">';
-        } else if (slot.icon) {
-          thumb = '<span class="md" data-md="' + esc(slot.icon) + '" style="font-size:18px;margin-right:8px;flex-shrink:0;color:var(--neon);">' + esc(mdiChar(slot.icon)) + '</span>';
+          thumb = '<img class="panel-slot-thumb-img" src="' + API_BASE + '/api/panel/icon?path=' + encodeURIComponent(appPath) + tokQs + '" alt="">';
+        } else if (slotIcon) {
+          thumb = '<span class="md" data-md="' + esc(slotIcon) + '">' + esc(mdiChar(slotIcon)) + '</span>';
         }
         h += '<div class="panel-slot-tile" draggable="true" data-act="edit" data-i="' + idx + '" data-path="' + path.join(",") + '" role="button" tabindex="0">' +
-          '<div class="panel-slot-drag-handle" title="Drag to reorder"><span class="material-icons-outlined">drag_indicator</span></div>' +
-          thumb +
+          '<div class="panel-slot-top">' +
+            '<div class="panel-slot-drag-handle" title="Drag to reorder"><span class="material-icons-outlined">drag_indicator</span></div>' +
+            '<div class="panel-slot-thumb">' + thumb + '</div>' +
+          '</div>' +
           '<div class="panel-slot-info">' +
-            '<span class="panel-slot-name">' + esc(slot.name || "(unnamed)") + '</span>' +
+            '<span class="panel-slot-name">' + esc(slotName || "(unnamed)") + '</span>' +
             '<span class="panel-slot-type">' + esc(actionLabel(slot.type)) + '</span>' +
           '</div>' +
           '</div>';
@@ -3145,24 +5175,39 @@
     { name: "Terminal", path: "wt.exe", icon: "console" },
   ];
 
-  function buildEntityOptions(targetType, curEntity) {
+  function buildEntityOptions(targetType, curEntity, filterPlugin, searchQuery) {
     let entOptHtml = '<option value=""' + (!curEntity ? ' selected' : '') + '>(None / Standalone Action)</option>';
     const domains = {};
-    (panelEntities || []).forEach((ent) => {
-      let include = false;
-      if (targetType === "HOTKEY") {
-        // Momentary Button: Actions & momentary triggers (play_pause also available)
-        include = (ent.type === "action" || ent.type === "shortcut" || ent.id === "media.play_pause");
-      } else if (targetType === "TOGGLE") {
-        // Toggle Button: 2-state status toggles (play_pause also available as dynamic toggle)
-        include = (ent.type === "status" || ent.type === "toggle" || ent.id === "media.play_pause" || (ent.writable && ent.type !== "action" && ent.type !== "shortcut" && ent.type !== "data"));
-      } else if (targetType === "SENSOR") {
-        // Status / Sensor: Data telemetry and read-only sensors
-        include = (ent.type === "data" || ent.type === "sensor" || (ent.type === "status" && !ent.writable));
-      }
-      if (!include) return;
+    const q = (searchQuery || "").trim().toLowerCase();
+    const plgFilter = filterPlugin || "all";
 
-      const d = ent.domain || "Other";
+    (panelEntities || []).forEach((ent) => {
+      const entPlg = ent.plugin || (ent.id && ent.id.includes(".") ? ent.id.split(".")[0] : "core");
+      if (plgFilter !== "all" && entPlg !== plgFilter) return;
+
+      if (q) {
+        const matchName = (ent.name || "").toLowerCase().includes(q);
+        const matchId = (ent.id || "").toLowerCase().includes(q);
+        const matchDomain = (ent.domain || "").toLowerCase().includes(q);
+        if (!matchName && !matchId && !matchDomain) return;
+      }
+
+      // If filtering by specific plugin or searching, include all matching entities from that plugin
+      if (plgFilter === "all" && !q) {
+        let include = false;
+        if (targetType === "HOTKEY") {
+          include = ent.type === "action" || ent.type === "shortcut" || ent.writable || ent.plugin === "openrgb" || ent.id.startsWith("openrgb.");
+        } else if (targetType === "TOGGLE") {
+          include = ent.type === "status" || ent.type === "toggle" || ent.writable || ent.plugin === "openrgb" || ent.id.startsWith("openrgb.");
+        } else if (targetType === "SENSOR") {
+          include = ent.type === "data" || ent.type === "sensor" || !ent.writable;
+        } else {
+          include = true;
+        }
+        if (!include) return;
+      }
+
+      const d = ent.domain || (entPlg ? entPlg.toUpperCase() : "Other");
       if (!domains[d]) domains[d] = [];
       domains[d].push(ent);
     });
@@ -3170,8 +5215,10 @@
     Object.keys(domains).forEach((d) => {
       entOptHtml += '<optgroup label="' + esc(d) + '">';
       domains[d].forEach((ent) => {
-        const sel = (curEntity && ent.id === curEntity) ? " selected" : "";
-        entOptHtml += '<option value="' + esc(ent.id) + '"' + sel + '>' + esc(ent.name) + ' (' + esc(ent.type) + ')</option>';
+        const sel = (curEntity && (ent.id === curEntity || ent.state_key === curEntity)) ? " selected" : "";
+        const label = ent.name || ent.id;
+        const typeStr = ent.type ? ` (${ent.type})` : "";
+        entOptHtml += '<option value="' + esc(ent.id) + '"' + sel + '>' + esc(label) + esc(typeStr) + '</option>';
       });
       entOptHtml += '</optgroup>';
     });
@@ -3196,23 +5243,29 @@
       { type: "HOTKEY", label: "Button" },
       { type: "TOGGLE", label: "Toggle Button" },
       { type: "SHORTCUT", label: "App / Shortcut" },
+      { type: "AUDIO OUTPUT", label: "Audio Device Switcher" },
       { type: "SENSOR", label: "Status / Sensor" },
       { type: "EMPTY", label: "Empty / Spacer" },
       { type: "GROUP", label: "Group / Profile Link" },
     ].filter((a) => allowGroup || a.type !== "GROUP");
 
-    const curEntity = slot.entity || (slot.plugin && slot.button_id ? (slot.plugin + "." + slot.button_id) : "");
+    let curEntity = slot.entity || (slot.plugin && slot.button_id ? (slot.plugin + "." + slot.button_id) : "");
+    if (!curEntity && slot.openrgb_profile) {
+      const matchEnt = (panelEntities || []).find((e) => e.openrgb_profile === slot.openrgb_profile || e.name === slot.openrgb_profile);
+      if (matchEnt) curEntity = matchEnt.id;
+    }
     const showName = (slot.show_name !== false);
     const showIcon = (slot.show_icon !== false);
     const isMediaPlayPause = (curEntity === "media.play_pause");
+    const isOpenRGBProfile = (curEntity && curEntity.startsWith("openrgb.")) || !!slot.openrgb_profile;
     const isMediaEject = (curEntity === "media.player" || curEntity === "media.eject" || curType === "MEDIA_EJECT");
-    const isAnyMediaControl = (isMediaPlayPause || curEntity === "media.next" || curEntity === "media.prev" || isMediaEject);
+    const isAnyMediaControl = (isMediaPlayPause || curEntity === "media.next" || curEntity === "media.prev" || isMediaEject || isOpenRGBProfile);
     const isShortcut = (curType === "SHORTCUT");
     const useAppIcon = (isShortcut || isMediaEject) && (slot.use_app_icon !== undefined ? !!slot.use_app_icon : (isShortcut || !!slot.app_icon_path));
     const showAlbumArt = isMediaEject && (slot.show_album_art !== undefined ? !!slot.show_album_art : true);
     const entObj = curEntity ? (panelEntities || []).find((e) => e.id === curEntity) : null;
-    const isActionEntity = entObj && (entObj.type === "action" || entObj.type === "shortcut");
-    const hasStateCapability = !isMediaPlayPause && !isActionEntity && (curType === "TOGGLE" || curType === "SENSOR" || (entObj && (entObj.type === "status" || entObj.type === "data" || !!entObj.state_key)));
+    const isActionEntity = entObj && (entObj.type === "action" || entObj.type === "shortcut") && !isOpenRGBProfile;
+    const hasStateCapability = !isMediaPlayPause && !isActionEntity && (curType === "TOGGLE" || curType === "SENSOR" || (entObj && (entObj.type === "status" || entObj.type === "data" || !!entObj.state_key || !!entObj.openrgb_profile)));
     const showState = (slot.show_state !== false);
     const showKeys = (curType === "HOTKEY" || curType === "TOGGLE") && !isAnyMediaControl;
 
@@ -3233,7 +5286,7 @@
       }
     }
 
-    const customIconPath = slot.app_icon_path || ((slot.entity === "media.player" || slot.entity === "media.eject" || slot.type === "MEDIA_EJECT") ? ((panelDraft && panelDraft.media_player_path) || (config && config.media_player_path) || "") : "") || "";
+    const customIconPath = slot.app_icon_path || ((slot.entity === "media.player" || slot.entity === "media.eject" || slot.type === "MEDIA_EJECT") ? ((panelDraft && panelDraft.media_player_path) || "") : "") || "";
     const brandSvg = typeof getMediaPlayerBrandIcon === "function" ? getMediaPlayerBrandIcon(customIconPath) : null;
     const tokQs = sessionTokenQuery();
 
@@ -3244,6 +5297,16 @@
         : '<span class="md" id="pe-icon-live" data-md="' + esc(curIcon) + '">' + esc(curIconChar) + '</span>');
 
     const entOptHtml = buildEntityOptions(curType, curEntity);
+
+    // Group entities by plugin / domain for 2-step plugin + searchable entity picker in button modal
+    const buttonPluginGroups = { "all": "All Sources" };
+    (panelEntities || []).forEach((ent) => {
+      const plg = ent.plugin || (ent.id && ent.id.includes(".") ? ent.id.split(".")[0] : "core");
+      const dName = ent.domain || plg.toUpperCase();
+      if (!buttonPluginGroups[plg]) buttonPluginGroups[plg] = dName;
+    });
+
+    let buttonPluginOptionsHtml = Object.keys(buttonPluginGroups).map((k) => '<option value="' + esc(k) + '">' + esc(buttonPluginGroups[k]) + '</option>').join("");
 
     let h = '<div class="panel-modal-backdrop" id="panel-modal">' +
       '<div class="panel-modal panel-modal-wide">' +
@@ -3267,8 +5330,14 @@
 
           '<div class="settings-control" id="pe-entity-wrap">' +
             '<label class="settings-label">Entity (Optional / Quick-Fill)</label>' +
-            '<select class="settings-select" id="pe-entity">' + entOptHtml + '</select>' +
-            '<span class="settings-hint">Pick a game/system entity to auto-populate defaults and bind live telemetry.</span>' +
+            '<div class="settings-picker-row" style="gap:6px;margin-bottom:6px">' +
+              '<select class="settings-select" id="pe-entity-plugin" style="width:140px;flex:0 0 auto">' +
+                buttonPluginOptionsHtml +
+              '</select>' +
+              '<input type="text" class="settings-input" id="pe-entity-search" placeholder="Search entities..." style="flex:1">' +
+            '</div>' +
+            '<select class="settings-select" id="pe-entity"></select>' +
+            '<span class="settings-hint">Filter by plugin and search to auto-populate defaults and bind live telemetry.</span>' +
           '</div>' +
 
           '<div class="settings-control" id="pe-group-profile-wrap" style="display:none">' +
@@ -3285,25 +5354,33 @@
             '<span class="settings-hint">Switches the panel board to this profile when pressed.</span>' +
           '</div>' +
 
-          '<div class="settings-control" id="pe-quick-apps-wrap" style="display:none">' +
-            '<label class="settings-label">Detected / Common Apps</label>' +
-            '<div class="pe-app-chips" style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap">' +
-              COMMON_QUICK_APPS.map((app) =>
-                '<button type="button" class="settings-btn-mini pe-app-chip" data-name="' + esc(app.name) + '" data-path="' + esc(app.path) + '"' + (app.icon ? ' data-icon="' + esc(app.icon) + '"' : '') + '>' +
-                  (app.brand && typeof getMediaPlayerBrandIcon === "function" && getMediaPlayerBrandIcon(app.brand) ? '<span class="pe-chip-brand-svg" style="width:14px;height:14px;display:inline-flex;align-items:center;margin-right:4px;">' + getMediaPlayerBrandIcon(app.brand) + '</span>' : '') +
-                  esc(app.name) +
-                '</button>'
-              ).join("") +
-            '</div>' +
-          '</div>' +
-
-          '<div class="settings-control" id="pe-path-wrap" style="display:none"><label class="settings-label">Shortcut path</label>' +
+          '<div class="settings-control" id="pe-path-wrap" style="display:none"><label class="settings-label" id="pe-path-label">App / Shortcut / URL path</label>' +
           '<div class="settings-picker-row">' +
-          '<input type="text" class="settings-input" id="pe-path" value="' + esc(slot.shortcut_path || "") + '" placeholder="e.g. cmd.exe or C:\\Windows\\notepad.exe">' +
+          '<input type="text" class="settings-input" id="pe-path" value="' + esc(slot.shortcut_path || "") + '" placeholder="e.g. https://youtube.com or C:\\Windows\\notepad.exe">' +
           '<button type="button" class="settings-btn" id="pe-browse">Browse</button></div></div>' +
           '<div class="settings-control" id="pe-args-wrap" style="display:none"><label class="settings-label">Arguments / Switches (Optional)</label>' +
           '<input type="text" class="settings-input" id="pe-args" value="' + esc(slot.shortcut_args || "") + '" placeholder="e.g. /k &quot;cd /d C:\\dir&quot; or --flag">' +
           '<span class="settings-hint">Passed directly to executable on launch.</span></div>' +
+
+          '<div class="settings-control" id="pe-audio-output-wrap" style="display:none">' +
+            '<label class="settings-label">Primary Audio Device (Default)</label>' +
+            '<div style="display:flex;gap:6px;margin-bottom:8px;">' +
+              '<select class="settings-select" id="pe-audio-primary" style="flex:1;">' +
+                '<option value="">Select primary device...</option>' +
+                (audioOutputDevices || []).map((d) => '<option value="' + esc(d.id) + '"' + ((slot.audio_input_device_id === d.id) ? ' selected' : '') + '>' + esc(d.name) + '</option>').join('') +
+              '</select>' +
+              '<input type="text" class="settings-input" id="pe-audio-primary-icon" value="' + esc(slot.audio_primary_icon || "speaker") + '" placeholder="speaker" style="width:85px;" title="Primary Icon (MDI glyph)">' +
+            '</div>' +
+            '<label class="settings-label">Alternate Audio Device (Toggle)</label>' +
+            '<div style="display:flex;gap:6px;">' +
+              '<select class="settings-select" id="pe-audio-alt" style="flex:1;">' +
+                '<option value="">Select alternate device...</option>' +
+                (audioOutputDevices || []).map((d) => '<option value="' + esc(d.id) + '"' + ((slot.audio_input_device_id_alt === d.id) ? ' selected' : '') + '>' + esc(d.name) + '</option>').join('') +
+              '</select>' +
+              '<input type="text" class="settings-input" id="pe-audio-alt-icon" value="' + esc(slot.audio_alt_icon || "headphones") + '" placeholder="headphones" style="width:85px;" title="Alternate Icon (MDI glyph)">' +
+            '</div>' +
+            '<span class="settings-hint">Tapping this button switches Windows playback between these two devices.</span>' +
+          '</div>' +
 
           '<div class="settings-control" id="pe-keys-wrap"' + (showKeys ? "" : ' style="display:none"') + '>' +
             '<div style="display:flex;align-items:center;gap:6px">' +
@@ -3328,38 +5405,63 @@
 
         /* Column 2: Visual Styling & Card Display */
         '<div class="panel-modal-col" id="pe-visual-col">' +
-          '<div class="settings-control" id="pe-appicon-wrap" style="display:none"><label class="settings-label">App icon</label>' +
-          '<div class="settings-appicon-row">' +
-            '<img class="settings-appicon-preview" id="pe-appicon-preview" alt="" hidden>' +
-            '<span class="settings-hint" id="pe-appicon-status">Pulled automatically from executable.</span>' +
-          '</div></div>' +
-          '<div class="settings-control" id="pe-icon-row-wrap">' +
-            '<label class="settings-label">Icon</label>' +
-            '<div class="pe-icon-container">' +
-              '<div class="pe-icon-input-row" id="pe-icon-trigger-row">' +
-                '<span class="pe-icon-live-badge" id="pe-icon-live-badge" title="Active Icon Preview (Click to browse MDI icons)"' + badgeStyle + '>' +
-                  iconBadgeInner +
-                '</span>' +
-                '<input type="text" class="settings-select pe-icon-select" id="pe-icon" value="' + esc(customIconPath ? (customIconPath.split(/[\\/]/).pop() || customIconPath) : curIcon) + '" placeholder="Select icon..." readonly>' +
-                '<button type="button" class="settings-btn pe-icon-browse-btn" id="pe-icon-browse-btn" title="Choose custom icon (.ico, .exe, .png, .lnk)">Browse</button>' +
-                '<button type="button" class="settings-btn settings-btn-secondary pe-icon-clear-btn" id="pe-icon-clear-btn" style="display:none" title="Clear custom icon">Clear</button>' +
+          '<div class="settings-control" id="pe-icon-source-control">' +
+            '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">' +
+              '<label class="settings-label" style="margin:0;">Icon Source</label>' +
+              '<div class="pe-icon-mode-tabs">' +
+                '<button type="button" class="pe-icon-mode-tab active" id="pe-mode-auto" data-mode="auto">Auto</button>' +
+                '<button type="button" class="pe-icon-mode-tab" id="pe-mode-mdi" data-mode="mdi">MDI</button>' +
+                '<button type="button" class="pe-icon-mode-tab" id="pe-mode-custom" data-mode="custom">Custom File</button>' +
               '</div>' +
-              '<div class="pe-icon-popup" id="pe-icon-popup" style="display:none">' +
-                '<div class="pe-icon-search-row">' +
-                  '<span class="material-icons-outlined pe-icon-search-icon">search</span>' +
-                  '<input type="text" class="settings-input pe-icon-search-box" id="pe-icon-search" placeholder="Search icons..." autocomplete="off">' +
+            '</div>' +
+
+            /* Mode 1: Auto (App / Website Icon) */
+            '<div class="pe-icon-mode-pane" id="pe-pane-auto">' +
+              '<div class="settings-appicon-row" style="margin-top:2px;">' +
+                '<img class="settings-appicon-preview" id="pe-appicon-preview" alt="" hidden>' +
+                '<span class="settings-hint" id="pe-appicon-status">Auto-detected from URL or app executable.</span>' +
+              '</div>' +
+            '</div>' +
+
+            /* Mode 2: MDI Icon */
+            '<div class="pe-icon-mode-pane" id="pe-pane-mdi" style="display:none;">' +
+              '<div class="pe-icon-container">' +
+                '<div class="pe-icon-input-row" id="pe-icon-trigger-row">' +
+                  '<span class="pe-icon-live-badge" id="pe-icon-live-badge" title="Active Icon Preview (Click to browse MDI icons)"' + badgeStyle + '>' +
+                    iconBadgeInner +
+                  '</span>' +
+                  '<input type="text" class="settings-select pe-icon-select" id="pe-icon" value="' + esc(curIcon && curIcon !== "application" && curIcon !== "apps" ? curIcon : "toggle-switch") + '" placeholder="Select MDI icon..." readonly>' +
+                  '<button type="button" class="settings-btn pe-icon-clear-btn" id="pe-icon-clear-btn" title="Reset MDI icon">✕</button>' +
                 '</div>' +
-                '<div class="pe-icon-cat-bar">' +
-                  '<button type="button" class="pe-icon-cat-pill active" data-cat="all">All</button>' +
-                  '<button type="button" class="pe-icon-cat-pill" data-cat="home">Home</button>' +
-                  '<button type="button" class="pe-icon-cat-pill" data-cat="work">Work</button>' +
-                  '<button type="button" class="pe-icon-cat-pill" data-cat="gaming">Gaming</button>' +
-                  '<button type="button" class="pe-icon-cat-pill" data-cat="lifestyle">Lifestyle</button>' +
-                  '<button type="button" class="pe-icon-cat-pill" data-cat="system">System</button>' +
+                '<div class="pe-icon-popup" id="pe-icon-popup" style="display:none">' +
+                  '<div class="pe-icon-search-row">' +
+                    '<span class="material-icons-outlined pe-icon-search-icon">search</span>' +
+                    '<input type="text" class="settings-input pe-icon-search-box" id="pe-icon-search" placeholder="Search icons..." autocomplete="off">' +
+                  '</div>' +
+                  '<div class="pe-icon-cat-bar">' +
+                    '<button type="button" class="pe-icon-cat-pill active" data-cat="all">All</button>' +
+                    '<button type="button" class="pe-icon-cat-pill" data-cat="home">Home</button>' +
+                    '<button type="button" class="pe-icon-cat-pill" data-cat="work">Work</button>' +
+                    '<button type="button" class="pe-icon-cat-pill" data-cat="gaming">Gaming</button>' +
+                    '<button type="button" class="pe-icon-cat-pill" data-cat="lifestyle">Lifestyle</button>' +
+                    '<button type="button" class="pe-icon-cat-pill" data-cat="system">System</button>' +
+                  '</div>' +
+                  '<div class="pe-icon-grid-scroll">' +
+                    '<div class="pe-icon-grid" id="pe-icon-grid"></div>' +
+                  '</div>' +
                 '</div>' +
-                '<div class="pe-icon-grid-scroll">' +
-                  '<div class="pe-icon-grid" id="pe-icon-grid"></div>' +
-                '</div>' +
+              '</div>' +
+            '</div>' +
+
+            /* Mode 3: Custom File (.ico, .png, .exe, .lnk) */
+            '<div class="pe-icon-mode-pane" id="pe-pane-custom" style="display:none;">' +
+              '<div class="pe-icon-input-row">' +
+                '<span class="pe-icon-live-badge" id="pe-custom-live-badge" title="Custom File Icon Preview">' +
+                  (customIconPath ? '<img class="pe-icon-live-img" src="' + API_BASE + '/api/panel/icon?path=' + encodeURIComponent(customIconPath) + sessionTokenQuery() + '" alt="">' : '<span class="md" data-md="image-outline"></span>') +
+                '</span>' +
+                '<input type="text" class="settings-input" id="pe-custom-icon-path" value="' + esc(customIconPath || "") + '" placeholder="e.g. C:\\icons\\game.ico, .png, .exe" readonly>' +
+                '<button type="button" class="settings-btn" id="pe-custom-browse-btn">Browse</button>' +
+                '<button type="button" class="settings-btn pe-icon-clear-btn" id="pe-custom-clear-btn" title="Clear custom file icon">✕</button>' +
               '</div>' +
             '</div>' +
           '</div>' +
@@ -3381,10 +5483,9 @@
                 '<button type="button" class="pe-swatch" data-color="#00ff88" style="background:#00ff88" title="Neon Emerald"></button>' +
                 '<button type="button" class="pe-swatch" data-color="#ff3355" style="background:#ff3355" title="Neon Red"></button>' +
                 '<button type="button" class="pe-swatch" data-color="#ffb703" style="background:#ffb703" title="Amber Gold"></button>' +
-                '<button type="button" class="pe-swatch" data-color="#16171a" style="background:#16171a" title="LCD Dark Charcoal"></button>' +
                 '<button type="button" class="pe-swatch" data-color="#0d0e10" style="background:#0d0e10" title="OLED Deep Black"></button>' +
                 '<button type="button" class="pe-swatch pe-swatch-rainbow" data-color="RAINBOW" title="Rainbow Sheen">🌈</button>' +
-                '<button type="button" class="pe-swatch pe-swatch-clear" data-color="" title="Clear / Theme Default">✕ Clear</button>' +
+                '<button type="button" class="pe-swatch pe-swatch-clear" data-color="" title="Clear / Theme Default">✕</button>' +
               '</div>' +
             '</div>' +
           '</div>' +
@@ -3402,11 +5503,6 @@
                 '<input type="checkbox" id="pe-show-icon"' + (showIcon ? " checked" : "") + '>' +
                 '<span class="pe-toggle-label">Show Icon</span>' +
                 '<span class="pe-toggle-hint">Center icon / text</span>' +
-              '</label>' +
-              '<label class="pe-display-toggle-row pe-sub-toggle-row' + (showIcon ? "" : " disabled") + '" id="pe-use-app-icon-row"' + ((isShortcut || isMediaEject) ? "" : ' style="display:none"') + '>' +
-                '<input type="checkbox" id="pe-use-app-icon"' + (useAppIcon ? " checked" : "") + (showIcon ? "" : " disabled") + '>' +
-                '<span class="pe-toggle-label">App Icon</span>' +
-                '<span class="pe-toggle-hint">Override with app icon</span>' +
               '</label>' +
               '<label class="pe-display-toggle-row" id="pe-show-album-art-row"' + (isMediaEject ? "" : ' style="display:none"') + '>' +
                 '<input type="checkbox" id="pe-show-album-art"' + (showAlbumArt ? " checked" : "") + '>' +
@@ -3459,18 +5555,64 @@
       if (!el) return;
       el.addEventListener("click", () => fn(!el.classList.contains("on")));
     }
-    bindTog("panel-tog-gauges", (on) => {
-      panelDraft.panel_gauges = panelDraft.panel_gauges || {};
-      panelDraft.panel_gauges.enabled = on;
-      setLayoutOn("gauges", on);
+    document.querySelectorAll(".panel-target-chk").forEach((chk) => {
+      chk.addEventListener("change", () => {
+        const sectionId = chk.getAttribute("data-section");
+        const target = chk.getAttribute("data-target"); // "local" or "remote"
+        setLayoutTargetOn(sectionId, target, chk.checked);
+      });
     });
-    bindTog("panel-tog-box", (on) => setLayoutOn("button_box", on));
-    bindTog("panel-tog-sliders", (on) => setLayoutOn("sliders", on));
-    bindTog("panel-tog-util", (on) => setLayoutOn("utility", on));
+
+    document.querySelectorAll(".preview-target-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        panelPreviewTarget = btn.getAttribute("data-target") || "desktop";
+        renderPanel();
+      });
+    });
+
     bindTog("panel-tog-vol", (on) => setSliderOn("app_volume", on));
     bindTog("panel-tog-mvol", (on) => setSliderOn("master_volume", on));
     bindTog("panel-tog-mix", (on) => setSliderOn("app_mixer", on));
     bindTog("panel-tog-bri", (on) => setSliderOn("brightness", on));
+
+    // Mousewheel over the preview button widget box to switch pages and scroll editor bookmark
+    const prevBoxWheel = document.getElementById("prev-box-wheel");
+    if (prevBoxWheel) {
+      prevBoxWheel.addEventListener("wheel", (e) => {
+        e.preventDefault();
+        const curBoard = panelProfileCurrent().board || [];
+        const numPages = Math.max(1, Math.ceil(curBoard.length / 12));
+        if (numPages <= 1) return;
+
+        if (e.deltaY > 0) {
+          panelPreviewPage = (panelPreviewPage + 1) % numPages;
+        } else if (e.deltaY < 0) {
+          panelPreviewPage = (panelPreviewPage - 1 + numPages) % numPages;
+        }
+
+        const track = document.querySelector(".prev-track");
+        if (track) {
+          track.style.transform = 'translateX(-' + (panelPreviewPage * 100) + '%)';
+        } else {
+          renderPanel();
+        }
+
+        // Scroll the details editor column to the corresponding page bookmark
+        const targetPage = panelPreviewPage + 1;
+        const bookmark = document.getElementById("panel-editor-page-" + targetPage);
+        if (bookmark && targetPage > 1) {
+          bookmark.scrollIntoView({ behavior: "smooth", block: "start" });
+        } else {
+          const firstSlotTile = main.querySelector(".panel-slot-tile[data-i='0']");
+          if (firstSlotTile) {
+            firstSlotTile.scrollIntoView({ behavior: "smooth", block: "start" });
+          } else {
+            const editorCol = main.querySelector(".panel-editor-col");
+            if (editorCol) editorCol.scrollTo({ top: 0, behavior: "smooth" });
+          }
+        }
+      }, { passive: false });
+    }
 
     let prevDragSource = null;
     let isPrevDragging = false;
@@ -3989,6 +6131,7 @@
     panelViewMode = true;
     panelNav = [];
     panelViewSig = "";
+    updateViewportMode();
     ensurePanelOverlay();
     renderPanelView();
     fetchPanelLive();
@@ -4035,7 +6178,7 @@
     const currentBoardSlots = currentBoard();
     const boardSig = currentBoardSlots.map(slotSig).join(";");
     const utilSig = (cfg.panel_utility || []).map(slotSig).join(";");
-    const lay = (cfg.panel_layout || []).map((r) => r.id + "=" + (r.enabled === false ? 0 : 1)).join(",");
+    const lay = (cfg.panel_layout || []).map((r) => r.id + "=E:" + (r.enabled !== false ? 1 : 0) + ",L:" + (r.local !== false ? 1 : 0) + ",R:" + (r.remote !== false ? 1 : 0)).join(";");
     const sl = (cfg.panel_sliders || []).map((r) => r.id + "=" + (r.enabled === false ? 0 : 1)).join(",");
     // Orientation must be part of the signature: boardPagesHtml bakes the
     // landscape button permutation in at render time, so a rotation (or the iOS
@@ -4055,14 +6198,32 @@
       (cfg.panel_gauges || {}).enabled === false ? 0 : 1,
       !!(panelLive && panelLive.hardware_connected),
       JSON.stringify((panelLive && panelLive.warnings) || {}),
-      notifKey(),
     ]);
   }
 
+  let _panelLiveConfigVersion = null;
+  let _panelLiveCachedConfig = null;
+  let _fetchPanelLiveBusy = false;
+
   function fetchPanelLive() {
-    apiFetch(`${API_BASE}/api/panel/live`)
+    if (_fetchPanelLiveBusy) return;
+    _fetchPanelLiveBusy = true;
+    const url = _panelLiveConfigVersion
+      ? `${API_BASE}/api/panel/live?cv=${encodeURIComponent(_panelLiveConfigVersion)}`
+      : `${API_BASE}/api/panel/live`;
+    apiFetch(url)
       .then((r) => r.json())
       .then((data) => {
+        if (data.config) {
+          _panelLiveCachedConfig = data.config;
+          if (data.config_version) _panelLiveConfigVersion = data.config_version;
+          if (typeof data.config.screensaver_timeout !== "undefined") {
+            try { localStorage.setItem("iris_screensaver_timeout", String(data.config.screensaver_timeout)); } catch (e) {}
+            if (panelViewMode && !ssActive) resetScreensaverTimer();
+          }
+        } else if (_panelLiveCachedConfig) {
+          data.config = _panelLiveCachedConfig;
+        }
         panelLive = data;
         if (data.config && typeof data.config.keep_alive !== "undefined") {
           applyKeepAlive(data.config.keep_alive);
@@ -4105,7 +6266,10 @@
           renderPanelView();
         }
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => {
+        _fetchPanelLiveBusy = false;
+      });
   }
 
   function panelMixerChanged(apps) {
@@ -4126,6 +6290,7 @@
   let pendingNotifSlide = false;
   let notifDismissTimer = null;
   let notifOpen = false;
+  let notifReturnPage = 1; // page the user was on before the notification slide
 
   function notifKey() {
     const n = (panelLive && panelLive.notification) || null;
@@ -4226,10 +6391,40 @@
     boxScrollLeft = Math.round(box.scrollLeft);
   }
 
-  function restoreBoxScroll() {
+  function restoreBoxScroll(forcePage) {
     const box = document.querySelector(".panel-view-overlay .pv-box");
     if (!box) return;
-    box.scrollLeft = boxScrollLeft;
+    if (forcePage !== undefined && forcePage !== null) {
+      const g = box.querySelector('.pdev-grid[data-page="' + forcePage + '"]');
+      if (g) {
+        try {
+          g.scrollIntoView({ behavior: "smooth", inline: "start", block: "nearest" });
+        } catch (_) {}
+        const track = box.querySelector(".pv-track");
+        const W = track ? track.offsetWidth : 0;
+        const isLand = document.documentElement.classList.contains("is-landscape");
+        const x = track ? (isLand ? g.offsetLeft : (g.offsetLeft - track.offsetLeft)) : 0;
+        box.scrollLeft = isLand ? (W - x - g.offsetWidth) : x;
+        boxScrollLeft = box.scrollLeft;
+        return;
+      }
+    }
+    if (boxScrollLeft !== null) {
+      box.scrollLeft = boxScrollLeft;
+    } else {
+      const g1 = box.querySelector('.pdev-grid[data-page="1"]');
+      if (g1) {
+        try {
+          g1.scrollIntoView({ behavior: "auto", inline: "start", block: "nearest" });
+        } catch (_) {}
+        const track = box.querySelector(".pv-track");
+        const W = track ? track.offsetWidth : 0;
+        const isLand = document.documentElement.classList.contains("is-landscape");
+        const x = track ? (isLand ? g1.offsetLeft : (g1.offsetLeft - track.offsetLeft)) : 0;
+        box.scrollLeft = isLand ? (W - x - g1.offsetWidth) : x;
+        boxScrollLeft = box.scrollLeft;
+      }
+    }
   }
 
   let wsConn = null;
@@ -4261,12 +6456,15 @@
 
   function handleLiveBroadcast(msg) {
     if (!msg || !msg.type) return;
+    const isAlert = (msg.theme === "alert" || msg.theme === "red" || msg.status === "bad");
     if (msg.type === "notification") {
       screensaverWakeOnEvent();
-      if (panelLive) {
+      if (!isAlert && panelLive) {
         panelLive.notification = msg;
+      } else if (isAlert && panelLive) {
+        panelLive.notification = null;
       }
-      triggerNotificationSlide(normalizeNotifTheme(msg.theme), false, msg);
+      triggerNotificationSlide(normalizeNotifTheme(msg.theme), isAlert, msg);
       pendingNotifSlide = true;
       if (currentPage === "notifications") {
         fetchNotifications();
@@ -4275,11 +6473,47 @@
       screensaverWakeOnEvent();
       const status = msg.status || "good";
       const theme = status === "bad" ? "red" : (status === "good" ? "green" : "purple");
+      if (panelLive) {
+        panelLive.notification = null;
+      }
       triggerNotificationSlide(theme, true, msg);
       pendingNotifSlide = true;
-    } else if (msg.type === "theme") {
-      if (msg.theme && typeof window.applyTheme === "function") {
-        window.applyTheme(msg.theme);
+    } else if (msg.type === "config") {
+      if (msg.config) {
+        _panelLiveConfigVersion = null;
+        if (!_panelLiveCachedConfig) _panelLiveCachedConfig = {};
+        Object.assign(_panelLiveCachedConfig, msg.config);
+        if (panelLive) {
+          panelLive.config = panelLive.config || {};
+          Object.assign(panelLive.config, msg.config);
+        }
+        if (panelDraft) {
+          Object.assign(panelDraft, msg.config);
+        }
+        if (panelViewMode) {
+          _lastAutoFitH = 0;
+          renderPanelView();
+        }
+        resetScreensaverTimer();
+      }
+    } else if (msg.type === "navigate") {
+      if (msg.page) {
+        currentPage = msg.page;
+        if (msg.page === "library" && msg.tab) {
+          libraryTab = msg.tab;
+        }
+        navItems.forEach((n) => n.classList.toggle("active", n.dataset.page === currentPage));
+        renderPage();
+      }
+      if (msg.action === "new_note" || msg.action === "note") {
+        setTimeout(() => openNotepad(null, msg.app || "general"), 150);
+      }
+      if (msg.viewer_file) {
+        setTimeout(() => openLibraryViewer(msg.viewer_file), 150);
+      }
+    } else if (msg.type === "library_update") {
+      if (currentPage === "library") {
+        fetchLibraryItems();
       }
     } else if (msg.type === "reload") {
       if ("caches" in window) {
@@ -4302,6 +6536,9 @@
   }
 
   function triggerNotificationSlide(theme, isEvent, eventData) {
+    if (typeof screensaverWakeOnEvent === "function") {
+      screensaverWakeOnEvent();
+    }
     const notifCard = notifCardEl();
     if (!notifCard) return;
 
@@ -4313,6 +6550,14 @@
     if (!theme) {
       const cur = (panelLive && panelLive.notification) || null;
       theme = normalizeNotifTheme(cur && cur.theme);
+    }
+
+    // Remember which page the user was on before we interrupt with the notification.
+    // Only update when we're not already showing the notification (page 0), so that
+    // back-to-back notifications don't overwrite the real "return" page.
+    const curPage = getCurBoxPage();
+    if (curPage !== 0) {
+      notifReturnPage = curPage;
     }
 
     const normTheme = (theme === "green" || theme === "red" || theme === "alert") ? theme : "purple";
@@ -4334,77 +6579,189 @@
     notifCard.classList.add("notif-shine", "notif-flash-" + normTheme, "notif-theme-" + themeCls);
 
     openNotifDrawer();
+    restoreBoxScroll(0);
 
     notifDismissTimer = setTimeout(() => {
       notifDismissTimer = null;
       closeNotifDrawer();
+      restoreBoxScroll(notifReturnPage);
     }, 5000);
   }
 
+  function getCurBoxPage() {
+    const box = document.querySelector(".panel-view-overlay .pv-box");
+    if (!box) return 1;
+    const track = box.querySelector(".pv-track");
+    const pages = Array.from(box.querySelectorAll('.pdev-grid[data-page]'));
+    if (!pages.length) return 1;
+    const isLand = document.documentElement.classList.contains("is-landscape");
+    const curScroll = box.scrollLeft;
+    let closestPage = 1;
+    let minDiff = Infinity;
+    const W = track ? track.offsetWidth : 0;
+
+    pages.forEach((p) => {
+      const pNum = parseInt(p.getAttribute("data-page"), 10);
+      const x = track ? (isLand ? p.offsetLeft : (p.offsetLeft - track.offsetLeft)) : 0;
+      const targetScroll = isLand ? (W - x - p.offsetWidth) : x;
+      const diff = Math.abs(curScroll - targetScroll);
+      if (diff < minDiff) {
+        minDiff = diff;
+        closestPage = pNum;
+      }
+    });
+    return closestPage;
+  }
+
+  function getMaxBoxPage() {
+    const box = document.querySelector(".panel-view-overlay .pv-box");
+    if (!box) return 1;
+    const pages = Array.from(box.querySelectorAll('.pdev-grid[data-page]'));
+    if (!pages.length) return 1;
+    let maxP = 1;
+    pages.forEach((p) => {
+      const pNum = parseInt(p.getAttribute("data-page"), 10);
+      if (pNum > maxP) maxP = pNum;
+    });
+    return maxP;
+  }
+
   function setupNotifDrawerGestures() {
-    // Swipe handles: the gauges strip and the button box (the box's other axis
-    // is the paging scroll; directional guard below keeps the two apart) plus
-    // the open drawer itself.
-    const handles = Array.from(document.querySelectorAll(".panel-view-overlay .pv-gauges, .panel-view-overlay .pv-box, .panel-view-overlay #pv-notif"));
-    if (!handles.length) return;
+    const notifCard = document.querySelector(".panel-view-overlay #pv-notif");
+    if (notifCard) {
+      notifCard.addEventListener("click", () => {
+        closeNotifDrawer();
+        restoreBoxScroll(notifReturnPage);
+      });
+    }
+
+    const box = document.querySelector(".panel-view-overlay .pv-box");
+    if (!box) return;
 
     let startX = 0;
     let startY = 0;
     let tracking = false;
-    const THRESH = 60;
+    const THRESH = 30;
 
-    handles.forEach((h) => {
-      h.addEventListener("touchstart", (e) => {
-        if (e.touches.length !== 1) return;
-        tracking = true;
-        startX = e.touches[0].clientX;
-        startY = e.touches[0].clientY;
-      }, { passive: true });
+    box.addEventListener("touchstart", (e) => {
+      if (e.touches.length !== 1) return;
+      tracking = true;
+      startX = e.touches[0].clientX;
+      startY = e.touches[0].clientY;
+    }, { passive: true });
 
-      h.addEventListener("touchend", (e) => {
-        if (!tracking) return;
-        tracking = false;
-        const t = e.changedTouches[0];
-        const dx = t.clientX - startX;
-        const dy = t.clientY - startY;
-        const isLand = document.documentElement.classList.contains("is-landscape");
-        // Convert screen-space delta to portrait space (screen is rotated -90deg
-        // in landscape: portrait-down = screen-right, portrait-right = screen-down)
-        const pdx = isLand ? -dy : dx;
-        const pdy = isLand ? dx : dy;
-        if (Math.hypot(pdx, pdy) < THRESH) return;
-        // The drawer gesture is along portrait-y (down = open, up = close).
-        // Ignore portrait-x-dominant swipes — those are button track paging.
-        if (Math.abs(pdy) <= Math.abs(pdx)) return;
-        if (pdy > 0) {
-          openNotifDrawer();
-        } else {
-          closeNotifDrawer();
+    box.addEventListener("touchend", (e) => {
+      if (!tracking) return;
+      tracking = false;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - startX;
+      const dy = t.clientY - startY;
+      const isLand = document.documentElement.classList.contains("is-landscape");
+
+      const cur = getCurBoxPage();
+      const maxP = getMaxBoxPage();
+
+      if (isLand) {
+        // Landscape: screen-Y axis paging
+        if (Math.abs(dy) > THRESH && Math.abs(dy) > Math.abs(dx)) {
+          if (dy < 0) {
+            // Swipe UP -> Next button page
+            if (cur < maxP) restoreBoxScroll(cur + 1);
+          } else {
+            // Swipe DOWN -> Previous page / Page 0 Notifications
+            if (cur > 0) restoreBoxScroll(cur - 1);
+          }
         }
-      }, { passive: true });
-    });
+      } else {
+        // Portrait: screen-X axis paging
+        if (Math.abs(dx) > THRESH && Math.abs(dx) > Math.abs(dy)) {
+          if (dx < 0) {
+            // Swipe LEFT -> Next button page
+            if (cur < maxP) restoreBoxScroll(cur + 1);
+          } else {
+            // Swipe RIGHT -> Previous page / Page 0 Notifications
+            if (cur > 0) restoreBoxScroll(cur - 1);
+          }
+        }
+      }
+    }, { passive: true });
   }
 
-  function renderPanelView() {
-    const ov = ensurePanelOverlay();
-    const data = panelLive || {};
-    const cfg = panelViewConfig();
+  let _panelButtonRows = 4;
+  let _panelSliderRows = 2;
 
+  function getPanelLayoutSpec(pDraft, dataLive) {
+    const prof = pDraft || panelProfileCurrent() || {};
+    const cfg = prof.config || (panelLive && panelLive.config) || panelViewConfig() || {};
+    const live = dataLive || panelLive || {};
+    const isDesktop = document.documentElement.classList.contains("is-desktop-companion");
+    const target = isDesktop ? "desktop" : "remote";
     const layout = {};
-    (cfg.panel_layout || []).forEach((r) => { layout[r.id] = r.enabled !== false; });
-    const gOn = layout.gauges !== false && (cfg.panel_gauges || {}).enabled !== false;
+    (cfg.panel_layout || []).forEach((r) => {
+      if (r && r.id) layout[r.id] = isComponentEnabled(r, target);
+    });
+    const gOn = layout.gauges !== false && (cfg.panel_gauges ? cfg.panel_gauges.enabled !== false : true);
     const boxOn = layout.button_box !== false;
     const slidOn = layout.sliders !== false;
     const utilOn = layout.utility !== false;
     const sliders = {};
     (cfg.panel_sliders || []).forEach((r) => { sliders[r.id] = r.enabled !== false; });
-    const hw = !!(data.hardware_connected !== undefined ? data.hardware_connected
+    const hw = !!(live.hardware_connected !== undefined ? live.hardware_connected
       : (panelDraft && panelDraft.hardware_connected));
     const briOn = hw && sliders.brightness !== false;
     const volOn = sliders.app_volume !== false;
     const mvolOn = sliders.master_volume !== false;
     const mixOn = sliders.app_mixer !== false;
 
+    let activeSliderCount = 0;
+    if (slidOn) {
+      if (volOn) activeSliderCount++;
+      if (mvolOn) activeSliderCount++;
+      if (briOn) activeSliderCount++;
+      if (mixOn) {
+        const apps = (live.app_volumes && live.app_volumes.length) ? live.app_volumes.length : 1;
+        activeSliderCount += apps;
+      }
+    }
+    const utilRows = utilOn ? 1 : 0;
+    const sliderRows = (slidOn && activeSliderCount > 0) ? (activeSliderCount === 1 ? 1 : 2) : 0;
+    let buttonRows = 0;
+    if (boxOn) {
+      if (isDesktop) {
+        const boardLen = (prof.board && prof.board.length) ? prof.board.length : ((cfg.panel_board && cfg.panel_board.length) ? cfg.panel_board.length : 12);
+        buttonRows = Math.max(1, Math.min(6, Math.ceil(boardLen / 4)));
+      } else {
+        const baseBudget = gOn ? 6 : 7;
+        buttonRows = Math.max(1, baseBudget - utilRows - sliderRows);
+      }
+    }
+    const pageSize = buttonRows * 4;
+    return { isDesktop, gOn, boxOn, slidOn, utilOn, volOn, mvolOn, mixOn, briOn, activeSliderCount, sliderRows, utilRows, buttonRows, pageSize };
+  }
+
+  function renderPanelView() {
+    updateViewportMode();
+    const ov = ensurePanelOverlay();
+    const data = panelLive || {};
+    const cfg = panelViewConfig();
+
+    const layoutSpec = getPanelLayoutSpec(null, data);
+    const isDesktop = layoutSpec.isDesktop;
+    const gOn = layoutSpec.gOn;
+    const utilOn = layoutSpec.utilOn;
+    const boxOn = layoutSpec.boxOn;
+    const slidOn = layoutSpec.slidOn;
+    const volOn = layoutSpec.volOn;
+    const mvolOn = layoutSpec.mvolOn;
+    const mixOn = layoutSpec.mixOn;
+    const briOn = layoutSpec.briOn;
+    const buttonRows = layoutSpec.buttonRows;
+    const sliderRows = layoutSpec.sliderRows;
+    _panelButtonRows = buttonRows;
+    _panelSliderRows = sliderRows;
+
+    const hw = !!(data.hardware_connected !== undefined ? data.hardware_connected
+      : (panelDraft && panelDraft.hardware_connected));
     const board = panelNav.length
       ? (panelNav[panelNav.length - 1].children || [])
       : (cfg.panel_board || []);
@@ -4418,7 +6775,30 @@
       pendingNotifSlide = true;
     }
     lastNotifKey = curNotifKey;
-    let html = '<div class="pv-screen">';
+
+    let statusBarHtml = "";
+    if (IS_APP || (window.location.search && window.location.search.includes("view=panel"))) {
+      const featAlarms = (typeof featureConfig !== "undefined" && featureConfig && featureConfig.alarms) || [];
+      const alarms = (cfg.alarms || []).concat(featAlarms);
+      const activeAlarm = alarms.some((a) => a.enabled !== false);
+      const isPinned = window._desktopPanelPinned || false;
+      const portName = data.port || "";
+
+      statusBarHtml = '<div class="pv-status-bar">' +
+        '<div class="pv-sb-left">' +
+          `<span class="pv-sb-dot ${hw ? 'online' : 'offline'}"></span>` +
+          (hw && portName ? `<span class="pv-sb-port">${esc(portName)}</span>` : '') +
+        '</div>' +
+        '<div class="pv-sb-right">' +
+          `<span class="pv-sb-alarm ${activeAlarm ? 'active' : ''}"><span class="material-icons-outlined">alarm</span></span>` +
+          `<button type="button" class="pv-sb-pin ${isPinned ? 'pinned' : ''}" id="pv-sb-pin" title="${isPinned ? 'Unpin window' : 'Pin on top'}">` +
+            `<span class="material-icons-outlined">push_pin</span>` +
+          '</button>' +
+        '</div>' +
+      '</div>';
+    }
+
+    let html = '<div class="pv-screen">' + statusBarHtml;
     const gaugesHtml = gOn
       ? '<div class="pv-gauges">' +
         panelGauge("CPU", gauges.cpu_temp, gauges.cpu_temp_max || 100, gauges.cpu_temp_unit || "") +
@@ -4426,48 +6806,48 @@
         panelGauge("FPS", gauges.fps, gauges.fps_max || gauges.refresh_rate || 60) +
         '</div>'
       : "";
-    let frameHtml = '<div class="pv-frame">';
-    // Notification drawer overlays the BUTTON widget: it sits at the top of the
-    // frame (which is the top of the button box) and fills the whole 12-icon
-    // box (height --pv-box-h), sliding down from the direction of the gauges.
-    // It never covers the gauges themselves.
-    frameHtml += '<div class="pv-notif" id="pv-notif">' + notifHtml(notif) + '</div>';
+    let frameHtml = "";
     if (boxOn) {
-      // Button box = horizontal track of page grids. Landscape is the portrait
-      // page rotated -90deg, so the DOM is identical; the notif drawer sits at
-      // the top of the frame and slides down over this box.
-      frameHtml += '<div class="pv-box">' +
-        '<div class="pv-track">' +
-          boardPagesHtml(board) +
+      frameHtml = '<div class="pv-frame">' +
+        '<div class="pv-box">' +
+          '<div class="pv-track">' +
+            boardPagesHtml(board, buttonRows, notif) +
+          '</div>' +
         '</div>' +
       '</div>';
     }
-    frameHtml += '<div class="pv-side">';
-    if (slidOn) {
-      frameHtml += '<div class="pv-sliders">' +
+
+    let sideHtml = "";
+    if (slidOn && (volOn || mvolOn || mixOn || briOn)) {
+      sideHtml = '<div class="pv-side"><div class="pv-sliders">' +
         (volOn ? panelSliderHtml("app_volume", "App Volume", volume.volume, 0, 100) : "") +
         (mvolOn ? panelSliderHtml("master_volume", "Master Volume", data.master_volume, 0, 100) : "") +
         (mixOn ? appMixerHtml(data.app_volumes || []) : "") +
         (briOn ? panelSliderHtml("brightness", "Brightness", data.brightness, 0, 4) : "") +
-      '</div>';
+      '</div></div>';
     }
-    frameHtml += '</div>';
-    frameHtml += '</div>';
 
     // Portrait structure for BOTH orientations (landscape is this page rotated):
-    // gauges + frame inside .pv-scroll; util/core pinned below. The notif drawer
-    // is inside the frame (over the button widget), not here.
-    html += '<div class="pv-scroll">';
-    html += gaugesHtml;
-    html += frameHtml;
-    html += '</div>';
+    // gauges pinned permanently; frame + side inside .pv-scroll; util/core pinned below.
+    if (gaugesHtml) {
+      html += gaugesHtml;
+    }
+    if (frameHtml || sideHtml) {
+      html += '<div class="pv-scroll">';
+      if (frameHtml) html += frameHtml;
+      if (sideHtml) html += sideHtml;
+      html += '</div>';
+    }
     if (utilOn) {
       html += '<div class="pv-util"><div class="pdev-grid">' + utilTilesHtml(util) + '</div></div>';
     }
-    html += '<div class="pv-core"><div class="pdev-grid">' + coreTilesHtml(data) + '</div></div>';
+    if (isDesktop ? utilOn : true) {
+      html += '<div class="pv-core"><div class="pdev-grid">' + coreTilesHtml(data) + '</div></div>';
+    }
     html += '</div>';
 
     rememberBoxScroll();
+    _lastBtnStatesSig = "";
     ov.innerHTML = html;
     applyMdiIcons(ov);
     const need = ["microphone-off"];
@@ -4502,32 +6882,62 @@
         triggerNotificationSlide();
       }
     });
+    // Cold start PWA multi-pass stabilization (catches delayed orientation/safe-area settling)
+    setTimeout(() => { updateViewportMode(); layoutPanelBox(ov); restoreBoxScroll(); }, 60);
+    setTimeout(() => { updateViewportMode(); layoutPanelBox(ov); restoreBoxScroll(); }, 200);
     panelViewSig = panelViewSignature();
+  }
+
+  let _lastAutoFitH = 0;
+  function autoFitCompanionWindow() {
+    if (!panelViewMode || !window.pywebview || !window.pywebview.api || !window.pywebview.api.resize_to_content) return;
+    if (!document.documentElement.classList.contains("is-desktop-companion")) return;
+
+    const screenEl = document.querySelector(".is-desktop-companion .pv-screen");
+    if (!screenEl) return;
+
+    const contentH = Math.ceil(Math.max(screenEl.scrollHeight, screenEl.offsetHeight));
+    // Measure OS window non-client frame difference (outer vs inner viewport)
+    const frameDelta = (window.outerHeight && window.innerHeight && window.outerHeight > window.innerHeight)
+      ? (window.outerHeight - window.innerHeight)
+      : 24;
+
+    const targetH = contentH + Math.max(24, frameDelta) + 8;
+    if (Math.abs(targetH - _lastAutoFitH) >= 4) {
+      _lastAutoFitH = targetH;
+      window.pywebview.api.resize_to_content(targetH);
+    }
   }
 
   function layoutPanelBox(ov) {
     const root = ov || document.getElementById("panel-view");
     if (!root) return;
     const box = root.querySelector(".pv-box");
-    if (!box) return;
+    if (!box) {
+      requestAnimationFrame(autoFitCompanionWindow);
+      return;
+    }
     // Portrait is the ONLY sizing reference; landscape is the same page rotated
     // 90°, so this one path serves both orientations. After rotation the box
     // measures the phone's short edge and the tile matches portrait exactly.
     const isLand = document.documentElement.classList.contains("is-landscape");
     const cols = 4;
-    const rows = 3;
+    const rows = _panelButtonRows || 4;
+    const sliderRows = _panelSliderRows !== undefined ? _panelSliderRows : 2;
     const gap = 8;
     const trackGap = 8;
     box.style.width = "";
     box.style.height = "";
+    const axis = isLand ? (window.innerHeight || 393) : (window.innerWidth || 393);
+    const expectedW = Math.max(220, Math.min(Math.round(axis), 393) - 32);
     let pageW = Math.round(box.clientWidth);
-    if (!pageW || pageW < 80) {
-      const axis = isLand ? (window.innerHeight || 393) : (window.innerWidth || 393);
-      pageW = Math.min(Math.round(axis), 393) - 32;
+    if (!pageW || pageW < 80 || Math.abs(pageW - expectedW) > 30) {
+      pageW = expectedW;
     }
     const tile = Math.max(36, Math.floor((pageW - (cols - 1) * gap) / cols));
     const page = tile * cols + gap * (cols - 1);
     const boxH = tile * rows + gap * (rows - 1);
+    const sliderBoxH = sliderRows > 0 ? (tile * sliderRows + gap * (sliderRows - 1)) : 0;
     box.style.setProperty("--pv-cols", String(cols));
     box.style.setProperty("--pv-rows", String(rows));
     box.style.setProperty("--pv-gap", gap + "px");
@@ -4537,12 +6947,17 @@
     box.style.setProperty("--pv-box-h", boxH + "px");
     root.style.setProperty("--pv-tile", tile + "px");
     root.style.setProperty("--pv-gap", gap + "px");
+    root.style.setProperty("--pv-grid-w", page + "px");
+    root.style.setProperty("--pv-slider-box-h", sliderBoxH + "px");
+    root.style.setProperty("--pv-slider-item-h", tile + "px");
+    document.documentElement.style.setProperty("--pv-grid-w", page + "px");
     // Expose the button-box height to the whole overlay so the notification
     // toast (.pv-notif, a sibling of .pv-box in the frame) can fill it.
     root.style.setProperty("--pv-box-h", boxH + "px");
     if (isLand) {
       box.style.height = boxH + "px";
     }
+    requestAnimationFrame(autoFitCompanionWindow);
   }
 
   window.addEventListener("resize", () => {
@@ -4583,9 +6998,9 @@
       '<div class="pdev-gring" data-gauge="' + esc(label) + '" style="--val:' + pct.toFixed(1) + '%;">' +
         '<svg class="pdev-gsvg" viewBox="0 0 60 60">' +
           '<defs>' +
-            '<linearGradient id="pdev-ggrad" x1="0%" y1="100%" x2="100%" y2="0%">' +
-              '<stop offset="0%" stop-color="var(--theme-color-1, #B23AF6)" />' +
-              '<stop offset="100%" stop-color="var(--theme-color-2, #79E8FC)" />' +
+            '<linearGradient id="pdev-ggrad" class="pdev-ggrad" x1="0%" y1="0%" x2="100%" y2="100%">' +
+              '<stop offset="0%" stop-color="var(--theme-color-1, #48B2E9)" />' +
+              '<stop offset="100%" stop-color="var(--theme-color-2, #B23AF6)" />' +
             '</linearGradient>' +
           '</defs>' +
           '<circle class="pdev-gtrack" cx="30" cy="30" r="26" fill="none" />' +
@@ -4599,27 +7014,34 @@
     '</div>';
   }
 
-  function boardPagesHtml(board) {
+  function boardPagesHtml(board, rows, notif, isPreview) {
     let h = "";
     const list = board || [];
-    const PAGE = 12;
+    const btnRows = rows || _panelButtonRows || 4;
+    const PAGE = btnRows * 4;
     const totalTiles = list.length;
     const numPages = Math.max(1, Math.ceil(totalTiles / PAGE));
-    // Landscape = portrait DOM rotated -90deg (rotate(-90) maps portrait RIGHT
-    // to screen-UP, portrait TOP to screen-LEFT), so a 4x3 grid's natural
-    // row-major order reads jumbled on screen (4,8,12 / 3,7,11 / ...).
-    // Reorder each page's slots so the on-screen reading is 1..12 row-major:
-    // DOM position p holds slot perm[p] = (3 - (p % 4)) * 3 + floor(p / 4),
-    // i.e. the DOM grid becomes  10 7 4 1 / 11 8 5 2 / 12 9 6 3  (portrait
-    // space), which the -90deg rotation displays as 123/456/789/101112.
     const isLand = document.documentElement.classList.contains("is-landscape");
+    const isDesktop = document.documentElement.classList.contains("is-desktop-companion");
 
+    // Page 0: Notification Card (swipe right in portrait / swipe down in landscape to reveal)
+    // Only on mobile / remote phone portals; omitted on desktop companion and in the panel-editor preview
+    if (!isDesktop && !isPreview) {
+      h += '<div class="pdev-grid pv-notif-page" data-page="0">' +
+        '<div class="pv-notif-card" id="pv-notif">' +
+          notifHtml(notif) +
+        '</div>' +
+      '</div>';
+    }
+
+    // Page 1..N: Button Pages
     for (let pg = 0; pg < numPages; pg++) {
-      h += '<div class="pdev-grid" data-page="' + pg + '">';
+      const pageNum = pg + 1;
+      h += '<div class="pdev-grid" data-page="' + pageNum + '">';
       const startIdx = pg * PAGE;
 
       for (let p = 0; p < PAGE; p++) {
-        const slotOffset = isLand ? (3 - (p % 4)) * 3 + Math.floor(p / 4) : p;
+        const slotOffset = isLand ? ((3 - (p % 4)) * btnRows + Math.floor(p / 4)) : p;
         const i = startIdx + slotOffset;
         if (pg === 0 && panelNav.length && p === 0) {
           h += '<button type="button" class="pdev-tile pdev-back" data-nav="back" title="Back">' +
@@ -4674,7 +7096,7 @@
 
     let appPath = s.app_icon_path || (s.type === "SHORTCUT" ? s.shortcut_path : "") || "";
     if (!appPath && (s.entity === "media.player" || s.entity === "media.eject" || s.type === "MEDIA_EJECT")) {
-      appPath = (panelLive && panelLive.config && panelLive.config.media_player_path) || (panelDraft && panelDraft.media_player_path) || (config && config.media_player_path) || "";
+      appPath = (panelLive && panelLive.config && panelLive.config.media_player_path) || (panelDraft && panelDraft.media_player_path) || "";
     }
     if (!appPath && s.icon && (s.icon.includes(".exe") || s.icon.includes("/") || s.icon.includes("\\"))) {
       appPath = s.icon;
@@ -4697,9 +7119,11 @@
     let albumArtPlate = "";
     let extraTileClass = "";
     let extraTileStyle = "";
+    let statusRing = "";
+    let warnFlashOverlay = "";
 
     const entKey = s.entity || (s.plugin && s.button_id ? (s.plugin + "." + s.button_id) : "");
-    const bState = (panelLive && (
+    let bState = (panelLive && (
       (panelLive.entity_states && panelLive.entity_states[entKey]) ||
       (panelLive.plugin_button_states && (panelLive.plugin_button_states[entKey] || panelLive.plugin_button_states[(s.plugin || "") + ":" + (s.button_id || "")]))
     )) || {};
@@ -4720,6 +7144,19 @@
       if (!tileTitle || tileTitle === "Player" || tileTitle === "Media Player") {
         tileTitle = getMediaPlayerAppName(appPath);
       }
+    } else if (s.type === "AUDIO OUTPUT") {
+      const curDev = ((panelLive && panelLive.default_audio_output) || "").trim().toLowerCase();
+      const altId = (s.audio_input_device_id_alt || "").trim().toLowerCase();
+      const isAlt = !!(altId && curDev && (curDev === altId || curDev.includes(altId) || altId.includes(curDev)));
+      icon = isAlt ? (s.audio_alt_icon || "headphones") : (s.audio_primary_icon || "speaker");
+      const curDevName = isAlt ? (s.audio_input_device_name_alt || "Headphones") : (s.audio_input_device_name || "Speakers");
+      if (!tileTitle || tileTitle === "Audio") {
+        tileTitle = curDevName;
+      }
+      bState = {
+        active: isAlt,
+        label: isAlt ? ((s.labels && s.labels.on) || s.audio_input_device_name_alt || "ALT") : ((s.labels && s.labels.off) || s.audio_input_device_name || "PRIMARY")
+      };
     }
 
     if (showAlbumArt && mediaState.has_art) {
@@ -4728,9 +7165,11 @@
       extraTileClass += " has-album-art" + (isMediaPlaying ? " is-playing" : (isMediaPaused ? " is-paused" : ""));
     }
 
+    const isElite = (s.plugin === "elite_dangerous");
     const hasLiveState = (bState.active !== undefined || bState.label !== undefined || bState.value !== undefined);
     const isOn = !!bState.active;
-    if (isOn) extraTileClass += " pdev-active has-halo";
+    if (isOn && !isElite) extraTileClass += " pdev-active has-halo";
+    if (isElite) extraTileClass += " pdev-no-halo";
 
     const labels = s.labels || {};
     const colors = s.colors || {};
@@ -4738,8 +7177,12 @@
     const inactiveColor = colors.off || "var(--fg-dim)";
     const badgeColor = isOn ? activeColor : inactiveColor;
 
-    if (isOn && !colorPlate && !albumArtPlate) {
+    if (isOn && !colorPlate && !albumArtPlate && !isElite) {
       extraTileStyle = ' style="border-color:' + esc(activeColor) + '; box-shadow:0 0 10px ' + esc(activeColor) + '44;"';
+    } else if ((colorPlate || albumArtPlate) && !isElite) {
+      if (isOn) {
+        statusRing = '<span class="pdev-status-ring" style="--ring-color:' + esc(activeColor) + ';"></span>';
+      }
     }
 
     if (isGroup) {
@@ -4758,8 +7201,9 @@
     if (warn && warn.color) {
       extraTileClass += " pdev-warning";
       const warnText = isLightColor(warn.color) ? "#0a0a0a" : "#ffffff";
-      extraTileStyle = ' style="--warn-color:' + esc(warn.color) + '; border-color:' + esc(warn.color) + '; background:' + esc(warn.color) + '; color:' + warnText + ';"';
+      extraTileStyle = ' style="--warn-color:' + esc(warn.color) + '; color:' + warnText + ';"';
       glyphStyle = ' style="color:' + warnText + ';"';
+      warnFlashOverlay = '<span class="pdev-warn-flash"></span>';
       if (warn.message) {
         topBar = '<span class="pdev-group-bar pdev-status-bar" style="color:' + warnText + ';">' + esc(warn.message) + '</span>';
         extraTileClass += " has-group-bar has-status-bar";
@@ -4774,20 +7218,20 @@
     let glyph = "";
     if (showIcon) {
       if (useAppIcon && (appPath || s.entity === "media.player" || s.entity === "media.eject" || s.type === "MEDIA_EJECT")) {
-        const targetPath = appPath || (panelLive && panelLive.config && panelLive.config.media_player_path) || (panelDraft && panelDraft.media_player_path) || (config && config.media_player_path) || "";
+        const targetPath = appPath || (panelLive && panelLive.config && panelLive.config.media_player_path) || (panelDraft && panelDraft.media_player_path) || "";
         const brandSvg = typeof getMediaPlayerBrandIcon === "function" ? getMediaPlayerBrandIcon(targetPath) : null;
         if (brandSvg) {
           glyph = '<span class="pdev-ibrand pdev-iapp">' + brandSvg + '</span>' +
             '<span class="pdev-iapp-overlay"></span>';
         } else if (targetPath) {
           glyph = '<img class="pdev-iapp" src="' + API_BASE + '/api/panel/icon?path=' + encodeURIComponent(targetPath) + tokQs +
-            '" alt="" data-fallback="' + esc(icon) + '">' +
+            '" alt="" data-fallback="' + esc(icon || "apps") + '">' +
             '<span class="pdev-iapp-overlay"></span>';
         } else {
-          glyph = '<span class="md" data-md="' + esc(icon) + '"' + glyphStyle + '>' + esc(mdiChar(icon)) + '</span>';
+          glyph = '<span class="md" data-md="' + esc(icon || "apps") + '"' + glyphStyle + '>' + esc(mdiChar(icon || "apps")) + '</span>';
         }
       } else {
-        glyph = '<span class="md" data-md="' + esc(icon) + '"' + glyphStyle + '>' + esc(mdiChar(icon)) + '</span>';
+        glyph = '<span class="md" data-md="' + esc(icon || "apps") + '"' + glyphStyle + '>' + esc(mdiChar(icon || "apps")) + '</span>';
       }
     } else {
       glyph = '<span class="pdev-text-only"' + glyphStyle + '>' + esc(formatTileTitle(s.name || s.type || "")) + '</span>';
@@ -4795,11 +7239,12 @@
 
     return '<button type="button" class="pdev-tile' + (isGroup ? " pdev-group" : "") + extraTileClass + '"' +
       extraTileStyle +
-      ' draggable="true"' +
       ' data-action="slot" data-list="' + listName + '" data-idx="' + idx + '"' +
       ' title="' + esc(s.name || "") + '">' +
       colorPlate +
       albumArtPlate +
+      warnFlashOverlay +
+      statusRing +
       topBar +
       glyph +
       nameBar +
@@ -4826,7 +7271,9 @@
       const name = a.name || "Application";
       const v = (a.volume === null || a.volume === undefined) ? 0 : a.volume;
       h += '<div class="pdev-slider" data-slider="sess_' + pid + '">' +
-        '<div class="pdev-slab"><span class="pdev-sname">' + esc(name) + '</span></div>' +
+        '<div class="pdev-slab">' +
+          '<span class="pdev-sname">' + esc(name) + '</span>' +
+        '</div>' +
         '<input type="range" class="pdev-range" data-slider="sess_' + pid + '"' +
         ' data-pid="' + pid + '" min="0" max="100" step="1" value="' + v + '"></div>';
     });
@@ -4847,7 +7294,10 @@
   }
 
   function currentBoard() {
-    return panelProfileCurrent().board;
+    const prof = panelProfileCurrent();
+    if (prof && prof.board && prof.board.length) return prof.board;
+    const cfg = panelViewConfig();
+    return (cfg && cfg.panel_board) || [];
   }
 
 
@@ -4924,8 +7374,19 @@
       return;
     }
     // SCREENSHOT — POST action to trigger Tk capture, then poll for the image
-    if (slot.type === "SCREENSHOT") {
+    if (slot.type === "SCREENSHOT" || slot.entity === "system.screenshot") {
       doScreenshotRequest(slot);
+      return;
+    }
+    if (slot.type === "AUDIO OUTPUT") {
+      apiFetch(`${API_BASE}/api/panel/action`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slot: slot }),
+      }).then(() => {
+        setTimeout(fetchPanelLive, 50);
+        setTimeout(fetchPanelLive, 250);
+      }).catch(() => {});
       return;
     }
     apiFetch(`${API_BASE}/api/panel/action`, {
@@ -4937,6 +7398,14 @@
 
   function coreAction(core, tile) {
     if (core === "settings") {
+      if (isDesktopEnvironment()) {
+        apiFetch(`${API_BASE}/api/panel/core`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tile: "settings" }),
+        }).catch(() => {});
+        return;
+      }
       exitPanelView();
       currentPage = "settings";
       renderPage();
@@ -4984,6 +7453,27 @@
   }, { passive: true });
 
   function wirePanelView() {
+    // Status bar pin toggle for desktop companion window
+    const pinBtn = document.getElementById("pv-sb-pin");
+    if (pinBtn) {
+      pinBtn.onclick = (e) => {
+        e.stopPropagation();
+        window._desktopPanelPinned = !window._desktopPanelPinned;
+        pinBtn.classList.toggle("pinned", window._desktopPanelPinned);
+        pinBtn.title = window._desktopPanelPinned ? "Unpin window" : "Pin on top";
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.set_pinned) {
+          window.pywebview.api.set_pinned(window._desktopPanelPinned);
+        }
+      };
+      if (window.pywebview && window.pywebview.api && window.pywebview.api.is_pinned && window._desktopPanelPinned === undefined) {
+        window.pywebview.api.is_pinned().then((p) => {
+          window._desktopPanelPinned = !!p;
+          pinBtn.classList.toggle("pinned", window._desktopPanelPinned);
+          pinBtn.title = window._desktopPanelPinned ? "Unpin window" : "Pin on top";
+        }).catch(() => {});
+      }
+    }
+
     // App-icon tiles: if the exe icon can't be extracted, fall back to MDI.
     document.querySelectorAll("img.pdev-iapp").forEach((im) => {
       im.addEventListener("error", () => {
@@ -5037,7 +7527,65 @@
       }
     });
 
-    document.querySelectorAll("input[type=range].pdev-range").forEach((rng) => {
+    wireSliderInputs(document);
+  }
+
+  function wireSliderInputs(container) {
+    const root = container || document;
+    root.querySelectorAll("input[type=range].pdev-range").forEach((rng) => {
+      if (rng._wired) return;
+      rng._wired = true;
+
+      function updateFromPointer(e) {
+        const rect = rng.getBoundingClientRect();
+        const min = parseFloat(rng.min) || 0;
+        const max = parseFloat(rng.max) || 100;
+        const isLand = document.documentElement.classList.contains("is-landscape");
+
+        let pct = 0;
+        if (isLand) {
+          // In landscape (-90deg rotated DOM):
+          // Slider track runs along physical Screen-Y (rect.bottom = 0%, rect.top = 100%)
+          const clampedY = Math.max(0, Math.min(rect.height, rect.bottom - e.clientY));
+          pct = rect.height > 0 ? (clampedY / rect.height) : 0;
+        } else {
+          // In portrait:
+          // Slider track runs along physical Screen-X (rect.left = 0%, rect.right = 100%)
+          const clampedX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+          pct = rect.width > 0 ? (clampedX / rect.width) : 0;
+        }
+
+        const newVal = Math.round(min + pct * (max - min));
+        if (parseFloat(rng.value) !== newVal) {
+          rng.value = newVal;
+          paintPanelRanges(rng);
+          rng.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+      }
+
+      let isDragging = false;
+
+      rng.addEventListener("pointerdown", (e) => {
+        isDragging = true;
+        try { rng.setPointerCapture(e.pointerId); } catch (_) {}
+        updateFromPointer(e);
+      });
+
+      rng.addEventListener("pointermove", (e) => {
+        if (!isDragging) return;
+        updateFromPointer(e);
+      });
+
+      function stopDrag(e) {
+        if (isDragging) {
+          isDragging = false;
+          try { rng.releasePointerCapture(e.pointerId); } catch (_) {}
+        }
+      }
+
+      rng.addEventListener("pointerup", stopDrag);
+      rng.addEventListener("pointercancel", stopDrag);
+
       rng.addEventListener("input", () => {
         const id = rng.getAttribute("data-slider");
         const val = parseInt(rng.value, 10);
@@ -5064,19 +7612,91 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
           }).catch(() => {});
-        }, 200);
+        }, 150);
       });
     });
   }
+
+  let lastAppMixerSig = "__init__";
+  let _lastBtnStatesSig = "";
+  let _lastForegroundApp = null;
 
   function updatePanelView() {
     const data = panelLive || {};
     const gauges = data.gauges || {};
     const volume = data.volume || {};
 
+    // Auto-switch / scroll to focused profile's button box
+    const fg = (data.foreground_app || "").toLowerCase().trim().replace(".exe", "");
+    if (fg !== _lastForegroundApp) {
+      const prevFg = _lastForegroundApp;
+      _lastForegroundApp = fg;
+
+      if (panelViewMode && !panelEdit) {
+        const cfgP = panelViewConfig();
+        const profiles = (cfgP.panel_profiles || []).filter((p) => p && p.enabled !== false);
+        const activeIds = data.active_profiles || [];
+
+        let targetPage = 1;
+        let matchedProf = null;
+
+        if (fg) {
+          matchedProf = profiles.find((p) => {
+            if (p.auto_switch === false) return false;
+            const pexe = String(p.exe || "").toLowerCase().trim().replace(".exe", "");
+            return pexe && (pexe === fg || fg.indexOf(pexe) !== -1 || pexe.indexOf(fg) !== -1);
+          });
+        }
+
+        if (matchedProf) {
+          const profIdx = activeIds.indexOf(matchedProf.id);
+          if (profIdx !== -1) {
+            targetPage = 1 + profIdx + 1;
+            panelNav = [];
+          }
+        } else if (prevFg && !matchedProf) {
+          targetPage = 1;
+          panelNav = [];
+        }
+
+        if (targetPage) {
+          restoreBoxScroll(targetPage);
+        }
+      }
+    }
+
     updateGauge("CPU", gauges.cpu_temp, gauges.cpu_temp_max || 100, gauges.cpu_temp_unit || "°C");
     updateGauge("GPU", gauges.gpu_temp, gauges.gpu_temp_max || 100, gauges.gpu_temp_unit || "°C");
     updateGauge("FPS", gauges.fps, gauges.fps_max || gauges.refresh_rate || 60, "");
+
+    const isDesktop = document.documentElement.classList.contains("is-desktop-companion");
+    const target = isDesktop ? "desktop" : "remote";
+    const cfgP = panelViewConfig();
+    const sliders = {};
+    (cfgP.panel_sliders || []).forEach((r) => { if (r && r.id) sliders[r.id] = r.enabled !== false; });
+    const layout = {};
+    (cfgP.panel_layout || []).forEach((r) => { if (r && r.id) layout[r.id] = isComponentEnabled(r, target); });
+
+    const slidOn = layout.sliders !== false;
+    const volOn = sliders.app_volume !== false;
+    const mvolOn = sliders.master_volume !== false;
+    const mixOn = sliders.app_mixer !== false;
+    const briOn = sliders.brightness !== false;
+
+    const apps = data.app_volumes || [];
+    const mixSig = apps.map((a) => `${a.pid}:${a.name}`).join(",");
+    const slidersWrap = document.querySelector(".pv-sliders");
+    if (slidersWrap && slidOn && mixOn && mixSig !== lastAppMixerSig) {
+      lastAppMixerSig = mixSig;
+      const volHtml = (volOn ? panelSliderHtml("app_volume", "App Volume", volume.volume, 0, 100) : "");
+      const mvolHtml = (mvolOn ? panelSliderHtml("master_volume", "Master Volume", data.master_volume, 0, 100) : "");
+      const appHtml = appMixerHtml(apps);
+      const briHtml = (briOn ? panelSliderHtml("brightness", "Brightness", data.brightness, 0, 4) : "");
+      slidersWrap.innerHTML = volHtml + mvolHtml + appHtml + briHtml;
+      paintPanelRanges(slidersWrap);
+      wireSliderInputs(slidersWrap);
+      requestAnimationFrame(autoFitCompanionWindow);
+    }
 
     const volEl = document.querySelector(".pdev-slider[data-slider='app_volume']");
     if (volEl) {
@@ -5098,7 +7718,6 @@
       }
     }
 
-    const apps = data.app_volumes || [];
     document.querySelectorAll(".pdev-slider[data-slider^='sess_']").forEach((el) => {
       const rng = el.querySelector("input");
       if (!rng || document.activeElement === rng) return;
@@ -5143,14 +7762,19 @@
     const notifEl = document.getElementById("pv-notif");
     if (notifEl && !notifDismissTimer) {
       const notif = data.notification || null;
-      notifEl.innerHTML = notifHtml(notif);
-      notifEl.classList.remove("notif-theme-green", "notif-theme-red", "notif-flash-green", "notif-flash-red");
+      const newHtml = notifHtml(notif);
+      if (notifEl.innerHTML !== newHtml) {
+        notifEl.innerHTML = newHtml;
+        notifEl.classList.remove("notif-theme-green", "notif-theme-red", "notif-flash-green", "notif-flash-red");
+      }
     }
 
     const curNotifKey = notifKey();
     if (curNotifKey && curNotifKey !== lastNotifKey) {
       lastNotifKey = curNotifKey;
-      pendingNotifSlide = true;
+      pendingNotifSlide = false;
+      triggerNotificationSlide();
+      if (typeof screensaverWakeOnEvent === "function") screensaverWakeOnEvent();
     }
 
     const mediaState = (data.entity_states && data.entity_states["media.player"]) || {};
@@ -5158,108 +7782,213 @@
     const isMediaPaused = !!(mediaState && (mediaState.status === "paused" || mediaState.playback_status === "paused"));
 
     const btnStates = (data.entity_states) || (data.plugin_button_states) || {};
-    document.querySelectorAll(".pdev-tile").forEach((tile) => {
-      const idx = parseInt(tile.getAttribute("data-idx"), 10);
-      const list = tile.getAttribute("data-list");
-      if (isNaN(idx) || !list) return;
-      const board = (list === "util") ? ((panelDraft && panelDraft.panel_utility) || []) : currentBoard();
-      const s = board[idx];
-      if (s) {
-        const entKey = s.entity || (s.plugin && s.button_id ? (s.plugin + "." + s.button_id) : "");
-        const bState = btnStates[entKey] || btnStates[(s.plugin || "") + ":" + (s.button_id || "")] || {};
-        const isOn = !!bState.active;
-
-        tile.classList.toggle("pdev-active", isOn);
-        tile.classList.toggle("has-halo", isOn);
-
-        const colors = s.colors || {};
-        const activeColor = colors.on || "var(--neon-grn)";
-        const inactiveColor = colors.off || "var(--fg-dim)";
-        const badgeColor = isOn ? activeColor : inactiveColor;
-
-        if (isOn && !s.color) {
-          tile.style.borderColor = activeColor;
-          tile.style.boxShadow = "0 0 10px " + activeColor + "44";
-        } else if (!s.color) {
-          tile.style.borderColor = "";
-          tile.style.boxShadow = "";
-        }
-
-        // Update status bar
-        const statusBar = tile.querySelector(".pdev-status-bar");
-        if (statusBar) {
-          const labels = s.labels || {};
-          const lblText = bState.label || (isOn ? (labels.on || "ON") : (labels.off || "OFF"));
-          if (lblText) {
-            statusBar.textContent = lblText;
-            statusBar.style.color = badgeColor;
-          }
-        }
-
-        // Update Play/Pause dynamic icon & name text
-        if (s.entity === "media.play_pause") {
-          const ppIcon = isMediaPlaying ? "pause" : "play";
-          const ppTitle = isMediaPlaying ? "PAUSE" : "PLAY";
-          const iconEl = tile.querySelector(".md");
-          if (iconEl && iconEl.getAttribute("data-md") !== ppIcon) {
-            iconEl.setAttribute("data-md", ppIcon);
-            iconEl.textContent = mdiChar(ppIcon);
-            mdiPreload([ppIcon]);
-            applyMdiIcons(tile);
-          }
-          const nameBarEl = tile.querySelector(".pdev-name-bar");
-          if (nameBarEl) {
-            nameBarEl.textContent = formatTileTitle(ppTitle);
-          }
-          const textOnlyEl = tile.querySelector(".pdev-text-only");
-          if (textOnlyEl) {
-            textOnlyEl.textContent = formatTileTitle(ppTitle);
-          }
-        }
-
-        // Update Media Player dynamic app name
-        if (s.entity === "media.player" || s.entity === "media.eject" || s.type === "MEDIA_EJECT") {
-          const mAppPath = s.app_icon_path || (panelLive && panelLive.config && panelLive.config.media_player_path) || (panelDraft && panelDraft.media_player_path) || (config && config.media_player_path) || "";
-          const playerName = (!s.name || s.name === "Player" || s.name === "Media Player") ? getMediaPlayerAppName(mAppPath) : s.name;
-          const nameBarEl = tile.querySelector(".pdev-name-bar");
-          if (nameBarEl) {
-            nameBarEl.textContent = formatTileTitle(playerName);
-          }
-          const textOnlyEl = tile.querySelector(".pdev-text-only");
-          if (textOnlyEl) {
-            textOnlyEl.textContent = formatTileTitle(playerName);
-          }
-        }
-
-        // Update live album art
-        const showArt = s.show_album_art !== undefined ? !!s.show_album_art : (s.entity === "media.player" || s.entity === "media.eject" || s.type === "MEDIA_EJECT");
-        let artBg = tile.querySelector(".pdev-album-art-bg");
-        if (showArt && mediaState.has_art && mediaState.art_id) {
-          const tokQs = sessionTokenQuery();
-          const artUrl = API_BASE + '/api/media/art?t=' + encodeURIComponent(mediaState.art_id) + tokQs;
-          if (!artBg) {
-            artBg = document.createElement("span");
-            artBg.className = "pdev-album-art-bg";
-            tile.insertBefore(artBg, tile.firstChild);
-          }
-          if (artBg.getAttribute("data-art-id") !== String(mediaState.art_id)) {
-            artBg.setAttribute("data-art-id", String(mediaState.art_id));
-            artBg.style.backgroundImage = "url('" + artUrl + "')";
-          }
-          tile.classList.add("has-album-art");
-          tile.classList.toggle("is-playing", isMediaPlaying);
-          tile.classList.toggle("is-paused", isMediaPaused);
-        } else {
-          if (artBg) artBg.remove();
-          tile.classList.remove("has-album-art", "is-playing", "is-paused");
-        }
+    const btnStatesSig = JSON.stringify(btnStates) + '|' + (isMediaPlaying ? '1' : '0') + '|' + (isMediaPaused ? '1' : '0') + '|' + (mediaState.art_id || '') + '|' + (data.default_audio_output || '');
+    if (btnStatesSig !== _lastBtnStatesSig) {
+      if (_lastBtnStatesSig !== null && typeof screensaverWakeOnEvent === "function") {
+        screensaverWakeOnEvent();
       }
-    });
+      _lastBtnStatesSig = btnStatesSig;
+      document.querySelectorAll(".pdev-tile").forEach((tile) => {
+        const idx = parseInt(tile.getAttribute("data-idx"), 10);
+        const list = tile.getAttribute("data-list");
+        if (isNaN(idx) || !list) return;
+        const board = (list === "util") ? ((panelDraft && panelDraft.panel_utility) || []) : currentBoard();
+        const s = board[idx];
+        if (s) {
+          const entKey = s.entity || (s.plugin && s.button_id ? (s.plugin + "." + s.button_id) : "");
+          let bState = btnStates[entKey] || btnStates[(s.plugin || "") + ":" + (s.button_id || "")] || {};
+          let isOn = !!bState.active;
+
+          if (s.type === "AUDIO OUTPUT") {
+            const curDev = ((data.default_audio_output) || "").trim().toLowerCase();
+            const altId = (s.audio_input_device_id_alt || "").trim().toLowerCase();
+            const isAlt = !!(altId && curDev && (curDev === altId || curDev.includes(altId) || altId.includes(curDev)));
+            const audIcon = isAlt ? (s.audio_alt_icon || "headphones") : (s.audio_primary_icon || "speaker");
+            const curDevName = isAlt ? (s.audio_input_device_name_alt || "Headphones") : (s.audio_input_device_name || "Speakers");
+            const audTitle = (!s.name || s.name === "Audio") ? curDevName : s.name;
+            const audLabel = isAlt ? ((s.labels && s.labels.on) || s.audio_input_device_name_alt || "ALT") : ((s.labels && s.labels.off) || s.audio_input_device_name || "PRIMARY");
+
+            isOn = isAlt;
+            bState = { active: isAlt, label: audLabel };
+
+            const iconEl = tile.querySelector(".md");
+            if (iconEl && iconEl.getAttribute("data-md") !== audIcon) {
+              iconEl.setAttribute("data-md", audIcon);
+              iconEl.textContent = mdiChar(audIcon);
+              mdiPreload([audIcon]);
+              applyMdiIcons(tile);
+            }
+            const nameBarEl = tile.querySelector(".pdev-name-bar");
+            if (nameBarEl) {
+              nameBarEl.textContent = formatTileTitle(audTitle);
+            }
+            const textOnlyEl = tile.querySelector(".pdev-text-only");
+            if (textOnlyEl) {
+              textOnlyEl.textContent = formatTileTitle(audTitle);
+            }
+          }
+
+          const isElite = (s.plugin === "elite_dangerous");
+          tile.classList.toggle("pdev-active", isOn && !isElite);
+          tile.classList.toggle("has-halo", isOn && !isElite);
+          tile.classList.toggle("pdev-no-halo", isElite);
+
+          const colors = s.colors || {};
+          const activeColor = colors.on || "var(--neon-grn)";
+          const inactiveColor = colors.off || "var(--fg-dim)";
+          const badgeColor = isOn ? activeColor : inactiveColor;
+
+          if (isOn && !s.color && !isElite) {
+            tile.style.borderColor = activeColor;
+            tile.style.boxShadow = "0 0 10px " + activeColor + "44";
+          } else if (!s.color || isElite) {
+            tile.style.borderColor = "";
+            tile.style.boxShadow = "";
+          }
+
+          const ring = tile.querySelector(".pdev-status-ring");
+          if (ring) {
+            if (isOn && !isElite) {
+              ring.style.setProperty("--ring-color", activeColor);
+              ring.style.display = "";
+            } else {
+              ring.style.display = "none";
+            }
+          }
+
+          // Update status bar
+          const statusBar = tile.querySelector(".pdev-status-bar");
+          if (statusBar) {
+            const labels = s.labels || {};
+            const lblText = bState.label || (isOn ? (labels.on || "ON") : (labels.off || "OFF"));
+            if (lblText) {
+              statusBar.textContent = lblText;
+              statusBar.style.color = badgeColor;
+            }
+          }
+
+          // Update Play/Pause dynamic icon & name text
+          if (s.entity === "media.play_pause") {
+            const ppIcon = isMediaPlaying ? "pause" : "play";
+            const ppTitle = isMediaPlaying ? "PAUSE" : "PLAY";
+            const iconEl = tile.querySelector(".md");
+            if (iconEl && iconEl.getAttribute("data-md") !== ppIcon) {
+              iconEl.setAttribute("data-md", ppIcon);
+              iconEl.textContent = mdiChar(ppIcon);
+              mdiPreload([ppIcon]);
+              applyMdiIcons(tile);
+            }
+            const nameBarEl = tile.querySelector(".pdev-name-bar");
+            if (nameBarEl) {
+              nameBarEl.textContent = formatTileTitle(ppTitle);
+            }
+            const textOnlyEl = tile.querySelector(".pdev-text-only");
+            if (textOnlyEl) {
+              textOnlyEl.textContent = formatTileTitle(ppTitle);
+            }
+          }
+
+          // Update Media Player dynamic app name
+          if (s.entity === "media.player" || s.entity === "media.eject" || s.type === "MEDIA_EJECT") {
+            const mAppPath = s.app_icon_path || (panelLive && panelLive.config && panelLive.config.media_player_path) || (panelDraft && panelDraft.media_player_path) || "";
+            const playerName = (!s.name || s.name === "Player" || s.name === "Media Player") ? getMediaPlayerAppName(mAppPath) : s.name;
+            const nameBarEl = tile.querySelector(".pdev-name-bar");
+            if (nameBarEl) {
+              nameBarEl.textContent = formatTileTitle(playerName);
+            }
+            const textOnlyEl = tile.querySelector(".pdev-text-only");
+            if (textOnlyEl) {
+              textOnlyEl.textContent = formatTileTitle(playerName);
+            }
+          }
+
+          // Update live album art
+          const showArt = s.show_album_art !== undefined ? !!s.show_album_art : (s.entity === "media.player" || s.entity === "media.eject" || s.type === "MEDIA_EJECT");
+          let artBg = tile.querySelector(".pdev-album-art-bg");
+          if (showArt && mediaState.has_art && mediaState.art_id) {
+            const tokQs = sessionTokenQuery();
+            const artUrl = API_BASE + '/api/media/art?t=' + encodeURIComponent(mediaState.art_id) + tokQs;
+            if (!artBg) {
+              artBg = document.createElement("span");
+              artBg.className = "pdev-album-art-bg";
+              tile.insertBefore(artBg, tile.firstChild);
+            }
+            if (artBg.getAttribute("data-art-id") !== String(mediaState.art_id)) {
+              artBg.setAttribute("data-art-id", String(mediaState.art_id));
+              artBg.style.backgroundImage = "url('" + artUrl + "')";
+            }
+            tile.classList.add("has-album-art");
+            tile.classList.toggle("is-playing", isMediaPlaying);
+            tile.classList.toggle("is-paused", isMediaPaused);
+          } else {
+            if (artBg) artBg.remove();
+            tile.classList.remove("has-album-art", "is-playing", "is-paused");
+          }
+        }
+      });
+    }
+
+    // Live status bar updates (COM dot / Port / Clock)
+    const sbDot = document.querySelector(".pv-sb-dot");
+    const sbPort = document.querySelector(".pv-sb-port");
+    const sbAlarm = document.querySelector(".pv-sb-alarm");
+    const hw = !!(data.hardware_connected !== undefined ? data.hardware_connected : (panelDraft && panelDraft.hardware_connected));
+    if (sbDot) {
+      sbDot.classList.toggle("online", hw);
+      sbDot.classList.toggle("offline", !hw);
+    }
+    if (sbPort) {
+      const pName = data.port || "";
+      sbPort.textContent = (hw && pName) ? pName : "";
+      sbPort.style.display = (hw && pName) ? "" : "none";
+    }
+    if (sbAlarm) {
+      const featAlarms = (typeof featureConfig !== "undefined" && featureConfig && featureConfig.alarms) || [];
+      const alarms = (cfg.alarms || []).concat(featAlarms);
+      const activeAlarm = alarms.some((a) => a.enabled !== false);
+      sbAlarm.classList.toggle("active", activeAlarm);
+    }
+    autoFitCompanionWindow();
   }
 
+  // Auto-hide companion window on focus loss when unpinned
+  window.addEventListener("blur", () => {
+    if (panelViewMode && !window._desktopPanelPinned && window.pywebview && window.pywebview.api && window.pywebview.api.hide_on_blur) {
+      setTimeout(() => {
+        if (!document.hasFocus() && !window._desktopPanelPinned) {
+          window.pywebview.api.hide_on_blur();
+        }
+      }, 120);
+    }
+  });
+
+  // Re-evaluate auto-fit and resync config on focus/re-show
+  window.addEventListener("focus", () => {
+    if (panelViewMode && document.documentElement.classList.contains("is-desktop-companion")) {
+      _panelLiveConfigVersion = null;
+      _lastAutoFitH = 0;
+      fetchPanelLive();
+      autoFitCompanionWindow();
+    }
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && panelViewMode) {
+      _panelLiveConfigVersion = null;
+      _lastAutoFitH = 0;
+      fetchPanelLive();
+      autoFitCompanionWindow();
+    }
+  });
+
+  let _lastGaugeVals = {};
   function updateGauge(label, value, max, unit) {
     const v = (value === null || value === undefined) ? 0 : value;
     const m = max || 100;
+    const key = `${label}|${v}|${m}|${unit || ''}`;
+    if (_lastGaugeVals[label] === key) return;
+    _lastGaugeVals[label] = key;
+
     const pct = Math.max(0, Math.min(100, (v / m) * 100));
     const offset = GAUGE_CIRCUMFERENCE - (pct / 100) * GAUGE_CIRCUMFERENCE;
     const ringEls = document.querySelectorAll('.pdev-gring[data-gauge="' + label + '"]');
@@ -5483,18 +8212,26 @@
     }
 
     function updateLiveIcon(name) {
-      const nm = (name || "apps").trim();
+      const nm = (name || "").trim();
       const badge = document.getElementById("pe-icon-live-badge");
       if (!badge) return;
       if (customSelectedIconPath) {
         loadCustomIconPreview(customSelectedIconPath);
-      } else {
+      } else if (nm) {
         if (badge._blobUrl) {
           URL.revokeObjectURL(badge._blobUrl);
           badge._blobUrl = null;
         }
         badge.innerHTML = '<span class="md" id="pe-icon-live" data-md="' + esc(nm) + '">' + esc(mdiChar(nm)) + '</span>';
         mdiPreload([nm]);
+        applyMdiIcons(badge);
+      } else {
+        if (badge._blobUrl) {
+          URL.revokeObjectURL(badge._blobUrl);
+          badge._blobUrl = null;
+        }
+        badge.innerHTML = '<span class="md" id="pe-icon-live" data-md="border-none-variant" style="opacity:0.4;"></span>';
+        mdiPreload(["border-none-variant"]);
         applyMdiIcons(badge);
       }
       if (iconGrid) {
@@ -5509,7 +8246,22 @@
     } else if (iconInput) {
       updateLiveIcon(iconInput.value);
     }
-    syncIconClearBtn();
+    function syncIconClearBtn() {
+      const peClear = document.getElementById("pe-icon-clear-btn");
+      if (peClear && iconInput) {
+        peClear.style.display = (iconInput.value && iconInput.value !== "toggle-switch") ? "" : "";
+      }
+    }
+
+    if (iconClearBtn) {
+      iconClearBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (iconInput) iconInput.value = "toggle-switch";
+        updateLiveIcon("toggle-switch");
+        if (iconPopup) iconPopup.style.display = "none";
+      });
+    }
 
     function getBaseIconList(cat) {
       if (cat && cat !== "all" && CATEGORIZED_MDI_ICONS[cat]) {
@@ -5602,68 +8354,135 @@
       });
     }
 
-    if (iconBrowseBtn) {
-      iconBrowseBtn.addEventListener("click", (e) => {
+    if (iconSearch) {
+      iconSearch.addEventListener("input", () => {
+        clearTimeout(iconSearchTimer);
+        const query = iconSearch.value.trim();
+        filterAndRenderIcons(query, activeIconCategory);
+        iconSearchTimer = setTimeout(() => {
+          searchMdiIcons(query, activeIconCategory);
+        }, 150);
+      });
+      iconSearch.addEventListener("click", (e) => {
+        e.stopPropagation();
+      });
+    }
+
+    const catPills = modal.querySelectorAll(".pe-icon-cat-pill");
+    catPills.forEach((pill) => {
+      pill.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
+        catPills.forEach((p) => p.classList.remove("active"));
+        pill.classList.add("active");
+        activeIconCategory = pill.getAttribute("data-cat") || "all";
+        const query = iconSearch ? iconSearch.value.trim() : "";
+        filterAndRenderIcons(query, activeIconCategory);
+        searchMdiIcons(query, activeIconCategory);
+      });
+    });
+
+    // Icon Mode Tabs wiring (Auto, MDI, Custom File)
+    const modeTabs = modal.querySelectorAll(".pe-icon-mode-tab");
+    const paneAuto = document.getElementById("pe-pane-auto");
+    const paneMdi = document.getElementById("pe-pane-mdi");
+    const paneCustom = document.getElementById("pe-pane-custom");
+    const customIconPathInput = document.getElementById("pe-custom-icon-path");
+    const customLiveBadge = document.getElementById("pe-custom-live-badge");
+    const customBrowseBtn = document.getElementById("pe-custom-browse-btn");
+    const customClearBtn = document.getElementById("pe-custom-clear-btn");
+
+    let currentIconMode = "auto";
+    if (modalSlot && modalSlot.use_app_icon === false) {
+      if (customSelectedIconPath && customSelectedIconPath !== modalSlot.shortcut_path) {
+        currentIconMode = "custom";
+      } else {
+        currentIconMode = "mdi";
+      }
+    } else if (modalSlot && modalSlot.type && modalSlot.type !== "SHORTCUT" && modalSlot.type !== "MEDIA_EJECT" && !(modalSlot.entity && modalSlot.entity.startsWith("media."))) {
+      if (customSelectedIconPath) {
+        currentIconMode = "custom";
+      } else {
+        currentIconMode = "mdi";
+      }
+    }
+
+    function setIconMode(mode) {
+      currentIconMode = mode;
+      modeTabs.forEach((tab) => {
+        tab.classList.toggle("active", tab.getAttribute("data-mode") === mode);
+      });
+      if (paneAuto) paneAuto.style.display = (mode === "auto") ? "" : "none";
+      if (paneMdi) paneMdi.style.display = (mode === "mdi") ? "" : "none";
+      if (paneCustom) paneCustom.style.display = (mode === "custom") ? "" : "none";
+      if (iconPopup && mode !== "mdi") iconPopup.style.display = "none";
+    }
+
+    modeTabs.forEach((tab) => {
+      tab.addEventListener("click", () => {
+        setIconMode(tab.getAttribute("data-mode"));
+      });
+    });
+    setIconMode(currentIconMode);
+
+    function updateCustomFilePreview(p) {
+      if (!customLiveBadge) return;
+      if (!p) {
+        if (customLiveBadge._blobUrl) { URL.revokeObjectURL(customLiveBadge._blobUrl); customLiveBadge._blobUrl = null; }
+        customLiveBadge.innerHTML = '<span class="md" data-md="image-outline"></span>';
+        mdiPreload(["image-outline"]);
+        applyMdiIcons(customLiveBadge);
+        return;
+      }
+      apiFetch(API_BASE + "/api/panel/icon?path=" + encodeURIComponent(p) + sessionTokenQuery())
+        .then((r) => {
+          if (!r.ok) throw new Error("icon");
+          const detectedColor = r.headers.get("X-Detected-Color");
+          if (detectedColor && colorInput && (!colorInput.value || colorInput.value === "#000000" || colorInput.value === "transparent")) {
+            colorInput.value = detectedColor;
+            updateColorBtn(detectedColor);
+            updateLiveBadgeColor(detectedColor);
+          }
+          return r.blob();
+        })
+        .then((blob) => {
+          if (customLiveBadge._blobUrl) URL.revokeObjectURL(customLiveBadge._blobUrl);
+          customLiveBadge._blobUrl = URL.createObjectURL(blob);
+          customLiveBadge.innerHTML = '<img class="pe-icon-live-img" src="' + customLiveBadge._blobUrl + '" alt="">';
+        })
+        .catch(() => {
+          customLiveBadge.innerHTML = '<span class="md" data-md="image-outline"></span>';
+          applyMdiIcons(customLiveBadge);
+        });
+    }
+
+    if (customBrowseBtn) {
+      customBrowseBtn.addEventListener("click", () => {
         browseCustomIcon((p) => {
           if (p) {
             customSelectedIconPath = p;
-            if (iconInput) iconInput.value = p.split(/[\\/]/).pop() || p;
-            loadCustomIconPreview(p);
-            if (iconPopup) iconPopup.style.display = "none";
-            syncIconClearBtn();
+            if (customIconPathInput) customIconPathInput.value = p;
+            updateCustomFilePreview(p);
           }
         });
       });
     }
 
-    function syncIconClearBtn() {
-      if (iconClearBtn) iconClearBtn.style.display = customSelectedIconPath ? "" : "none";
-    }
-
-    if (iconClearBtn) {
-      iconClearBtn.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
+    if (customClearBtn) {
+      customClearBtn.addEventListener("click", () => {
         customSelectedIconPath = "";
-        const curName = (iconInput ? iconInput.value : "") || "apps";
-        updateLiveIcon(curName);
-        syncIconClearBtn();
+        if (customIconPathInput) customIconPathInput.value = "";
+        updateCustomFilePreview("");
       });
     }
 
-    if (iconSearch) {
-      iconSearch.addEventListener("click", (e) => e.stopPropagation());
-      iconSearch.addEventListener("input", (e) => {
-        e.stopPropagation();
-        const val = iconSearch.value;
-        filterAndRenderIcons(val, activeIconCategory);
-        clearTimeout(iconSearchTimer);
-        iconSearchTimer = setTimeout(() => {
-          searchMdiIcons(val, activeIconCategory);
-        }, 120);
-      });
-    }
-
-    if (iconPopup) {
-      iconPopup.addEventListener("click", (e) => e.stopPropagation());
-      iconPopup.querySelectorAll(".pe-icon-cat-pill").forEach((pill) => {
-        pill.addEventListener("click", (e) => {
-          e.stopPropagation();
-          iconPopup.querySelectorAll(".pe-icon-cat-pill").forEach((p) => p.classList.remove("active"));
-          pill.classList.add("active");
-          activeIconCategory = pill.getAttribute("data-cat") || "all";
-          const query = iconSearch ? iconSearch.value : "";
-          filterAndRenderIcons(query, activeIconCategory);
-          searchMdiIcons(query, activeIconCategory);
-        });
-      });
+    if (customSelectedIconPath) {
+      updateCustomFilePreview(customSelectedIconPath);
     }
 
     function loadAppIcon() {
       const p = (document.getElementById("pe-path") ? document.getElementById("pe-path").value : "").trim() ||
-        (modalSlot.app_icon_path || ((modalSlot.entity === "media.player" || modalSlot.entity === "media.eject" || modalSlot.type === "MEDIA_EJECT") ? ((panelDraft && panelDraft.media_player_path) || (config && config.media_player_path) || "") : "") || "");
+        (modalSlot.app_icon_path || ((modalSlot.entity === "media.player" || modalSlot.entity === "media.eject" || modalSlot.type === "MEDIA_EJECT") ? ((panelDraft && panelDraft.media_player_path) || "") : "") || "");
       if (!p) { appIconPreview.hidden = true; return; }
       const brandSvg = typeof getMediaPlayerBrandIcon === "function" ? getMediaPlayerBrandIcon(p) : null;
       if (brandSvg) {
@@ -5717,83 +8536,69 @@
       if (grpProfWrap) grpProfWrap.style.display = showGroupProf ? "" : "none";
       const entWrap = document.getElementById("pe-entity-wrap");
       if (entWrap) entWrap.style.display = showEnt ? "" : "none";
-      const quickAppsWrap = document.getElementById("pe-quick-apps-wrap");
-      if (quickAppsWrap) quickAppsWrap.style.display = isAppShortcut ? "" : "none";
       const pathWrap = document.getElementById("pe-path-wrap");
       if (pathWrap) pathWrap.style.display = showPath ? "" : "none";
       const argsWrap = document.getElementById("pe-args-wrap");
       if (argsWrap) argsWrap.style.display = showPath ? "" : "none";
-      const appIconWrap = document.getElementById("pe-appicon-wrap");
-      if (appIconWrap) appIconWrap.style.display = showAppIcon ? "" : "none";
-      const iconRowWrap = document.getElementById("pe-icon-row-wrap");
-      if (iconRowWrap) iconRowWrap.style.display = isAppShortcut ? "none" : "";
-
       const entSelectEl = document.getElementById("pe-entity");
-      if (entSelectEl) {
-        const curVal = entSelectEl.value;
-        entSelectEl.innerHTML = buildEntityOptions(t, curVal);
+      const entPluginEl = document.getElementById("pe-entity-plugin");
+      const entSearchEl = document.getElementById("pe-entity-search");
+
+      const refreshEntityOptions = (targetEntity) => {
+        if (!entSelectEl) return;
+        const curVal = targetEntity !== undefined ? targetEntity : entSelectEl.value;
+        const pFilter = entPluginEl ? entPluginEl.value : "all";
+        const sQuery = entSearchEl ? entSearchEl.value : "";
+        entSelectEl.innerHTML = buildEntityOptions(t, curVal, pFilter, sQuery);
         if (isAppShortcut || showGroupProf || isEmpty) {
           entSelectEl.value = "";
         }
+      };
+
+      refreshEntityOptions();
+      if (entPluginEl && !entPluginEl._wired) {
+        entPluginEl._wired = true;
+        entPluginEl.addEventListener("change", () => refreshEntityOptions());
+      }
+      if (entSearchEl && !entSearchEl._wired) {
+        entSearchEl._wired = true;
+        entSearchEl.addEventListener("input", () => refreshEntityOptions());
       }
 
       const entId = entSelectEl ? entSelectEl.value.trim() : "";
       const isMediaPlayPause = (entId === "media.play_pause");
       const isMediaEject = (entId === "media.player" || entId === "media.eject" || t === "MEDIA_EJECT");
       const isAnyMediaControl = (isMediaPlayPause || entId === "media.next" || entId === "media.prev" || isMediaEject);
-      const isMediaControl = (isMediaPlayPause || entId === "media.next" || entId === "media.prev");
-      const showKeys = (t === "HOTKEY" || t === "TOGGLE") && !isAnyMediaControl;
+      const isAudio = t === "AUDIO OUTPUT";
+      const audioWrap = document.getElementById("pe-audio-output-wrap");
+      if (audioWrap) audioWrap.style.display = isAudio ? "" : "none";
 
-      const keysWrap = document.getElementById("pe-keys-wrap");
-      if (keysWrap) keysWrap.style.display = showKeys ? "" : "none";
+      const showKeys = (t === "HOTKEY" || t === "TOGGLE") && !isAnyMediaControl && !isAudio;
 
-      if (iconRowWrap) iconRowWrap.style.display = (isAppShortcut || isMediaControl) ? "none" : "";
-
-      const entObj = (panelEntities || []).find((e) => e.id === entId);
-      const isActionEntity = entObj && (entObj.type === "action" || entObj.type === "shortcut") && !isMediaPlayPause;
-      const hasStateCapability = !isMediaPlayPause && !isActionEntity && (t === "TOGGLE" || t === "SENSOR" || (entObj && (entObj.type === "status" || entObj.type === "data" || !!entObj.state_key)));
-      const stateRow = document.getElementById("pe-show-state-row");
-      if (stateRow) stateRow.style.display = hasStateCapability ? "" : "none";
-
-      const albumArtRow = document.getElementById("pe-show-album-art-row");
-      if (albumArtRow) albumArtRow.style.display = isMediaEject ? "" : "none";
-
-      const useAppIconRow = document.getElementById("pe-use-app-icon-row");
-      if (useAppIconRow) useAppIconRow.style.display = (isAppShortcut || isMediaEject) ? "" : "none";
-
-      // Auto-tick App Icon when the type is App/Shortcut and there is no stored
-      // preference yet (new action, or pre-feature shortcut), matching the
-      // modal's render default above.
-      const useAppIconCheckEl = document.getElementById("pe-use-app-icon");
-      if (useAppIconCheckEl && isAppShortcut && modalSlot.use_app_icon === undefined) {
-        useAppIconCheckEl.checked = true;
+      const modeAutoTab = document.getElementById("pe-mode-auto");
+      const hasAutoIcon = (isAppShortcut || isMediaEject);
+      if (modeAutoTab) modeAutoTab.style.display = hasAutoIcon ? "" : "none";
+      if (!hasAutoIcon && currentIconMode === "auto") {
+        setIconMode("mdi");
       }
+
+      const iconSourceControl = document.getElementById("pe-icon-source-control");
+      if (iconSourceControl) iconSourceControl.style.display = isAudio ? "none" : "";
 
       const visualCol = document.getElementById("pe-visual-col");
       const bodyGrid = document.getElementById("pe-body-grid");
       const modalCard = modal.querySelector(".panel-modal");
       const hideVisual = isEmpty;
       if (visualCol) visualCol.style.display = hideVisual ? "none" : "";
-      if (bodyGrid) bodyGrid.style.gridTemplateColumns = hideVisual ? "1fr" : "";
-      if (modalCard) modalCard.style.maxWidth = hideVisual ? "480px" : "";
+      if (bodyGrid) bodyGrid.style.gridTemplateColumns = (hideVisual || isAudio) ? "1fr" : "";
+      if (modalCard) modalCard.style.maxWidth = (hideVisual || isAudio) ? "480px" : "";
 
-      if (showAppIcon) {
+      if (hasAutoIcon) {
         try { loadAppIcon(); } catch (e) { appIconPreview.hidden = true; }
-      } else appIconPreview.hidden = true;
+      } else if (appIconPreview) appIconPreview.hidden = true;
     };
     typeEl.addEventListener("change", syncFields);
     syncFields();
-
-    // Gating App Icon checkbox by Show Icon
-    const showIconCheck = document.getElementById("pe-show-icon");
-    const useAppIconCheck = document.getElementById("pe-use-app-icon");
-    const useAppIconRow = document.getElementById("pe-use-app-icon-row");
-    if (showIconCheck && useAppIconCheck) {
-      showIconCheck.addEventListener("change", () => {
-        useAppIconCheck.disabled = !showIconCheck.checked;
-        if (useAppIconRow) useAppIconRow.classList.toggle("disabled", !showIconCheck.checked);
-      });
-    }
 
     // Entity Quick-Fill auto-population
     const entSelect = document.getElementById("pe-entity");
@@ -5832,7 +8637,11 @@
             const artInp = document.getElementById("pe-show-album-art");
             if (artInp) artInp.checked = true;
           }
-          if (found.type === "data") typeEl.value = "SENSOR";
+          if (found.openrgb_profile || found.plugin === "openrgb" || found.id.startsWith("openrgb.")) {
+            if (typeEl.value !== "HOTKEY" && typeEl.value !== "TOGGLE") {
+              typeEl.value = "HOTKEY";
+            }
+          } else if (found.type === "data") typeEl.value = "SENSOR";
           else if (found.type === "action") typeEl.value = "HOTKEY";
           else if (found.type === "shortcut") typeEl.value = "SHORTCUT";
           else if (found.type === "status" || found.writable) typeEl.value = "TOGGLE";
@@ -5843,24 +8652,6 @@
         }
       });
     }
-
-    // Quick App chips wiring
-    modal.querySelectorAll(".pe-app-chip").forEach((chip) => {
-      chip.addEventListener("click", () => {
-        const name = chip.getAttribute("data-name") || "";
-        const path = chip.getAttribute("data-path") || "";
-        const icon = chip.getAttribute("data-icon") || "";
-        const nameInp = document.getElementById("pe-name");
-        if (nameInp) nameInp.value = name;
-        const pathInp = document.getElementById("pe-path");
-        if (pathInp) pathInp.value = path;
-        if (icon && iconInput) {
-          iconInput.value = icon;
-          updateLiveIcon(icon);
-        }
-        loadAppIcon();
-      });
-    });
 
     document.getElementById("pe-browse").addEventListener("click", () => {
       browseExe((p) => {
@@ -5878,7 +8669,20 @@
     let iconTimer = null;
     document.getElementById("pe-path").addEventListener("input", () => {
       clearTimeout(iconTimer);
-      iconTimer = setTimeout(loadAppIcon, 400);
+      iconTimer = setTimeout(() => {
+        const pathVal = (document.getElementById("pe-path") ? document.getElementById("pe-path").value : "").trim();
+        const isUrl = pathVal.startsWith("http://") || pathVal.startsWith("https://") || (pathVal.includes(".") && (pathVal.includes("/") || !pathVal.includes("\\")) && !pathVal.endsWith(".exe"));
+        const nameInp = document.getElementById("pe-name");
+        if (isUrl && nameInp && (!nameInp.value || nameInp.value === "New Action")) {
+          try {
+            let u = pathVal.startsWith("http") ? pathVal : ("https://" + pathVal);
+            let host = new URL(u).hostname.replace(/^www\./i, "");
+            let domainName = host.split(".")[0];
+            if (domainName) nameInp.value = domainName.charAt(0).toUpperCase() + domainName.slice(1);
+          } catch (_) {}
+        }
+        loadAppIcon();
+      }, 400);
     });
     // Hotkey chips wiring
     modal.querySelectorAll(".pe-chip").forEach((chip) => {
@@ -5922,6 +8726,66 @@
         "NumpadMultiply":"NumpadMultiply","NumpadDivide":"NumpadDivide",
         "NumpadDecimal":"NumpadDecimal"
       };
+      function validateHotkeyConflict(hotkeyVal) {
+        if (!hotkeyVal || typeof hotkeyVal !== "string") return null;
+        var cand = hotkeyVal.trim().toLowerCase().replace(/\s+/g, "");
+        if (!cand || cand === "conflict!!") return null;
+
+        var cfgO = (typeof panelLive !== "undefined" && panelLive.config) || (typeof featureConfig !== "undefined" && featureConfig) || {};
+        var overlayHk = (cfgO.hotkey_overlay || "Ctrl+Alt+I").trim().toLowerCase().replace(/\s+/g, "");
+        var toolbarHk = (cfgO.hotkey_toolbar || "Ctrl+Alt+T").trim().toLowerCase().replace(/\s+/g, "");
+
+        if (cand === overlayHk) return "Overlay Shortcut";
+        if (cand === toolbarHk) return "Toolbar Shortcut";
+
+        var draft = (typeof panelDraft !== "undefined" && panelDraft) || {};
+        var editIdx = (panelEdit && panelEdit.index !== undefined) ? panelEdit.index : -1;
+        var editScope = (panelEdit && panelEdit.scope) || "board";
+
+        var mainBoard = draft.panel_board || [];
+        for (var i = 0; i < mainBoard.length; i++) {
+          if (editScope === "board" && editIdx === i) continue;
+          var s = mainBoard[i];
+          var sHk = (s && (s.hotkey || s.default_hotkey) || "").trim().toLowerCase().replace(/\s+/g, "");
+          if (sHk && sHk === cand) return s.name || ("Button " + (i + 1));
+        }
+
+        var profiles = draft.panel_profiles || [];
+        for (var p = 0; p < profiles.length; p++) {
+          var prof = profiles[p];
+          var pBoard = (prof && prof.board) || [];
+          for (var j = 0; j < pBoard.length; j++) {
+            if (editScope === prof.id && editIdx === j) continue;
+            var ps = pBoard[j];
+            var psHk = (ps && (ps.hotkey || ps.default_hotkey) || "").trim().toLowerCase().replace(/\s+/g, "");
+            if (psHk && psHk === cand) return ps.name || (prof.name || "Profile Button");
+          }
+        }
+        return null;
+      }
+
+      var conflictTimer = null;
+      function checkAndApplyConflict(val) {
+        var conflict = validateHotkeyConflict(val);
+        if (conflict) {
+          clearTimeout(conflictTimer);
+          keysInp.value = "Conflict !!";
+          keysInp.style.borderColor = "#ff3355";
+          keysInp.style.color = "#ff3355";
+          keysInp.setAttribute("title", "Conflicts with " + conflict);
+          conflictTimer = setTimeout(function() {
+            keysInp.style.borderColor = "";
+            keysInp.style.color = "";
+          }, 2200);
+          return true;
+        } else {
+          keysInp.style.borderColor = "";
+          keysInp.style.color = "";
+          keysInp.removeAttribute("title");
+          return false;
+        }
+      }
+
       function setCapture(on) {
         capturing = on;
         capBtn.textContent = on ? "Recording..." : "Capture";
@@ -5955,9 +8819,18 @@
         if (e.shiftKey) mod.push("Shift");
         var token = CODE_MAP[e.code];
         if (!token) return;
-        keysInp.value = mod.length ? mod.join("+") + "+" + token : token;
+        var candHk = mod.length ? mod.join("+") + "+" + token : token;
         setCapture(false);
         e.preventDefault();
+        if (!checkAndApplyConflict(candHk)) {
+          keysInp.value = candHk;
+        }
+      });
+      keysInp.addEventListener("input", function() {
+        var val = this.value.trim();
+        if (val && val !== "Conflict !!") {
+          checkAndApplyConflict(val);
+        }
       });
       keysInp.addEventListener("blur", function() { if (capturing) setCapture(false); });
     })();
@@ -6027,24 +8900,38 @@
       const isMediaEject = (entId === "media.player" || entId === "media.eject" || t === "MEDIA_EJECT");
       const showName = document.getElementById("pe-show-name") ? document.getElementById("pe-show-name").checked : true;
       const showIcon = document.getElementById("pe-show-icon") ? document.getElementById("pe-show-icon").checked : true;
-      const useAppIcon = (isApp || isMediaEject) && (document.getElementById("pe-use-app-icon") && !document.getElementById("pe-use-app-icon").disabled)
-        ? document.getElementById("pe-use-app-icon").checked
-        : false;
-      const showAlbumArt = isMediaEject && document.getElementById("pe-show-album-art")
-        ? document.getElementById("pe-show-album-art").checked
-        : false;
+      const showAlbumArt = isMediaEject && document.getElementById("pe-show-album-art") ? document.getElementById("pe-show-album-art").checked : false;
       const showState = (hasStateCapability && document.getElementById("pe-show-state")) ? document.getElementById("pe-show-state").checked : false;
+      const selectedMdi = document.getElementById("pe-icon") ? document.getElementById("pe-icon").value.trim() : "";
+
+      let finalIcon = "toggle-switch";
+      let finalAppIconPath = null;
+      let finalUseAppIcon = false;
+
+      if (currentIconMode === "auto") {
+        finalUseAppIcon = true;
+        finalIcon = "application";
+        finalAppIconPath = isApp ? (document.getElementById("pe-path").value.trim() || null) : null;
+      } else if (currentIconMode === "custom") {
+        finalUseAppIcon = true;
+        finalIcon = "apps";
+        finalAppIconPath = customSelectedIconPath || null;
+      } else { // "mdi"
+        finalUseAppIcon = false;
+        finalIcon = selectedMdi || "toggle-switch";
+        finalAppIconPath = null;
+      }
 
       const slot = {
         name: (document.getElementById("pe-name") ? document.getElementById("pe-name").value.trim() : ""),
         type: t,
         show_name: showName,
         show_icon: showIcon,
-        use_app_icon: useAppIcon,
+        use_app_icon: finalUseAppIcon,
         show_album_art: showAlbumArt,
         show_state: showState,
-        icon: isApp ? "application" : (customSelectedIconPath ? "apps" : (document.getElementById("pe-icon").value.trim() || "toggle-switch")),
-        app_icon_path: isApp ? (document.getElementById("pe-path").value.trim() || null) : (customSelectedIconPath || null),
+        icon: finalIcon,
+        app_icon_path: finalAppIconPath,
         color: (document.getElementById("pe-color") ? document.getElementById("pe-color").value.trim() : ""),
       };
       if (entId) {
@@ -6053,6 +8940,8 @@
       if (entObj) {
         if (entObj.plugin) slot.plugin = entObj.plugin;
         if (entObj.button_id) slot.button_id = entObj.button_id;
+        if (entObj.openrgb_profile) slot.openrgb_profile = entObj.openrgb_profile;
+        if (entObj.action_id) slot.action_id = entObj.action_id;
         if (entObj.state_key) slot.state_key = entObj.state_key;
         if (entObj.labels) slot.labels = entObj.labels;
         if (entObj.color) slot.colors = { on: entObj.color };
@@ -6061,7 +8950,21 @@
         slot.shortcut_path = document.getElementById("pe-path").value.trim();
         const sArgs = document.getElementById("pe-args") ? document.getElementById("pe-args").value.trim() : "";
         if (sArgs) slot.shortcut_args = sArgs;
-        slot.app_icon_path = slot.shortcut_path || null;
+        if (currentIconMode === "auto") {
+          slot.app_icon_path = slot.shortcut_path || null;
+        }
+      }
+      if (t === "AUDIO OUTPUT") {
+        const primSel = document.getElementById("pe-audio-primary");
+        const altSel = document.getElementById("pe-audio-alt");
+        slot.audio_input_device_id = primSel ? primSel.value : "";
+        slot.audio_input_device_name = (primSel && primSel.value && primSel.selectedOptions && primSel.selectedOptions[0]) ? primSel.selectedOptions[0].text : "";
+        slot.audio_input_device_id_alt = altSel ? altSel.value : "";
+        slot.audio_input_device_name_alt = (altSel && altSel.value && altSel.selectedOptions && altSel.selectedOptions[0]) ? altSel.selectedOptions[0].text : "";
+        slot.audio_primary_icon = (document.getElementById("pe-audio-primary-icon") ? document.getElementById("pe-audio-primary-icon").value.trim() : "") || "speaker";
+        slot.audio_alt_icon = (document.getElementById("pe-audio-alt-icon") ? document.getElementById("pe-audio-alt-icon").value.trim() : "") || "headphones";
+        slot.icon = slot.audio_primary_icon;
+        if (!slot.name) slot.name = "Audio";
       }
       if (t === "GROUP") {
         const grpProfEl = document.getElementById("pe-group-profile");
@@ -6069,10 +8972,11 @@
         slot.profile_id = slot.target_profile;
       }
       if (t === "TOGGLE" || t === "HOTKEY") {
-        const val = document.getElementById("pe-keys").value.trim();
+        let val = document.getElementById("pe-keys") ? document.getElementById("pe-keys").value.trim() : "";
+        if (val === "Conflict !!") val = "";
         slot.hotkey = val;
         const numList = val.split(",").map((x) => parseInt(x.trim(), 10)).filter((n) => !isNaN(n));
-        slot.keys = numList.length ? numList : [val];
+        slot.keys = numList.length ? numList : (val ? [val] : []);
       }
       if (panelEdit.scope === "utility" || panelEdit.scope === "util") {
         if (!panelDraft.panel_utility) panelDraft.panel_utility = [{}, {}, {}, {}];
@@ -6127,7 +9031,58 @@
     const captureBtn = document.getElementById("capture-btn");
     if (captureBtn) captureBtn.addEventListener("click", runCapture);
 
-    if (wizardStep === 2) initEyedropper();
+    if (wizardStep === 2) {
+      const isOcr = visionDraft.mode === "ocr_text" || visionDraft.mode === "ocr_number";
+      if (!isOcr) initEyedropper();
+
+      document.querySelectorAll(".vision-mode-tab").forEach((tab) => {
+        tab.addEventListener("click", () => {
+          const cat = tab.dataset.modeCat;
+          if (cat === "pixel") {
+            visionDraft.mode = "color_percentage";
+          } else if (cat === "ocr_text") {
+            visionDraft.mode = "ocr_text";
+            if (!visionDraft.ocr_pattern && wizardCapture && wizardCapture.detected_text) {
+              visionDraft.ocr_pattern = wizardCapture.detected_text.trim();
+            }
+          } else if (cat === "ocr_number") {
+            visionDraft.mode = "ocr_number";
+          }
+          renderVisionWizard();
+        });
+      });
+
+      document.querySelectorAll(".ocr-word-chip").forEach((chip) => {
+        chip.addEventListener("click", () => {
+          visionDraft.ocr_pattern = chip.dataset.word;
+          document.querySelectorAll(".ocr-word-chip").forEach((c) => c.classList.remove("selected"));
+          chip.classList.add("selected");
+          const patInput = document.getElementById("wz-step2-pattern");
+          if (patInput) patInput.value = chip.dataset.word;
+        });
+      });
+
+      const patInput = document.getElementById("wz-step2-pattern");
+      if (patInput) {
+        patInput.addEventListener("input", () => {
+          visionDraft.ocr_pattern = patInput.value;
+        });
+      }
+
+      const copyBtn = document.getElementById("ocr-copy-btn");
+      if (copyBtn) {
+        copyBtn.addEventListener("click", () => {
+          const text = wizardCapture ? (wizardCapture.detected_text || "") : "";
+          if (!text) return;
+          navigator.clipboard.writeText(text).then(() => {
+            copyBtn.innerHTML = '<span class="material-icons-outlined" style="color:var(--neon-grn)">check</span>';
+            setTimeout(() => {
+              copyBtn.innerHTML = '<span class="material-icons-outlined">content_copy</span>';
+            }, 1500);
+          }).catch(() => {});
+        });
+      }
+    }
 
     const exeInput = document.getElementById("wizard-exe");
     if (exeInput) {
@@ -6150,6 +9105,14 @@
       visionDraft.name = nameInput.value.trim();
       visionDraft.event_name = visionDraft.name;
     }
+    const patStep2 = document.getElementById("wz-step2-pattern");
+    if (patStep2) {
+      visionDraft.ocr_pattern = patStep2.value.trim();
+    }
+    const patStep4 = document.getElementById("wz-ocr-pattern");
+    if (patStep4) {
+      visionDraft.ocr_pattern = patStep4.value.trim();
+    }
     if (wizardStep === 1 && !wizardCapture) {
       const st = document.getElementById("capture-status");
       if (st) st.textContent = "Capture a region first.";
@@ -6170,6 +9133,19 @@
     const modeSel = document.getElementById("wz-mode");
     if (modeSel) modeSel.addEventListener("change", () => {
       visionDraft.mode = modeSel.value;
+      renderVisionWizard();
+    });
+    const ocrPat = document.getElementById("wz-ocr-pattern");
+    if (ocrPat) ocrPat.addEventListener("input", () => {
+      visionDraft.ocr_pattern = ocrPat.value;
+    });
+    const ocrMatch = document.getElementById("wz-ocr-match-type");
+    if (ocrMatch) ocrMatch.addEventListener("change", () => {
+      visionDraft.ocr_match_type = ocrMatch.value;
+    });
+    const ocrCase = document.getElementById("wz-ocr-case");
+    if (ocrCase) ocrCase.addEventListener("click", () => {
+      visionDraft.ocr_case_sensitive = ocrCase.classList.toggle("on");
     });
     const colorInput = document.getElementById("wz-color");
     const colorHex = document.getElementById("wz-color-hex");
@@ -6217,6 +9193,10 @@
     const fn = document.getElementById("wz-flash-name");
     if (fn) fn.addEventListener("click", () => {
       visionDraft.flash_name = fn.classList.toggle("on");
+    });
+    const ps = document.getElementById("wz-play-sound");
+    if (ps) ps.addEventListener("click", () => {
+      visionDraft.play_sound = ps.classList.toggle("on");
     });
     const fg = document.getElementById("wz-require-fg");
     if (fg) fg.addEventListener("click", () => {
@@ -6374,14 +9354,15 @@
       const statusCode = cfg.status_code || "inactive";
       const color = STATUS_COLORS[statusCode] || "var(--fg-dim)";
       return `
-        <div class="dash-plugin">
+        <div class="dash-plugin" data-name="${esc(p)}">
           <div class="dash-plugin-icon">
             <span class="material-icons-outlined">${pluginIcons[p]}</span>
           </div>
           <div class="dash-plugin-info">
-            <span class="dash-plugin-name">${pluginNames[p]}</span>
+            <span class="dash-plugin-name">${esc(pluginNames[p])}</span>
             <span class="dash-plugin-status" style="color:${color}">${esc(statusLabel)}</span>
           </div>
+          <span class="material-icons-outlined plugin-tile-arrow" style="margin-left:auto">chevron_right</span>
         </div>`;
     }).join("");
 
@@ -6408,9 +9389,28 @@
           </div>
         </div>
         <div class="dash-plugins">
-          ${pluginCards}
+          ${pluginCards || '<div class="card"><p style="color:var(--fg-dim);margin:0">No plugins detected</p></div>'}
         </div>
       </section>`;
+
+    main.querySelectorAll(".dash-plugin").forEach((el) => {
+      el.addEventListener("click", () => {
+        selectedPlugin = el.dataset.name;
+        currentPage = "plugins";
+        fetchConfig();
+        renderPage();
+      });
+    });
+
+    var dashDoneBtn = document.getElementById("done-btn");
+    if (dashDoneBtn) {
+      dashDoneBtn.addEventListener("click", () => {
+        if (typeof window.pywebview !== "undefined" && window.pywebview.api && window.pywebview.api.close_window) {
+          window.pywebview.api.close_window();
+        }
+      });
+    }
+
     rebindHamburger();
   }
 
@@ -6538,11 +9538,14 @@
   let dragState = null;
 
   document.addEventListener("mousedown", (e) => {
-    // Only allow window drag if the mousedown starts directly inside the header title bar
-    const inHeader = e.target.closest("header");
-    if (!inHeader) return;
-    const noDrag = e.target.closest("button, a, input, select, textarea, label, .done-btn, .hamburger, .refresh-btn");
-    if (noDrag) return;
+    // Check if the click is on an interactive control
+    const isInteractive = e.target.closest("button, a, input, select, textarea, label, canvas, .pdev-tile, .pdev-slider, .pdev-range, .pdev-swatch, .done-btn, .hamburger, .refresh-btn, .nav-item, .ssv-btn-icon, .ssv-close, .ssv-hint, .ssv-text-box");
+    if (isInteractive) return;
+
+    // Allow window drag across all non-interactive areas in panel view mode, or headers in settings
+    const inDraggableArea = panelViewMode || !!e.target.closest("header, .header-left, .logo, .ssv-bar, .panel-view-overlay, .pv-screen, .pv-scroll, .pv-frame, .pv-gauges, .pv-side, .pv-util, .pv-box, .pv-track");
+    if (!inDraggableArea) return;
+
     dragState = { startX: e.screenX, startY: e.screenY };
   });
 
@@ -6562,116 +9565,145 @@
   });
 
   // ── Screensaver ──────────────────────────────────────────────
+  const SS_AUTO_LOCK_RELEASE_MS = 10 * 60 * 1000; // 10 mins idle -> release wake lock to OS
+  let ssAutoLockTimer = null;
 
-  // Only active on real phone panels (IS_MOBILE && panelViewMode)
-  const SS_TIMEOUT_MS  = 5 * 60 * 1000;   // 5 min idle → dim
-  const SS_ANIM_MS     = 40 * 1000;        // 40 s between animation cycles while dimmed
-  const SS_ANIM_DUR_MS = 4 * 1000;        // each animation sequence lasts ~4 s
+  // Active on live companion screen (panelViewMode)
+  function getScreensaverTimeoutMs() {
+    let val = 2; // Default 2 minutes
+    try {
+      const stored = localStorage.getItem("iris_screensaver_timeout");
+      if (stored) {
+        let n = Number(stored);
+        if (!isNaN(n)) {
+          if (n >= 60) n = Math.round(n / 60); // Migrate legacy seconds -> minutes
+          val = Math.max(1, Math.min(10, n));
+        }
+      }
+    } catch (e) {}
 
-  let ssIdleTimer    = null;   // fires → showScreensaver()
-  let ssAnimTimer    = null;   // fires → playScreensaverAnim() while dimmed
+    const cfg = (typeof _panelLiveCachedConfig !== "undefined" && _panelLiveCachedConfig) || (typeof panelLive !== "undefined" && panelLive && panelLive.config);
+    if (cfg && typeof cfg.screensaver_timeout !== "undefined") {
+      let n = Number(cfg.screensaver_timeout);
+      if (!isNaN(n)) {
+        if (n >= 60) n = Math.round(n / 60); // Migrate legacy seconds -> minutes
+        val = Math.max(1, Math.min(10, n));
+        try { localStorage.setItem("iris_screensaver_timeout", String(val)); } catch (e) {}
+      }
+    }
+    if (isNaN(val) || val < 1) val = 1;
+    return val * 60 * 1000; // minutes to ms
+  }
+
+  const SS_PULSE_INTERVAL_MS = 30 * 1000; // pulse appearance every 30s
+  const SS_PULSE_VISIBLE_MS  = 6 * 1000;  // hold visible for 6s before fading to black
+
+  let ssIdleTimer    = null; // idle timeout -> showScreensaver()
+  let ssPulseTimer   = null; // 30s recurring pulse
+  let ssFadeOutTimer = null; // 6s timer to fade to black
   let ssActive       = false;
 
   function ssEl() { return document.getElementById("iris-screensaver"); }
 
+  function pulseScreensaverLock() {
+    const el = ssEl();
+    if (!el || !ssActive) return;
+    const lockEl = el.querySelector(".ssv-clean-lock");
+    if (!lockEl) return;
+
+    // Pixel shift within ±20px horizontal and ±30px vertical to protect OLED subpixels
+    const offsetX = (Math.random() * 40 - 20).toFixed(1);
+    const offsetY = (Math.random() * 60 - 30).toFixed(1);
+    lockEl.style.transform = `translate(${offsetX}px, ${offsetY}px)`;
+    lockEl.style.opacity = "1";
+
+    if (ssFadeOutTimer) clearTimeout(ssFadeOutTimer);
+    ssFadeOutTimer = setTimeout(function () {
+      if (ssActive && lockEl) {
+        lockEl.style.opacity = "0"; // Smooth fade to pure black (OLED pixels off)
+      }
+    }, SS_PULSE_VISIBLE_MS);
+  }
+
   function resetScreensaverTimer() {
-    if (!IS_MOBILE || IS_APP) return;
+    if (IS_APP || !panelViewMode) return;
+    requestWakeLock();
     if (ssActive) {
       // Any real interaction wakes the screensaver
       hideScreensaver();
       return;
     }
     if (ssIdleTimer) clearTimeout(ssIdleTimer);
-    if (panelViewMode) {
-      ssIdleTimer = setTimeout(showScreensaver, SS_TIMEOUT_MS);
+    const timeoutMs = getScreensaverTimeoutMs();
+    if (panelViewMode && timeoutMs > 0) {
+      ssIdleTimer = setTimeout(showScreensaver, timeoutMs);
     }
   }
 
   function showScreensaver() {
-    if (!IS_MOBILE || IS_APP || !panelViewMode) return;
+    if (IS_APP || !panelViewMode) return;
+    const timeoutMs = getScreensaverTimeoutMs();
+    if (timeoutMs <= 0) return;
     ssActive = true;
     const el = ssEl();
     if (!el) return;
     el.setAttribute("aria-hidden", "false");
     el.classList.add("ss-visible");
-    // Prevent accidental passthrough to underlying panel
     document.body.style.overflow = "hidden";
-    // Start periodic animation cycle
-    scheduleScreensaverAnim();
+
+    // Immediate initial pulse on lock
+    pulseScreensaverLock();
+    if (ssPulseTimer) clearInterval(ssPulseTimer);
+    ssPulseTimer = setInterval(pulseScreensaverLock, SS_PULSE_INTERVAL_MS);
   }
 
   function hideScreensaver() {
     ssActive = false;
+    requestWakeLock();
     if (ssIdleTimer) { clearTimeout(ssIdleTimer); ssIdleTimer = null; }
-    if (ssAnimTimer) { clearTimeout(ssAnimTimer); ssAnimTimer = null; }
+    if (ssPulseTimer) { clearInterval(ssPulseTimer); ssPulseTimer = null; }
+    if (ssFadeOutTimer) { clearTimeout(ssFadeOutTimer); ssFadeOutTimer = null; }
     const el = ssEl();
     if (!el) return;
-    el.classList.remove("ss-visible", "ss-scanning");
-    const wrap = el.querySelector(".ss-fp-wrap");
-    if (wrap) wrap.classList.remove("ss-fade-out");
+    el.classList.remove("ss-visible");
     el.setAttribute("aria-hidden", "true");
+    const lockEl = el.querySelector(".ssv-clean-lock");
+    if (lockEl) {
+      lockEl.style.opacity = "0";
+      lockEl.style.transform = "translate(0px, 0px)";
+    }
     document.body.style.overflow = "";
     // Re-arm idle timer for next cycle
-    if (panelViewMode) {
-      ssIdleTimer = setTimeout(showScreensaver, SS_TIMEOUT_MS);
+    const timeoutMs = getScreensaverTimeoutMs();
+    if (panelViewMode && timeoutMs > 0) {
+      ssIdleTimer = setTimeout(showScreensaver, timeoutMs);
     }
-  }
-
-  function scheduleScreensaverAnim() {
-    // Play immediately on first show, then every SS_ANIM_MS
-    if (ssAnimTimer) clearTimeout(ssAnimTimer);
-    ssAnimTimer = setTimeout(playScreensaverAnim, 800); // short delay so dim fade finishes first
-  }
-
-  function playScreensaverAnim() {
-    if (!ssActive) return;
-    const el = ssEl();
-    if (!el) return;
-
-    // Reset animation state cleanly by removing and re-adding ss-scanning
-    el.classList.remove("ss-scanning");
-    const wrap = el.querySelector(".ss-fp-wrap");
-    if (wrap) wrap.classList.remove("ss-fade-out");
-
-    // Force reflow so animations restart
-    void el.offsetWidth;
-
-    el.classList.add("ss-scanning");
-
-    // After animation finishes, fade the fingerprint back out
-    if (ssAnimTimer) clearTimeout(ssAnimTimer);
-    ssAnimTimer = setTimeout(() => {
-      if (!ssActive) return;
-      if (wrap) wrap.classList.add("ss-fade-out");
-      // Schedule next cycle after the fingerprint fades
-      ssAnimTimer = setTimeout(() => {
-        if (!ssActive) return;
-        el.classList.remove("ss-scanning");
-        if (wrap) wrap.classList.remove("ss-fade-out");
-        // Pause before next cycle
-        ssAnimTimer = setTimeout(playScreensaverAnim, SS_ANIM_MS);
-      }, 700);
-    }, SS_ANIM_DUR_MS);
   }
 
   // Wake the screensaver on incoming notifications or status events
   function screensaverWakeOnEvent() {
-    if (!ssActive) return;
     hideScreensaver();
+    resetScreensaverTimer();
+    try { requestWakeLock(); } catch (_) {}
   }
 
   // Called inline from openPanelView()
   function ssArmForPanelView() {
-    if (!IS_MOBILE || IS_APP) return;
+    if (IS_APP || !panelViewMode) return;
+    requestWakeLock();
     if (ssIdleTimer) clearTimeout(ssIdleTimer);
-    ssIdleTimer = setTimeout(showScreensaver, SS_TIMEOUT_MS);
+    const timeoutMs = getScreensaverTimeoutMs();
+    if (timeoutMs > 0) {
+      ssIdleTimer = setTimeout(showScreensaver, timeoutMs);
+    }
   }
 
   // Called inline from exitPanelView()
   function ssDisarmForPanelView() {
     hideScreensaver();
     if (ssIdleTimer) { clearTimeout(ssIdleTimer); ssIdleTimer = null; }
-    if (ssAnimTimer) { clearTimeout(ssAnimTimer); ssAnimTimer = null; }
+    if (ssPulseTimer) { clearInterval(ssPulseTimer); ssPulseTimer = null; }
+    if (ssFadeOutTimer) { clearTimeout(ssFadeOutTimer); ssFadeOutTimer = null; }
   }
 
   // Touch/interaction resets idle timer or wakes screensaver
@@ -6679,22 +9711,41 @@
     function onActivity(e) {
       // If screensaver is active, consume the first touch to wake (don't pass through)
       if (ssActive) {
-        e.preventDefault();
-        e.stopPropagation();
+        try { e.preventDefault(); } catch (_) {}
+        try { e.stopPropagation(); } catch (_) {}
         hideScreensaver();
         return;
       }
       resetScreensaverTimer();
     }
     document.addEventListener("touchstart", onActivity, { passive: false, capture: true });
+    document.addEventListener("pointerdown", onActivity, { passive: false, capture: true });
     document.addEventListener("touchmove",  onActivity, { passive: false, capture: true });
     document.addEventListener("click",      onActivity, { capture: true });
+
+    const ssOverlay = document.getElementById("iris-screensaver");
+    if (ssOverlay) {
+      function unlockTap(e) {
+        try { e.preventDefault(); } catch (_) {}
+        try { e.stopPropagation(); } catch (_) {}
+        hideScreensaver();
+      }
+      ssOverlay.addEventListener("touchstart", unlockTap, { passive: false, capture: true });
+      ssOverlay.addEventListener("pointerdown", unlockTap, { passive: false, capture: true });
+      ssOverlay.addEventListener("click", unlockTap, { capture: true });
+    }
   })();
 
   // ── Init ────────────────────────────────────────────────────
 
-  window.addEventListener("resize", () => updateViewportMode());
-  window.addEventListener("orientationchange", () => setTimeout(updateViewportMode, 100));
+  window.addEventListener("resize", () => {
+    updateViewportMode();
+  });
+  window.addEventListener("orientationchange", () => {
+    updateViewportMode();
+    setTimeout(updateViewportMode, 100);
+    setTimeout(updateViewportMode, 300);
+  });
   updateViewportMode();
   startPolling();
 })();

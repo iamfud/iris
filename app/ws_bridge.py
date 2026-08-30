@@ -4,6 +4,7 @@ Also runs an HTTP server to serve the settings HTML UI and plugin API.
 """
 
 import asyncio
+import collections
 import hashlib
 import hmac
 import json
@@ -13,14 +14,17 @@ import re
 import secrets
 import socket
 import ssl
+import sys
 import threading
 import time
+from pathlib import Path
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from functools import partial
 
 import websockets
 
 import win_volume
+import paths
 
 log = logging.getLogger("iris.ws_bridge")
 
@@ -29,7 +33,8 @@ _loop = None
 _app = None
 
 # per-path app icon PNG bytes (extracted once, served to the web panel fast)
-_APP_ICON_CACHE = {}
+_APP_ICON_CACHE = collections.OrderedDict()
+_APP_ICON_LOCK = threading.Lock()
 
 # Per-process auth token. Generated once at import (fresh each launch) and
 # required on every /api/* request from non-local peers. It is carried by
@@ -146,8 +151,12 @@ def _token_hash(tok):
 
 _load_devices()
 
-_HTML_DIR = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), os.pardir, "HTML")
+if getattr(sys, "frozen", False):
+    _ROOT_DIR = sys._MEIPASS
+else:
+    _ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+_HTML_DIR = os.path.join(_ROOT_DIR, "HTML")
 
 
 def register_app(app):
@@ -313,7 +322,7 @@ def _lan_url():
     host = _lan_ip()
     if _is_loopback_mode():
         host = "127.0.0.1"
-    return "http://%s:15502/index.html" % host
+    return "http://%s:15502" % host
 
 
 def _lan_pair_url():
@@ -344,6 +353,15 @@ def _qr_bytes():
 
 
 class _RequestHandler(SimpleHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    extensions_map = SimpleHTTPRequestHandler.extensions_map.copy()
+    extensions_map.update({
+        ".woff2": "font/woff2",
+        ".woff": "font/woff",
+        ".ttf": "font/ttf",
+        ".otf": "font/otf",
+    })
 
     def __init__(self, *args, directory=None, **kwargs):
         super().__init__(*args, directory=directory, **kwargs)
@@ -434,9 +452,12 @@ class _RequestHandler(SimpleHTTPRequestHandler):
 
     def end_headers(self):
         try:
-            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
-            self.send_header("Pragma", "no-cache")
-            self.send_header("Expires", "0")
+            buf = getattr(self, "_headers_buffer", [])
+            has_cc = any(b"cache-control:" in h.lower() for h in buf)
+            if not has_cc:
+                self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+                self.send_header("Pragma", "no-cache")
+                self.send_header("Expires", "0")
         except Exception:
             pass
         try:
@@ -491,6 +512,8 @@ class _RequestHandler(SimpleHTTPRequestHandler):
                 self._send_json({"ok": True, "devices": _get_devices()})
         elif self.path == "/api/keyboard/devices":
             self._handle_keyboard_devices()
+        elif self.path == "/api/audio/devices":
+            self._handle_audio_devices()
         elif self.path == "/api/sounds":
             self._send_json(_get_sounds())
         elif self.path.startswith("/api/sounds/preview/"):
@@ -499,6 +522,8 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             self._handle_sound_stop()
         elif self.path == "/api/vision/sensors":
             self._send_json(_get_vision_sensors())
+        elif self.path == "/api/automations":
+            self._handle_get_automations()
         elif self.path == "/api/screenshot/latest":
             self._handle_screenshot_latest()
         elif self.path == "/api/library/items":
@@ -515,8 +540,11 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             self._send_json(_get_volume())
         elif self.path == "/api/panel":
             self._send_json(_get_panel())
-        elif self.path == "/api/panel/live":
-            self._send_json(_get_panel_live())
+        elif self.path.startswith("/api/panel/live"):
+            from urllib.parse import urlparse, parse_qs
+            qs = parse_qs(urlparse(self.path).query)
+            client_cv = (qs.get("cv") or [""])[0] or None
+            self._send_json(_get_panel_live(client_cv))
         elif self.path == "/api/panel/password/status":
             self._handle_password_status()
         elif self.path == "/api/panel/entities":
@@ -537,6 +565,8 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             self._handle_media_art()
         elif self.path.startswith("/api/dialog/browse"):
             self._handle_dialog_browse()
+        elif self.path.startswith("/api/notepad/open"):
+            self._handle_notepad_open()
         elif self.path == "/api/notifications" or self.path.startswith("/api/notifications?"):
             self._handle_get_notifications()
         elif self.path.startswith("/media/"):
@@ -575,6 +605,8 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             name = parts[3]
             action_id = parts[5]
             self._handle_plugin_action(name, action_id)
+        elif self.path == "/api/plugins/open_folder":
+            self._handle_plugins_open_folder()
         elif self.path == "/api/vision/sensors":
             self._handle_vision_create_sensor()
         elif self.path == "/api/vision/capture":
@@ -587,6 +619,18 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         elif self.path.startswith("/api/vision/sensors/"):
             sensor_id = self.path.split("/")[-1]
             self._handle_vision_update_sensor(sensor_id)
+        elif self.path == "/api/automations":
+            self._handle_save_automation()
+        elif self.path.startswith("/api/automations/") and self.path.endswith("/delete"):
+            rule_id = self.path.split("/")[-2]
+            self._handle_delete_automation(rule_id)
+        elif self.path.startswith("/api/automations/") and self.path.endswith("/export_button"):
+            rule_id = self.path.split("/")[-2]
+            self._handle_export_automation_button(rule_id)
+        elif self.path == "/api/automations/disclaimer_ack":
+            self._handle_automations_disclaimer_ack()
+        elif self.path == "/api/automations/test":
+            self._handle_test_automation()
         elif self.path == "/api/notifications/delete":
             self._handle_notification_delete()
         elif self.path == "/api/notifications/clear":
@@ -625,6 +669,8 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             self._handle_library_save_sidecar(self.path[len("/api/library/sidecar/"):])
         elif self.path == "/api/library/note":
             self._handle_library_save_note()
+        elif self.path.startswith("/api/notepad/open"):
+            self._handle_notepad_open()
         elif self.path.startswith("/api/library/delete/"):
             self._handle_library_delete(self.path[len("/api/library/delete/"):])
         else:
@@ -660,8 +706,7 @@ class _RequestHandler(SimpleHTTPRequestHandler):
     def _serve_media(self, filename):
         import mimetypes
         safe = os.path.basename(filename)
-        _media_dir = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), os.pardir, "media")
+        _media_dir = os.path.join(_ROOT_DIR, "media")
         fpath = os.path.join(_media_dir, safe)
         if not os.path.isfile(fpath):
             self.send_error(404)
@@ -1050,7 +1095,7 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         self._send_json({"ok": True})
 
     def _send_json(self, data):
-        body = json.dumps(data).encode()
+        body = json.dumps(data, separators=(',', ':')).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
@@ -1060,6 +1105,11 @@ class _RequestHandler(SimpleHTTPRequestHandler):
     def _handle_portal_reload(self):
         try:
             broadcast({"type": "reload", "hard": True})
+            if _app and getattr(_app, "_main_win", None):
+                try:
+                    _app._root.after_idle(_app._main_win.reload_theme)
+                except Exception:
+                    pass
             self._send_json({"ok": True})
         except Exception as e:
             log.warning("[http] portal reload broadcast failed: %s", e)
@@ -1087,9 +1137,27 @@ class _RequestHandler(SimpleHTTPRequestHandler):
                                  "panel_password_salt")}
             _app.cfg.update(body)
             save_config(_app.cfg)
+            if "run_at_startup" in body:
+                try:
+                    from startup import set_startup
+                    set_startup(bool(body["run_at_startup"]))
+                except Exception as e:
+                    log.warning("[http] failed to apply run_at_startup: %s", e)
+            if "hotkey_overlay" in body or "hotkey_toolbar" in body:
+                if hasattr(_app, "_reregister_hotkey"):
+                    try:
+                        _app._reregister_hotkey()
+                    except Exception as e:
+                        log.warning("[http] failed to reregister hotkeys: %s", e)
             self._push_config_to_device(body)
+            broadcast({"type": "config", "config": body})
             if "theme" in body:
                 broadcast({"type": "theme", "theme": body["theme"], "reload": True})
+                if getattr(_app, "_main_win", None):
+                    try:
+                        _app._root.after_idle(_app._main_win.reload_theme)
+                    except Exception:
+                        pass
             self._send_json({"ok": True})
         except Exception as e:
             log.warning("[http] save config failed: %s", e)
@@ -1191,6 +1259,17 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             log.warning("[http] plugin action failed: %s", e)
             self.send_error(500, str(e))
 
+    def _handle_plugins_open_folder(self):
+        """Open the user plugins folder in Explorer, creating it first if needed."""
+        try:
+            import plugin_manager
+            folder = plugin_manager.user_plugins_dir()
+            os.startfile(folder)
+            self._send_json({"ok": True, "path": folder})
+        except Exception as e:
+            log.warning("[http] open plugins folder failed: %s", e)
+            self.send_error(500, str(e))
+
     def _read_json(self):
         length = int(self.headers.get("Content-Length", 0))
         return json.loads(self.rfile.read(length)) if length else {}
@@ -1206,19 +1285,54 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             return
         self._send_json({"available": True, **data})
 
+    def _handle_audio_devices(self):
+        """Return active audio playback devices and current default."""
+        try:
+            from win_platform import get_audio_output_devices, get_current_default_audio_output
+            devs = get_audio_output_devices()
+            cur = get_current_default_audio_output()
+            self._send_json({"ok": True, "devices": devs, "current": cur})
+        except Exception as e:
+            log.warning("[http] /api/audio/devices error: %s", e)
+            self._send_json({"ok": False, "devices": [], "current": None})
+
     # ── Library ────────────────────────────────────────────────────────────
 
+    def _screenshots_folder(self):
+        cfg = getattr(_app, "cfg", None) if _app is not None else None
+        return paths.get_screenshots_dir(cfg)
+
+    def _notes_folder(self):
+        cfg = getattr(_app, "cfg", None) if _app is not None else None
+        return paths.get_notes_dir(cfg)
+
+    def _library_folders(self):
+        folders = []
+        sf = self._screenshots_folder()
+        nf = self._notes_folder()
+        for f in (sf, nf):
+            if f and f not in folders:
+                folders.append(f)
+        # Check legacy directory for backward-compatibility with existing files
+        legacy = os.path.abspath(os.path.join(os.path.expanduser("~"), "Documents", "Iris", "Screenshots"))
+        if os.path.isdir(legacy) and legacy not in folders:
+            folders.append(legacy)
+        return folders
+
+    def _find_library_file(self, filename):
+        fname = os.path.basename(filename)
+        for folder in self._library_folders():
+            cand = os.path.join(folder, fname)
+            if os.path.isfile(cand):
+                return folder, cand
+        # Default destination if not found
+        if fname.lower().endswith(".txt"):
+            return self._notes_folder(), os.path.join(self._notes_folder(), fname)
+        return self._screenshots_folder(), os.path.join(self._screenshots_folder(), fname)
+
     def _library_folder(self):
-        """Return the resolved screenshot / library folder path."""
-        folder = ""
-        if _app is not None:
-            try:
-                folder = (_app.cfg.get("screenshot_dir") or "").strip()
-            except Exception:
-                pass
-        if not folder:
-            folder = os.path.join(os.path.expanduser("~"), "Documents", "Iris", "Screenshots")
-        return os.path.abspath(folder)
+        """Legacy helper returning screenshots folder."""
+        return self._screenshots_folder()
 
     def _parse_library_filename(self, fname):
         """Extract app name and timestamp from an iris_* filename.
@@ -1258,30 +1372,48 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         return os.path.join(folder, base + ".json")
 
     def _handle_library_items(self):
-        """List all screenshots and notes in the library folder."""
-        folder = self._library_folder()
+        """List all screenshots and notes across the library folders."""
         items = []
+        seen = set()
         try:
-            if not os.path.isdir(folder):
-                self._send_json({"items": []})
-                return
+            for folder in self._library_folders():
+                if not os.path.isdir(folder):
+                    continue
+                all_files = os.listdir(folder)
+                for fname in all_files:
+                    if fname in seen:
+                        continue
+                    meta = self._parse_library_filename(fname)
 
-            # Collect all filenames; track PNG basenames to detect orphaned sidecars
-            all_files = os.listdir(folder)
-            png_basenames = {
-                os.path.splitext(f)[0]
-                for f in all_files
-                if f.lower().endswith(".png")
-            }
+                    # Unrecognised PNG — show as orphan using file mtime
+                    if meta is None:
+                        if fname.lower().endswith(".png"):
+                            fpath = os.path.join(folder, fname)
+                            ts = os.path.getmtime(fpath) if os.path.isfile(fpath) else 0.0
+                            sc_path = self._sidecar_path(folder, fname)
+                            title = ""
+                            if os.path.isfile(sc_path):
+                                try:
+                                    with open(sc_path, encoding="utf-8") as f:
+                                        sc = json.load(f)
+                                    title = sc.get("title", "")
+                                except Exception:
+                                    pass
+                            seen.add(fname)
+                            items.append({
+                                "type": "screenshot",
+                                "filename": fname,
+                                "app": "orphan",
+                                "ts": ts,
+                                "title": title,
+                            })
+                        continue
 
-            for fname in all_files:
-                meta = self._parse_library_filename(fname)
+                    seen.add(fname)
+                    ts = self._ts_from_str(meta["ts_str"])
 
-                # Unrecognised PNG — show as orphan using file mtime
-                if meta is None:
-                    if fname.lower().endswith(".png"):
-                        fpath = os.path.join(folder, fname)
-                        ts = os.path.getmtime(fpath) if os.path.isfile(fpath) else 0.0
+                    if meta["type"] == "screenshot":
+                        # Read title from sidecar if present
                         sc_path = self._sidecar_path(folder, fname)
                         title = ""
                         if os.path.isfile(sc_path):
@@ -1294,71 +1426,37 @@ class _RequestHandler(SimpleHTTPRequestHandler):
                         items.append({
                             "type": "screenshot",
                             "filename": fname,
-                            "app": "orphan",
+                            "app": meta["app"],
                             "ts": ts,
                             "title": title,
                         })
-                    continue
 
-                ts = self._ts_from_str(meta["ts_str"])
-
-
-                if meta["type"] == "screenshot":
-                    # Read title from sidecar if present
-                    sc_path = self._sidecar_path(folder, fname)
-                    title = ""
-                    if os.path.isfile(sc_path):
+                    elif meta["type"] == "note":
+                        title = ""
+                        preview = ""
+                        fpath = os.path.join(folder, fname)
                         try:
-                            with open(sc_path, encoding="utf-8") as f:
-                                sc = json.load(f)
-                            title = sc.get("title", "")
+                            with open(fpath, encoding="utf-8") as f:
+                                content = f.read(500)
+                            lines = content.split("\n")
+                            body_lines = []
+                            for idx, line in enumerate(lines):
+                                if idx == 0 and line.startswith("title:"):
+                                    title = line[6:].strip()
+                                else:
+                                    if line.strip():
+                                        body_lines.append(line)
+                            preview = body_lines[0][:80] if body_lines else ""
                         except Exception:
                             pass
-                    items.append({
-                        "type": "screenshot",
-                        "filename": fname,
-                        "app": meta["app"],
-                        "ts": ts,
-                        "title": title,
-                    })
-
-                elif meta["type"] == "note":
-                    title = ""
-                    preview = ""
-                    fpath = os.path.join(folder, fname)
-                    try:
-                        with open(fpath, encoding="utf-8") as f:
-                            content = f.read(500)
-                        lines = content.split("\n")
-                        body_lines = []
-                        for idx, line in enumerate(lines):
-                            if idx == 0 and line.startswith("title:"):
-                                title = line[6:].strip()
-                            else:
-                                if line.strip():
-                                    body_lines.append(line)
-                        preview = body_lines[0][:80] if body_lines else ""
-                    except Exception:
-                        pass
-                    items.append({
-                        "type": "note",
-                        "filename": fname,
-                        "app": meta["app"],
-                        "ts": ts,
-                        "title": title,
-                        "preview": preview,
-                    })
-
-            # Auto-delete orphaned sidecar JSON files
-            for fname in all_files:
-                if fname.lower().endswith(".json"):
-                    base = os.path.splitext(fname)[0]
-                    if base not in png_basenames:
-                        try:
-                            os.remove(os.path.join(folder, fname))
-                            log.info("library: removed orphaned sidecar %s", fname)
-                        except Exception:
-                            pass
+                        items.append({
+                            "type": "note",
+                            "filename": fname,
+                            "app": meta["app"],
+                            "ts": ts,
+                            "title": title,
+                            "preview": preview,
+                        })
 
             # Sort newest first
             items.sort(key=lambda x: x["ts"], reverse=True)
@@ -1375,7 +1473,7 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         if not filename.lower().endswith(".png"):
             self.send_error(400)
             return
-        path = os.path.join(self._library_folder(), filename)
+        folder, path = self._find_library_file(filename)
         if not os.path.isfile(path):
             self.send_error(404)
             return
@@ -1395,7 +1493,8 @@ class _RequestHandler(SimpleHTTPRequestHandler):
     def _handle_library_get_sidecar(self, filename):
         """Return sidecar JSON for a screenshot (empty object if none exists)."""
         filename = os.path.basename(filename)
-        sc_path = self._sidecar_path(self._library_folder(), filename)
+        folder, _ = self._find_library_file(filename)
+        sc_path = self._sidecar_path(folder, filename)
         if not os.path.isfile(sc_path):
             self._send_json({})
             return
@@ -1408,8 +1507,7 @@ class _RequestHandler(SimpleHTTPRequestHandler):
     def _handle_library_save_sidecar(self, filename):
         """Save sidecar JSON for a screenshot."""
         filename = os.path.basename(filename)
-        folder = self._library_folder()
-        img_path = os.path.join(folder, filename)
+        folder, img_path = self._find_library_file(filename)
         if not os.path.isfile(img_path):
             self.send_error(404)
             return
@@ -1424,9 +1522,13 @@ class _RequestHandler(SimpleHTTPRequestHandler):
                         existing = json.load(f)
                 except Exception:
                     pass
-            existing["title"] = str(body.get("title", existing.get("title", "")))
+            if "title" in body:
+                existing["title"] = str(body["title"])
+            if "annotations" in body and isinstance(body["annotations"], list):
+                existing["annotations"] = body["annotations"]
             with open(sc_path, "w", encoding="utf-8") as f:
                 json.dump(existing, f, ensure_ascii=False)
+            broadcast({"type": "library_update"})
             self._send_json({"ok": True})
         except Exception as e:
             log.warning("library sidecar save error: %s", e)
@@ -1435,7 +1537,7 @@ class _RequestHandler(SimpleHTTPRequestHandler):
     def _handle_library_get_note(self, filename):
         """Return the content of a note file."""
         filename = os.path.basename(filename)
-        path = os.path.join(self._library_folder(), filename)
+        folder, path = self._find_library_file(filename)
         if not os.path.isfile(path):
             self._send_json({"content": "", "app": "", "title": ""})
             return
@@ -1467,7 +1569,7 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             content = str(body.get("content", ""))
             filename = body.get("filename", "")
 
-            folder = self._library_folder()
+            folder = self._notes_folder()
             os.makedirs(folder, exist_ok=True)
 
             if not filename:
@@ -1477,6 +1579,7 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             path = os.path.join(folder, os.path.basename(filename))
             with open(path, "w", encoding="utf-8") as f:
                 f.write("title:%s\n%s" % (title, content))
+            broadcast({"type": "library_update"})
             self._send_json({"ok": True, "filename": os.path.basename(path)})
         except Exception as e:
             log.warning("library note save error: %s", e)
@@ -1485,9 +1588,8 @@ class _RequestHandler(SimpleHTTPRequestHandler):
     def _handle_library_delete(self, filename):
         """Delete a library item (PNG + sidecar, or note txt)."""
         filename = os.path.basename(filename)
-        folder = self._library_folder()
+        folder, path = self._find_library_file(filename)
         try:
-            path = os.path.join(folder, filename)
             if not os.path.isfile(path):
                 self.send_error(404)
                 return
@@ -1497,6 +1599,7 @@ class _RequestHandler(SimpleHTTPRequestHandler):
                 sc = self._sidecar_path(folder, filename)
                 if os.path.isfile(sc):
                     os.remove(sc)
+            broadcast({"type": "library_update"})
             self._send_json({"ok": True})
         except Exception as e:
             log.warning("library delete error: %s", e)
@@ -1505,13 +1608,13 @@ class _RequestHandler(SimpleHTTPRequestHandler):
     def _handle_library_running_apps(self):
         """Return a list of currently running process names for the note app picker."""
         try:
-            import psutil
+            from win_platform import get_running_process_names
+            names = get_running_process_names(ttl=1.0)
             seen = set()
             apps = []
-            for proc in psutil.process_iter(["name"]):
+            import re as _re
+            for name in names:
                 try:
-                    name = proc.info["name"] or ""
-                    import re as _re
                     key = _re.sub(r'\.exe$', '', name, flags=_re.IGNORECASE).lower()
                     key = _re.sub(r'[^a-z0-9]+', '_', key).strip('_')
                     if key and key not in seen:
@@ -1544,11 +1647,21 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         exe = vision.resolve_exe_for_point(cx, cy)
         anchor = vision.monitor_containing(cx, cy)
         region = vision.region_to_pct(anchor, (x, y, w, h))
+
+        ocr_res = {}
+        try:
+            img = vision.capture(bbox)
+            ocr_res = vision.ocr_extract(img)
+        except Exception:
+            pass
+
         self._send_json({
             "exe": exe,
             "anchor": anchor,
             "region": region,
             "screenshot_b64": img_b64,
+            "detected_text": ocr_res.get("text", ""),
+            "words": ocr_res.get("words", []),
         })
 
     def _handle_vision_test(self):
@@ -1560,9 +1673,11 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         import vision
         result = vision.measure(body)
         self._send_json({
-            "value": result["value"],
-            "active": result["active"],
-            "mode": result["mode"],
+            "value": result.get("value", 0.0),
+            "text": result.get("text", ""),
+            "active": result.get("active", False),
+            "mode": result.get("mode", ""),
+            "words": result.get("words", []),
         })
 
     def _handle_vision_create_sensor(self):
@@ -1603,6 +1718,125 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         _vision_sensors()[:] = [s for s in sensors if s.get("id") != sensor_id]
         _save_vision_config()
         self._send_json({"ok": len(_vision_sensors()) < before})
+
+    # ── Automations API Handlers ───────────────────────────────────
+
+    def _handle_get_automations(self):
+        import automations
+        engine = automations.get_engine()
+        self._send_json({
+            "ok": True,
+            "rules": engine.get_rules(),
+            "disclaimer_acknowledged": engine.is_disclaimer_acknowledged(),
+        })
+
+    def _handle_save_automation(self):
+        try:
+            body = self._read_json()
+        except Exception as e:
+            self.send_error(400, str(e))
+            return
+        if _app is None:
+            self.send_error(503, "App not registered")
+            return
+        import automations
+        engine = automations.get_engine()
+        rules = engine.get_rules()
+
+        rule = dict(body or {})
+        rule_id = rule.get("id")
+        if not rule_id:
+            rule_id = f"auto_{int(time.time())}_{len(rules)+1}"
+            rule["id"] = rule_id
+
+        idx = next((i for i, r in enumerate(rules) if r.get("id") == rule_id), None)
+        if idx is not None:
+            rules[idx] = rule
+        else:
+            rules.append(rule)
+
+        engine.save_rules(rules, _app.cfg)
+        self._send_json({"ok": True, "rule": rule})
+
+    def _handle_delete_automation(self, rule_id):
+        if _app is None:
+            self.send_error(503, "App not registered")
+            return
+        import automations
+        engine = automations.get_engine()
+        rules = [r for r in engine.get_rules() if r.get("id") != rule_id]
+        engine.save_rules(rules, _app.cfg)
+        self._send_json({"ok": True})
+
+    def _handle_automations_disclaimer_ack(self):
+        if _app is None:
+            self.send_error(503, "App not registered")
+            return
+        import automations
+        engine = automations.get_engine()
+        engine.set_disclaimer_ack(True)
+        _app.cfg["automations_disclaimer_ack"] = True
+        try:
+            from config import save_config
+            save_config(_app.cfg)
+        except Exception:
+            pass
+        self._send_json({"ok": True, "disclaimer_acknowledged": True})
+
+    def _handle_test_automation(self):
+        try:
+            body = self._read_json()
+        except Exception as e:
+            self.send_error(400, str(e))
+            return
+        import automations
+        engine = automations.get_engine()
+        engine._execute_actions(body, "TEST_TRIGGER")
+        self._send_json({"ok": True})
+
+    def _handle_export_automation_button(self, rule_id):
+        if _app is None:
+            self.send_error(503, "App not registered")
+            return
+        import automations
+        engine = automations.get_engine()
+        rule = next((r for r in engine.get_rules() if r.get("id") == rule_id), None)
+        if not rule:
+            self.send_error(404, "Rule not found")
+            return
+
+        # Find first hotkey action if present
+        hotkey_act = next((a for a in rule.get("actions", []) if a.get("type") == "hotkey"), None)
+        hotkey = hotkey_act.get("hotkey", "") if hotkey_act else ""
+
+        # Construct button slot payload
+        tile = {
+            "type": "HOTKEY" if hotkey else "GROUP",
+            "name": (rule.get("name") or "Auto Button")[:20],
+            "hotkey": hotkey,
+            "color": "#48B2E9",
+            "icon": "auto_mode",
+            "description": f"Trigger {rule.get('name')}",
+        }
+
+        # Place onto first empty slot on active panel board
+        board = _app.cfg.setdefault("panel_board", [])
+        placed = False
+        for i, slot in enumerate(board):
+            if not slot or not slot.get("type") or slot.get("type") == "EMPTY":
+                board[i] = tile
+                placed = True
+                break
+        if not placed:
+            board.append(tile)
+
+        try:
+            from config import save_config
+            save_config(_app.cfg)
+        except Exception:
+            pass
+
+        self._send_json({"ok": True, "tile": tile})
 
     def _handle_volume_set(self):
         try:
@@ -1682,6 +1916,19 @@ class _RequestHandler(SimpleHTTPRequestHandler):
                     _app._root.after(0, mw.rebuild_panel)
                 except Exception:
                     pass
+            log.info("[panel_save] broadcasting config to %d WS client(s)", len(CLIENTS))
+            broadcast({
+                "type": "config",
+                "config": {
+                    "panel_board": _app.cfg.get("panel_board", []),
+                    "panel_utility": _app.cfg.get("panel_utility", []),
+                    "panel_sliders": _app.cfg.get("panel_sliders", []),
+                    "panel_layout": _app.cfg.get("panel_layout", []),
+                    "panel_gauges": _app.cfg.get("panel_gauges", {}),
+                    "panel_profiles": _app.cfg.get("panel_profiles", []),
+                    "media_player_path": _app.cfg.get("media_player_path", ""),
+                }
+            })
             self._send_json({"ok": True})
         except Exception as e:
             log.warning("[http] save panel failed: %s", e)
@@ -1698,44 +1945,68 @@ class _RequestHandler(SimpleHTTPRequestHandler):
                 self.send_error(404)
                 return
             p = unquote(raw_p).strip().strip('"\'')
-            p = os.path.expandvars(os.path.expanduser(p))
-            if not os.path.isfile(p):
-                which_p = shutil.which(p)
-                if which_p and os.path.isfile(which_p):
-                    p = which_p
-                else:
-                    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                    cand = os.path.join(base_dir, p)
-                    if os.path.isfile(cand):
-                        p = cand
+            is_url = p.startswith(("http://", "https://")) or (("." in p) and ("/" in p or "\\" not in p) and not os.path.isabs(p) and not p.lower().endswith((".exe", ".lnk", ".bat", ".cmd", ".vbs", ".ps1")))
+            if not is_url:
+                p = os.path.expandvars(os.path.expanduser(p))
+                if not os.path.isfile(p):
+                    which_p = shutil.which(p)
+                    if which_p and os.path.isfile(which_p):
+                        p = which_p
                     else:
-                        cand_media = os.path.join(base_dir, "media", p)
-                        if os.path.isfile(cand_media):
-                            p = cand_media
-            if not os.path.isfile(p):
-                self.send_error(404)
-                return
-            norm = os.path.normcase(os.path.abspath(p))
-            cached = _APP_ICON_CACHE.get(norm)
-            if cached is None:
-                from win_platform import _extract_via_ps, detect_icon_color
-                img = _extract_via_ps(p, size=256)
-                if img is None:
+                        base_dir = _ROOT_DIR
+                        cand = os.path.join(base_dir, p)
+                        if os.path.isfile(cand):
+                            p = cand
+                        else:
+                            cand_media = os.path.join(base_dir, "media", p)
+                            if os.path.isfile(cand_media):
+                                p = cand_media
+                if not os.path.isfile(p):
                     self.send_error(404)
                     return
-                color = detect_icon_color(img)
-                import io
-                buf = io.BytesIO()
-                img.save(buf, format="PNG")
-                blob = buf.getvalue()
-                if len(_APP_ICON_CACHE) >= 100:
-                    _APP_ICON_CACHE.pop(next(iter(_APP_ICON_CACHE)), None)
-                _APP_ICON_CACHE[norm] = (blob, color)
-            else:
-                blob, color = cached
+            norm = p.lower() if is_url else os.path.normcase(os.path.abspath(p))
+            with _APP_ICON_LOCK:
+                cached = _APP_ICON_CACHE.get(norm)
+                if cached is not None:
+                    _APP_ICON_CACHE.move_to_end(norm)
+
+            if cached is None:
+                with _APP_ICON_LOCK:
+                    # Double-check after lock
+                    cached = _APP_ICON_CACHE.get(norm)
+                    if cached is not None:
+                        _APP_ICON_CACHE.move_to_end(norm)
+                    else:
+                        from win_platform import _extract_via_ps, detect_icon_color
+                        img = _extract_via_ps(p, size=256)
+                        if img is None:
+                            self.send_error(404)
+                            return
+                        color = detect_icon_color(img)
+                        import io
+                        buf = io.BytesIO()
+                        img.save(buf, format="PNG")
+                        blob = buf.getvalue()
+                        if len(_APP_ICON_CACHE) >= 200:
+                            _APP_ICON_CACHE.popitem(last=False)
+                        _APP_ICON_CACHE[norm] = (blob, color)
+                        cached = (blob, color)
+
+            blob, color = cached
+            etag = f'"{abs(hash(norm + str(len(blob))))}"'
+            inm = self.headers.get("If-None-Match", "").strip()
+            if inm and inm == etag:
+                self.send_response(304)
+                self.send_header("ETag", etag)
+                self.send_header("Cache-Control", "public, max-age=86400")
+                self.end_headers()
+                return
+
             self.send_response(200)
             self.send_header("Content-Type", "image/png")
             self.send_header("Content-Length", str(len(blob)))
+            self.send_header("Cache-Control", "public, max-age=86400")
+            self.send_header("ETag", etag)
             if color:
                 self.send_header("X-Detected-Color", color)
                 self.send_header("Access-Control-Expose-Headers", "X-Detected-Color")
@@ -1756,41 +2027,52 @@ class _RequestHandler(SimpleHTTPRequestHandler):
                 self._send_json({"ok": False, "error": "missing path"})
                 return
             p = unquote(raw_p).strip().strip('"\'')
-            p = os.path.expandvars(os.path.expanduser(p))
-            if not os.path.isfile(p):
-                which_p = shutil.which(p)
-                if which_p and os.path.isfile(which_p):
-                    p = which_p
-                else:
-                    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                    cand = os.path.join(base_dir, p)
-                    if os.path.isfile(cand):
-                        p = cand
+            is_url = p.startswith(("http://", "https://")) or (("." in p) and ("/" in p or "\\" not in p) and not os.path.isabs(p) and not p.lower().endswith((".exe", ".lnk", ".bat", ".cmd", ".vbs", ".ps1")))
+            if not is_url:
+                p = os.path.expandvars(os.path.expanduser(p))
+                if not os.path.isfile(p):
+                    which_p = shutil.which(p)
+                    if which_p and os.path.isfile(which_p):
+                        p = which_p
                     else:
-                        cand_media = os.path.join(base_dir, "media", p)
-                        if os.path.isfile(cand_media):
-                            p = cand_media
-            if not os.path.isfile(p):
-                self._send_json({"ok": False, "error": "file not found"})
-                return
-            norm = os.path.normcase(os.path.abspath(p))
-            cached = _APP_ICON_CACHE.get(norm)
+                        base_dir = _ROOT_DIR
+                        cand = os.path.join(base_dir, p)
+                        if os.path.isfile(cand):
+                            p = cand
+                        else:
+                            cand_media = os.path.join(base_dir, "media", p)
+                            if os.path.isfile(cand_media):
+                                p = cand_media
+                if not os.path.isfile(p):
+                    self._send_json({"ok": False, "error": "file not found"})
+                    return
+            norm = p.lower() if is_url else os.path.normcase(os.path.abspath(p))
+            with _APP_ICON_LOCK:
+                cached = _APP_ICON_CACHE.get(norm)
+                if cached is not None:
+                    _APP_ICON_CACHE.move_to_end(norm)
             if cached is not None:
                 _, color = cached
             else:
-                from win_platform import _extract_via_ps, detect_icon_color
-                img = _extract_via_ps(p, size=256)
-                if img is None:
-                    self._send_json({"ok": False, "error": "extraction failed"})
-                    return
-                color = detect_icon_color(img)
-                import io
-                buf = io.BytesIO()
-                img.save(buf, format="PNG")
-                blob = buf.getvalue()
-                if len(_APP_ICON_CACHE) >= 100:
-                    _APP_ICON_CACHE.pop(next(iter(_APP_ICON_CACHE)), None)
-                _APP_ICON_CACHE[norm] = (blob, color)
+                with _APP_ICON_LOCK:
+                    cached = _APP_ICON_CACHE.get(norm)
+                    if cached is not None:
+                        _APP_ICON_CACHE.move_to_end(norm)
+                        _, color = cached
+                    else:
+                        from win_platform import _extract_via_ps, detect_icon_color
+                        img = _extract_via_ps(p, size=256)
+                        if img is None:
+                            self._send_json({"ok": False, "error": "extraction failed"})
+                            return
+                        color = detect_icon_color(img)
+                        import io
+                        buf = io.BytesIO()
+                        img.save(buf, format="PNG")
+                        blob = buf.getvalue()
+                        if len(_APP_ICON_CACHE) >= 200:
+                            _APP_ICON_CACHE.popitem(last=False)
+                        _APP_ICON_CACHE[norm] = (blob, color)
             self._send_json({"ok": True, "path": p, "color": color})
         except Exception as e:
             log.warning("[http] icon meta extraction failed: %s", e)
@@ -1847,6 +2129,31 @@ class _RequestHandler(SimpleHTTPRequestHandler):
                     result[n] = mdi_icons.get_char(n)
         self._send_json(result)
 
+    def _handle_notepad_open(self):
+        from urllib.parse import urlparse, parse_qs
+        qs = parse_qs(urlparse(self.path).query)
+        filename = (qs.get("file") or [None])[0]
+        app_tag = (qs.get("app") or ["general"])[0]
+        initial_title = (qs.get("title") or [None])[0]
+        initial_body = (qs.get("body") or [None])[0]
+        if self.command == "POST":
+            try:
+                body = self._read_json()
+                if body:
+                    filename = body.get("file") or body.get("filename") or filename
+                    app_tag = body.get("app") or app_tag
+                    initial_title = body.get("title") or initial_title
+                    initial_body = body.get("body") or initial_body
+            except Exception:
+                pass
+        try:
+            import notepad_window
+            notepad_window.open_notepad(app_tag=app_tag, filename=filename, initial_title=initial_title, initial_body=initial_body)
+            self._send_json({"ok": True})
+        except Exception as ex:
+            log.warning("[http] failed to open notepad window: %s", ex)
+            self._send_json({"ok": False, "error": str(ex)})
+
     def _handle_media_players(self):
         try:
             from win_platform import detect_installed_media_players
@@ -1876,6 +2183,16 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             self.send_header("Cache-Control", "no-cache")
             self.end_headers()
             return
+
+        if art_id:
+            etag = f'"{art_id}"'
+            inm = self.headers.get("If-None-Match", "").strip()
+            if inm and inm == etag:
+                self.send_response(304)
+                self.send_header("ETag", etag)
+                self.send_header("Cache-Control", "public, max-age=60")
+                self.end_headers()
+                return
 
         self.send_response(200)
         self.send_header("Content-Type", mime or "image/jpeg")
@@ -2000,6 +2317,16 @@ class _RequestHandler(SimpleHTTPRequestHandler):
                 log.warning("[http] mic toggle failed: %s", e)
                 st = None
             self._send_json({"ok": st is not None, "state": st})
+        elif tile == "settings":
+            try:
+                if hasattr(_app, "_open_settings"):
+                    _app._open_settings()
+                else:
+                    import panel_window
+                    panel_window.open_panel()
+            except Exception as e:
+                log.warning("[http] settings open failed: %s", e)
+            self._send_json({"ok": True})
         else:
             self._send_json({"ok": False})
 
@@ -2053,38 +2380,20 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         cfg = _app.cfg
         ensure_panel_defaults(cfg)
 
-        target_name = "Default"
-        if profile_id == "__default__":
-            if replace_all:
-                cfg["panel_board"] = slots[:12]
-            else:
-                board = list(cfg.get("panel_board") or [])
-                if slot_idx is not None and 0 <= int(slot_idx) < 12:
-                    while len(board) <= int(slot_idx):
-                        board.append({"type": "EMPTY", "name": "", "icon": "border-none-variant", "color": ""})
-                    if slots:
-                        board[int(slot_idx)] = slots[0]
-                else:
-                    placed = False
-                    for i in range(min(12, len(board))):
-                        if board[i].get("type") == "EMPTY" and slots:
-                            board[i] = slots[0]
-                            placed = True
-                            break
-                    if not placed and len(board) < 12 and slots:
-                        board.append(slots[0])
-                cfg["panel_board"] = sanitize_board(board)
-        else:
-            profiles = cfg.get("panel_profiles") or []
-            if profile_id == "__new__":
-                base_id = f"prof_{plugin_name}" if plugin_name else "prof_custom"
-                existing_ids = {p.get("id") for p in profiles if isinstance(p, dict)}
-                new_id = base_id
-                counter = 1
-                while new_id in existing_ids:
-                    counter += 1
-                    new_id = f"{base_id}_{counter}"
-                profile_id = new_id
+        # Prevent plugin presets from overwriting the user's default main board
+        if not profile_id or profile_id == "__default__":
+            profile_id = "__new__"
+
+        profiles = cfg.get("panel_profiles") or []
+        if profile_id == "__new__":
+            base_id = f"prof_{plugin_name}" if plugin_name else "prof_custom"
+            existing_ids = {p.get("id") for p in profiles if isinstance(p, dict)}
+            new_id = base_id
+            counter = 1
+            while new_id in existing_ids:
+                counter += 1
+                new_id = f"{base_id}_{counter}"
+            profile_id = new_id
 
             prof = next((p for p in profiles if isinstance(p, dict) and p.get("id") == profile_id), None)
             if not prof:
@@ -2101,22 +2410,22 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             target_name = prof.get("name") or profile_id
 
             if replace_all:
-                prof["board"] = slots[:12]
+                prof["board"] = slots
             else:
                 board = list(prof.get("board") or [])
-                if slot_idx is not None and 0 <= int(slot_idx) < 12:
+                if slot_idx is not None and int(slot_idx) >= 0:
                     while len(board) <= int(slot_idx):
                         board.append({"type": "EMPTY", "name": "", "icon": "border-none-variant", "color": ""})
                     if slots:
                         board[int(slot_idx)] = slots[0]
                 else:
                     placed = False
-                    for i in range(min(12, len(board))):
+                    for i in range(len(board)):
                         if board[i].get("type") == "EMPTY" and slots:
                             board[i] = slots[0]
                             placed = True
                             break
-                    if not placed and len(board) < 12 and slots:
+                    if not placed and slots:
                         board.append(slots[0])
                 prof["board"] = sanitize_board(board)
 
@@ -2138,6 +2447,48 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             log.warning("[http] panel entities failed: %s", e)
             self._send_json({"ok": False, "entities": []})
 
+    def _handle_save_plugin_config(self, name):
+        try:
+            body = self._read_json()
+        except Exception as e:
+            self.send_error(400, str(e))
+            return
+        import plugin_manager
+        pcfg = plugin_manager.get_plugin_config(name)
+        if isinstance(body, dict):
+            pcfg.update(body)
+        plugin_manager.set_plugin_config(name, pcfg)
+        self._send_json({"ok": True})
+
+    def _handle_save_plugin_outputs(self, name):
+        try:
+            body = self._read_json()
+        except Exception as e:
+            self.send_error(400, str(e))
+            return
+        import plugin_manager
+        if isinstance(body, dict):
+            plugin_manager.set_plugin_outputs(name, body)
+        self._send_json({"ok": True})
+
+    def _handle_plugin_action(self, name, action_id):
+        try:
+            body = self._read_json() if self.command == "POST" else {}
+        except Exception:
+            body = {}
+        import plugin_manager
+        inst = plugin_manager.get(name)
+        if inst and hasattr(inst, "handle_action"):
+            try:
+                res = inst.handle_action(action_id, body)
+                self._send_json({"ok": True, "result": res})
+                return
+            except Exception as e:
+                log.warning("[http] plugin action %s.%s error: %s", name, action_id, e)
+                self._send_json({"ok": False, "error": str(e)})
+                return
+        self._send_json({"ok": False, "error": "Plugin does not handle actions"})
+
     def log_message(self, fmt, *args):
         # suppress per-request logs
         pass
@@ -2145,6 +2496,10 @@ class _RequestHandler(SimpleHTTPRequestHandler):
 
 def _get_plugin_state():
     import plugin_manager
+    try:
+        plugin_manager.sync_plugin_themes()
+    except Exception:
+        pass
     result = {}
     for name, inst in plugin_manager._instances.items():
         try:
@@ -2182,6 +2537,22 @@ def _get_plugins_config():
         pcfg = plugin_manager.get_plugin_config(name)
         status = plugin_manager.get_plugin_status(name)
         capabilities = manifest.get("capabilities", {})
+        
+        # Resolve dynamic options for settings controls
+        settings = manifest.get("settings", [])
+        inst = plugin_manager.get(name)
+        if inst:
+            for section in settings:
+                for ctrl in section.get("controls", []):
+                    options_key = ctrl.get("options_key")
+                    if options_key and hasattr(inst, "get_options"):
+                        try:
+                            opts = inst.get_options(options_key)
+                            if opts:
+                                ctrl["options"] = [{"value": o, "label": o} for o in opts]
+                        except Exception as e:
+                            log.debug(f"[ws_bridge] Failed to resolve options for {name}.{ctrl.get('key')}: {e}")
+        
         result[name] = {
             "display_name": manifest.get("display_name", name),
             "description": manifest.get("description", ""),
@@ -2195,19 +2566,20 @@ def _get_plugins_config():
             "status_label": status["status_label"],
             "message": status["message"],
             "requirements": status.get("requirements", []),
-            "settings": manifest.get("settings", []),
+            "settings": settings,
             "config": dict(pcfg),
             "capabilities": capabilities,
             "status_fields": manifest.get("status", []),
             "outputs_def": manifest.get("outputs", []),
             "outputs": plugin_manager.get_plugin_outputs(name),
             "live_data_def": manifest.get("live_data", {}),
-            "buttons_def": manifest.get("buttons", []),
+            "buttons_def": (inst.get_buttons_def() if (inst and hasattr(inst, "get_buttons_def")) else manifest.get("buttons", [])),
             "preset_layout": manifest.get("preset_layout", []),
             "panel_profiles": list(_app.cfg.get("panel_profiles") or []) if _app else [],
             "actions_def": manifest.get("actions", []),
             "diagnostics_def": manifest.get("diagnostics", []),
             "labels": manifest.get("labels", {}),
+            "theme": manifest.get("theme"),
             "log_path": pcfg.get("log_path", ""),
         }
     return result
@@ -2228,8 +2600,7 @@ def _get_plugin_list():
 
 def _get_sounds():
     import alarm_sound
-    media_dir = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), os.pardir, "media")
+    media_dir = os.path.join(_ROOT_DIR, "media")
     sounds = []
     for name in alarm_sound.list_sounds():
         path = alarm_sound.SOUNDS.get(name, "")
@@ -2242,13 +2613,28 @@ def _get_sounds():
 
 
 def _get_settings_pages():
-    pages_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "settings_pages.json")
-    try:
-        with open(pages_path) as f:
-            return json.load(f)
-    except Exception:
-        return {"pages": []}
+    import paths as _paths
+    candidates = [
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings_pages.json"),
+        os.path.join(str(Path(__file__).parent), "settings_pages.json"),
+    ]
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        # One-file bundle: data is extracted next to the app package.
+        candidates.append(os.path.join(meipass, "app", "settings_pages.json"))
+        candidates.append(os.path.join(meipass, "settings_pages.json"))
+    candidates.append(os.path.join(_paths.get_root_dir(), "app", "settings_pages.json"))
+    for pages_path in candidates:
+        try:
+            if os.path.isfile(pages_path):
+                with open(pages_path) as f:
+                    data = json.load(f)
+                if isinstance(data, dict) and "pages" in data:
+                    return data
+        except Exception as ex:
+            log.warning("[settings] failed to load %s: %s", pages_path, ex)
+    log.warning("[settings] settings_pages.json not found in any candidate location; settings UI will be empty")
+    return {"pages": []}
 
 
 def _get_config(loopback=False):
@@ -2388,12 +2774,11 @@ def _get_panel():
     return panel_payload(_app.cfg)
 
 
-def _get_panel_live():
-    if _app is None:
-        from panel_runtime import live_payload
-        return live_payload({})
+def _get_panel_live(client_cv=None):
     from panel_runtime import live_payload
-    return live_payload(_app.cfg)
+    if _app is None:
+        return live_payload({}, client_cv=client_cv)
+    return live_payload(_app.cfg, client_cv=client_cv)
 
 
 def _get_vision_sensors():
@@ -2450,11 +2835,21 @@ def start_udp_discovery(discovery_port=15503, http_port=15502):
             time.sleep(0.5)
 
 
+class _QuietThreadingHTTPServer(ThreadingHTTPServer):
+    """ThreadingHTTPServer that silently suppresses normal client disconnect errors."""
+
+    def handle_error(self, request, client_address):
+        ex = sys.exception() if hasattr(sys, "exception") else sys.exc_info()[1]
+        if isinstance(ex, (ConnectionResetError, ConnectionAbortedError, BrokenPipeError)):
+            return
+        super().handle_error(request, client_address)
+
+
 def start_http(port=15502):
     os.makedirs(_HTML_DIR, exist_ok=True)
     host = _bind_host()
     handler = partial(_RequestHandler, directory=_HTML_DIR)
-    server = ThreadingHTTPServer((host, port), handler)
+    server = _QuietThreadingHTTPServer((host, port), handler)
     log.info("HTTP server listening on %s:%d (serving %s)", host, port, _HTML_DIR)
     server.serve_forever()
 

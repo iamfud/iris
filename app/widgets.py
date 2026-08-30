@@ -52,11 +52,42 @@ class StepSlider:
         self._cv.bind("<B1-Motion>",  self._on_press)
         var.trace_add("write", lambda *_: self._draw())
 
+        self._grad_a = (72, 178, 233)     # #48B2E9 (Neon at 0%)
+        self._grad_b = (178, 58, 246)    # #B23AF6 (Accent at 100%)
+
+    def set_theme_colors(self, neon, accent, bg=None):
+        def _parse(c, default):
+            try:
+                if isinstance(c, (list, tuple)) and len(c) >= 3:
+                    return tuple(int(x) for x in c[:3])
+                if isinstance(c, str):
+                    c = c.lstrip("#")
+                    return (int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16))
+            except Exception:
+                pass
+            return default
+        self._grad_a = _parse(neon, (72, 178, 233))
+        self._grad_b = _parse(accent, (178, 58, 246))
+        if bg:
+            self._bg = bg
+            try:
+                self._cv.configure(bg=bg)
+            except Exception:
+                pass
+        self._thumb_img = None
+        self._draw()
+
     def place(self, **kw):
         self._cv.place(**kw)
 
     def place_forget(self):
         self._cv.place_forget()
+
+    def destroy(self):
+        try:
+            self._cv.destroy()
+        except Exception:
+            pass
 
     def _idx(self):
         val = self._var.get()
@@ -93,15 +124,15 @@ class StepSlider:
         n  = len(self._steps)
         tx = px + tw * self._idx() // max(n - 1, 1)
 
-        grad_a = (178, 58, 246)     # #B23AF6
-        grad_b = (121, 232, 252)    # #79E8FC
+        grad_a = getattr(self, "_grad_a", (72, 178, 233))
+        grad_b = getattr(self, "_grad_b", (178, 58, 246))
 
         def _lerp(t):
             t = max(0.0, min(1.0, t))
             col = tuple(int(grad_a[i] + (grad_b[i] - grad_a[i]) * t) for i in range(3))
             return "#%02x%02x%02x" % col
 
-        self._rtrack(px, py, w - px, r, self._track_bg)
+        cv.create_rectangle(px, py - r, w - px, py + r, fill=self._track_bg, outline="")
         if tx > px:
             span = tx - px
             cols = max(2, int(span))
@@ -109,7 +140,7 @@ class StepSlider:
                 x0 = px + span * i / cols
                 x1 = px + span * (i + 1) / cols
                 cv.create_line(x0, py, x1, py, width=self._TRACK_H,
-                               capstyle="round", fill=_lerp(i / (cols - 1)))
+                               capstyle="butt", fill=_lerp(i / (cols - 1)))
         if self._thumb_img is None:
             self._thumb_img = self._make_thumb()
         cv.create_image(tx, py, anchor="center", image=self._thumb_img)
@@ -118,24 +149,28 @@ class StepSlider:
         import io as _io, base64 as _b64
         scale = 4
         tr    = self._THUMB_R
-        ir    = max(2, tr - 5)
+        ir    = max(2, tr - 3)
         size  = tr * 2 * scale
         cx = cy = size // 2
 
-        def _hex(h):
-            return tuple(int(h[i:i+2], 16) for i in (1, 3, 5))
+        def _luminance(rgb):
+            return (0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]) / 255.0
 
-        def _luminance(h):
-            r, g, b = _hex(h)
-            return (0.299*r + 0.587*g + 0.114*b) / 255
+        grad_a = getattr(self, "_grad_a", (72, 178, 233))
+        grad_b = getattr(self, "_grad_b", (178, 58, 246))
+
+        # Check perceived luminance of Neon 1, fall back to Neon 2 if too dark
+        outer_rgb = grad_b if _luminance(grad_a) < 0.42 else grad_a
+        inner_rgb = (51, 51, 51)  # #333333 dark grey center
 
         img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
         d   = ImageDraw.Draw(img)
+        # Outer ring (Neon)
         d.ellipse([cx - tr*scale, cy - tr*scale, cx + tr*scale - 1, cy + tr*scale - 1],
-                  fill=(*_hex(self._thumb_color), 255))
-        inner_col = BG if _luminance(self._bg) > 0.3 else NEON
+                  fill=(*outer_rgb, 255))
+        # Inner center (Dark grey)
         d.ellipse([cx - ir*scale, cy - ir*scale, cx + ir*scale - 1, cy + ir*scale - 1],
-                  fill=(*_hex(inner_col), 255))
+                  fill=(*inner_rgb, 255))
 
         final = img.resize((tr * 2, tr * 2), Image.LANCZOS)
         buf   = _io.BytesIO()
@@ -167,7 +202,29 @@ class CircularGauge(tk.Canvas):
         self.thickness = thickness if thickness is not None else max(3, size // 10)
         self._value = None
         self._tk_img = None
+        self._grad_a = (178, 58, 246)     # #B23AF6
+        self._grad_b = (121, 232, 252)    # #79E8FC
         self._draw("\u2014")
+
+    def set_theme_colors(self, accent, neon, bg=None):
+        def _parse(c, default):
+            try:
+                if isinstance(c, (list, tuple)) and len(c) >= 3:
+                    return tuple(int(x) for x in c[:3])
+                if isinstance(c, str):
+                    c = c.lstrip("#")
+                    return (int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16))
+            except Exception:
+                pass
+            return default
+        self._grad_a = _parse(accent, (178, 58, 246))
+        self._grad_b = _parse(neon, (121, 232, 252))
+        if bg:
+            try:
+                self.configure(bg=bg)
+            except Exception:
+                pass
+        self._draw(self._value_text(self._value))
 
     def _last_text(self):
         return getattr(self, "_last_center_text", None)
@@ -222,8 +279,8 @@ class CircularGauge(tk.Canvas):
 
         start = 135
         sweep = 270
-        grad_a = (178, 58, 246)     # #B23AF6
-        grad_b = (121, 232, 252)    # #79E8FC
+        grad_a = getattr(self, "_grad_a", (178, 58, 246))
+        grad_b = getattr(self, "_grad_b", (121, 232, 252))
 
         def _lerp(t):
             return tuple(int(grad_a[i] + (grad_b[i] - grad_a[i]) * t) for i in range(3)) + (255,)
@@ -284,10 +341,18 @@ class RoundedButton(tk.Canvas):
         self._last_wh = (0, 0)
         self._inside_changed = True
 
+        def _lighten(hex_str, delta=25):
+            try:
+                h = hex_str.lstrip("#")
+                r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+                return f"#{max(0, min(255, r + delta)):02x}{max(0, min(255, g + delta)):02x}{max(0, min(255, b + delta)):02x}"
+            except Exception:
+                return hex_str
+
         if style == "prim":
             self._bg    = bg    or NEON
             self._fg    = fg    or BG
-            self._hover = hover or "#5cc8f8"
+            self._hover = hover or _lighten(self._bg, 25)
         elif style == "danger":
             self._bg    = bg    or DANGER
             self._fg    = fg    or "#ffffff"
@@ -295,7 +360,7 @@ class RoundedButton(tk.Canvas):
         else:
             self._bg    = bg    or BUTTON_HOVER
             self._fg    = fg    or FG
-            self._hover = hover or "#454545"
+            self._hover = hover or _lighten(self._bg, 20)
 
         try:
             self._pbg = parent.cget("bg")

@@ -76,8 +76,11 @@ class PCStatsConnector(BaseConnector):
     @classmethod
     def _uses_fahrenheit(cls) -> bool:
         try:
-            from config import load_config
-            cfg = load_config()
+            import plugin_manager
+            cfg = getattr(plugin_manager, "_cfg", None)
+            if not cfg:
+                from config import load_config
+                cfg = load_config()
             pcfg = (cfg.get("plugins") or {}).get("pc_stats", {})
             return bool(pcfg.get("use_fahrenheit", False))
         except Exception:

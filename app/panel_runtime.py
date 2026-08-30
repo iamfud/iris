@@ -9,6 +9,8 @@ like the hardware/Tk panel.
 from __future__ import annotations
 
 import ctypes
+import hashlib
+import json
 import logging
 import os
 import subprocess
@@ -120,23 +122,17 @@ def _overlay_state():
         return False
 
 
-_PLUGIN_TOAST = None
-
 def _set_plugin_toast(toast):
-    global _PLUGIN_TOAST
-    _PLUGIN_TOAST = toast
+    pass
+
 
 def _last_toast():
-    """Structured last notification (from notifications_store or in-flight), or None."""
-    global _PLUGIN_TOAST
+    """Return the structured last recorded notification from notifications_store (or None)."""
     try:
         import notifications_store
-        stored = notifications_store.get_last_notification()
-        if stored:
-            return stored
+        return notifications_store.get_last_notification()
     except Exception:
-        pass
-    return _PLUGIN_TOAST
+        return None
 
 
 def _plugin_button_states():
@@ -155,31 +151,57 @@ def _warnings():
         return {}
 
 
-def _entity_states():
+def _entity_states(plugin_button_states=None):
     try:
         from panel_entities import get_live_entity_states
-        return get_live_entity_states()
+        return get_live_entity_states(plugin_button_states)
     except Exception:
         return {}
 
 
-def live_payload(cfg):
-    """Snapshot for GET /api/panel/live (cheap; called every ~1s)."""
+def _default_audio_output():
+    try:
+        from win_platform import get_current_default_audio_output
+        return get_current_default_audio_output()
+    except Exception:
+        return None
+
+
+def live_payload(cfg, client_cv=None):
+    """Snapshot for GET /api/panel/live (cheap; called every ~500ms)."""
+    try:
+        import plugin_manager
+        plugin_manager.sync_plugin_themes()
+    except Exception:
+        pass
     from panel_actions import ensure_panel_defaults, resolve_panel_board
     ensure_panel_defaults(cfg)
     board, active_ids, fg = resolve_panel_board(cfg)
-    return {
-        "config": {
-            "panel_board": board,
-            "panel_utility": cfg.get("panel_utility") or [],
-            "panel_sliders": cfg.get("panel_sliders") or [],
-            "panel_layout": cfg.get("panel_layout") or [],
-            "panel_gauges": cfg.get("panel_gauges") or {},
-            "panel_profiles": cfg.get("panel_profiles") or [],
-            "media_player_path": cfg.get("media_player_path") or "",
-            "keep_alive": bool(cfg.get("keep_alive", True)),
-            "theme": cfg.get("theme") or {"mode": "iris", "accent": "#B23AF6", "neon": "#79E8FC"},
-        },
+    p_states = _plugin_button_states()
+    e_states = _entity_states(p_states)
+
+    cfg_data = {
+        "panel_board": board,
+        "panel_utility": cfg.get("panel_utility") or [],
+        "panel_sliders": cfg.get("panel_sliders") or [],
+        "panel_layout": cfg.get("panel_layout") or [
+            {"id": "gauges", "enabled": True, "local": True, "remote": True},
+            {"id": "button_box", "enabled": True, "local": True, "remote": True},
+            {"id": "sliders", "enabled": True, "local": True, "remote": True},
+            {"id": "utility", "enabled": True, "local": True, "remote": True},
+        ],
+        "panel_gauges": cfg.get("panel_gauges") or {},
+        "panel_profiles": cfg.get("panel_profiles") or [],
+        "media_player_path": cfg.get("media_player_path") or "",
+        "screensaver_timeout": int(cfg.get("screensaver_timeout", 60)),
+        "keep_alive": bool(cfg.get("keep_alive", True)),
+        "theme": cfg.get("theme") or {"mode": "iris", "accent": "#B23AF6", "neon": "#79E8FC"},
+    }
+    import hashlib
+    cv = hashlib.md5(json.dumps(cfg_data, sort_keys=True).encode()).hexdigest()[:12]
+
+    payload = {
+        "config_version": cv,
         "hardware_connected": _hardware_connected(),
         "port": _port(),
         "gauges": _gauges(),
@@ -192,10 +214,14 @@ def live_payload(cfg):
         "notification": _last_toast(),
         "foreground_app": fg,
         "active_profiles": active_ids,
-        "plugin_button_states": _plugin_button_states(),
-        "entity_states": _entity_states(),
+        "plugin_button_states": p_states,
+        "entity_states": e_states,
+        "default_audio_output": _default_audio_output(),
         "warnings": _warnings(),
     }
+    if client_cv != cv:
+        payload["config"] = cfg_data
+    return payload
 
 
 # ── Action execution ────────────────────────────────────────────
@@ -216,7 +242,7 @@ def execute_slot(slot):
             return {"ok": True}
         if btype == "REST":
             return {"ok": _rest_action(app, slot)}
-        if btype == "OPENRGB":
+        if btype == "OPENRGB" or slot.get("openrgb_profile") or ent.startswith("openrgb.profile."):
             return {"ok": _openrgb_action(slot)}
         if btype == "AUDIO OUTPUT":
             return {"ok": _audio_output_action(slot)}
@@ -226,6 +252,15 @@ def execute_slot(slot):
                     app._root.after(0, app._toggle_stopwatch)
                 except Exception as ex:
                     log.warning("[panel_runtime] stopwatch schedule failed: %s", ex)
+            return {"ok": True}
+        if btype == "SCREENSHOT":
+            if app is not None and getattr(app, "_main_win", None):
+                slot_copy = dict(slot)
+                app._root.after(0, lambda: app._main_win.start_screenshot(slot_copy))
+            return {"ok": True}
+        if btype == "NOTE":
+            if app is not None and getattr(app, "_main_win", None):
+                app._root.after(0, app._main_win.start_quick_note)
             return {"ok": True}
         if btype == "MEDIA_PREV":
             _media_key(0xB1)
@@ -292,6 +327,10 @@ def execute_slot(slot):
                     slot_copy = dict(slot)
                     app._root.after(
                         0, lambda: app._main_win.start_screenshot(slot_copy))
+                return {"ok": True}
+            elif bid == "note" or ent == "system.note":
+                if app is not None and getattr(app, "_main_win", None):
+                    app._root.after(0, app._main_win.start_quick_note)
                 return {"ok": True}
         elif pname == "media" or ent.startswith("media."):
             if bid == "play_pause" or ent == "media.play_pause":
@@ -362,6 +401,21 @@ def _open_path(path, args=None):
         except Exception:
             pass
 
+    # URL handling
+    if raw_path.startswith(("http://", "https://")) or (("." in raw_path) and ("/" in raw_path or "\\" not in raw_path) and not os.path.isabs(raw_path) and not raw_path.lower().endswith((".exe", ".lnk", ".bat", ".cmd", ".vbs", ".ps1"))):
+        url_target = raw_path if raw_path.startswith(("http://", "https://")) else ("https://" + raw_path)
+        try:
+            import webbrowser
+            webbrowser.open(url_target)
+            return
+        except Exception:
+            try:
+                if hasattr(os, "startfile"):
+                    os.startfile(url_target)
+                    return
+            except Exception:
+                pass
+
     exe = shutil.which(raw_path) or raw_path
     try:
         if raw_args:
@@ -389,42 +443,69 @@ def _launch_exe(path):
 
 
 def _rest_action(app, slot):
-    entity = (slot.get("entity_id") or "").strip()
-    if not entity or app is None:
+    entity = (slot.get("entity_id") or slot.get("button_id") or "").strip()
+    if not entity:
+        ent = str(slot.get("entity") or "").strip()
+        if ent.startswith("ha."):
+            entity = ent[len("ha."):]
+    if not entity:
         return False
-    ha_url = (app.cfg.get("ha_url") or "").strip().rstrip("/")
-    if not ha_url:
-        return False
-    token = (app.cfg.get("ha_token") or "").strip()
-    headers = {"Authorization": f"Bearer {token}",
-               "Content-Type": "application/json"}
-    url = f"{ha_url}/api/services/homeassistant/toggle"
-    payload = {"entity_id": entity}
+
+    domain = entity.split(".")[0] if "." in entity else "homeassistant"
+    service = "turn_on" if domain in ("scene", "script") else "toggle"
 
     def _call():
         try:
-            import requests as req
-            r = req.post(url, json=payload, headers=headers, timeout=5)
-            log.info("[panel_runtime] REST %s -> %s", entity, r.status_code)
+            import plugin_manager
+            inst = plugin_manager.get("ha")
+            if inst and hasattr(inst, "_connector"):
+                inst._connector.call_service(domain, service, entity_id=entity)
+            else:
+                from plugins.ha.connector import HASSConnector
+                from config import load_config
+                conn = HASSConnector(load_config())
+                conn.call_service(domain, service, entity_id=entity)
         except Exception as ex:
-            log.warning("[panel_runtime] REST action failed: %s", ex)
+            log.warning("[panel_runtime] HA REST action failed: %s", ex)
 
-    threading.Thread(target=_call, daemon=True).start()
+    threading.Thread(target=_call, daemon=True, name="iris-btn-ha").start()
     return True
 
 
 def _openrgb_action(slot):
     profile_name = (slot.get("openrgb_profile") or "").strip()
     if not profile_name:
+        ent = str(slot.get("entity") or "").strip()
+        if ent.startswith("openrgb.profile."):
+            prof_slug = ent[len("openrgb.profile."):].lower()
+            try:
+                import plugin_manager
+                inst = plugin_manager.get("openrgb")
+                if inst and hasattr(inst, "get_options"):
+                    for p in inst.get_options("openrgb_profiles"):
+                        clean_id = p.lower().replace(" ", "_").replace("(", "").replace(")", "").replace("[", "").replace("]", "")
+                        if clean_id == prof_slug:
+                            profile_name = p
+                            break
+            except Exception:
+                pass
+    if not profile_name:
         return False
     try:
-        from providers.openrgb import _list_profile_files, _profile_name_from_path, _apply_profile
-        for fp in _list_profile_files():
-            if _profile_name_from_path(fp) == profile_name:
-                threading.Thread(target=_apply_profile, args=(fp, profile_name), daemon=True).start()
-                return True
+        import plugin_manager
+        plugin_manager.on_tap("openrgb", "profile", profile_name)
+        return True
     except Exception as ex:
-        log.warning("[panel_runtime] openrgb action failed: %s", ex)
+        log.warning("[panel_runtime] openrgb action via plugin_manager failed: %s", ex)
+        # Fallback to direct SDK call if plugin_manager not available
+        try:
+            from openrgb import OpenRGBClient
+            client = OpenRGBClient(name="Iris")
+            clean_name = profile_name.replace(" (Device)", "").replace(" (Effect)", "").strip()
+            client.load_profile(clean_name)
+            return True
+        except Exception as ex2:
+            log.warning("[panel_runtime] openrgb fallback failed: %s", ex2)
     return False
 
 
@@ -456,9 +537,24 @@ def _audio_output_action(slot):
         return False
     try:
         from win_platform import get_current_default_audio_output, set_default_audio_output
-        current = get_current_default_audio_output()
+        current = get_current_default_audio_output(ttl=0)
         device_key = alt if (alt and current and current == primary) else primary
-        threading.Thread(target=set_default_audio_output, args=(device_key,), daemon=True).start()
+
+        def _switch():
+            set_default_audio_output(device_key)
+            app = _app()
+            if app is not None and getattr(app, "_main_win", None):
+                try:
+                    app._root.after(0, app._main_win._render_buttons)
+                except Exception:
+                    pass
+            try:
+                import ws_bridge
+                ws_bridge.broadcast({"type": "panel_update"})
+            except Exception:
+                pass
+
+        threading.Thread(target=_switch, daemon=True).start()
         return True
     except Exception as ex:
         log.warning("[panel_runtime] audio output action failed: %s", ex)

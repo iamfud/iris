@@ -18,7 +18,9 @@ BUILTIN_ACTIONS = [
     {"type": "SHORTCUT", "label": "App / Shortcut", "icon": "application", "group": False},
     {"type": "GROUP", "label": "Group (Sub-Panel)", "icon": "folder", "group": True},
     {"type": "SENSOR", "label": "Status / Sensor", "icon": "gauge", "group": False},
+    {"type": "AUDIO OUTPUT", "label": "Audio Device Switcher", "icon": "volume-high", "group": False},
     {"type": "SCREENSHOT", "label": "Screenshot", "icon": "camera", "group": False},
+    {"type": "NOTE", "label": "Quick Note", "icon": "note-text", "group": False},
     {"type": "EMPTY", "label": "Empty / Spacer", "icon": "border-none-variant", "group": False},
 ]
 
@@ -195,12 +197,10 @@ def foreground_exe():
 
 def _running_profile_exes(profiles):
     """Return set of lowercased exe basenames (no .exe) for profiles whose process is running."""
-    import psutil
     running = set()
-    # Collect all running process names (basename, lowercased, without .exe)
     try:
-        procs = {p.info["name"].lower().replace(".exe", "")
-                 for p in psutil.process_iter(["name"]) if p.info.get("name")}
+        from win_platform import get_running_process_names
+        procs = {n.replace(".exe", "") for n in get_running_process_names(ttl=1.0)}
     except Exception:
         procs = set()
     for p in (profiles or []):
@@ -216,7 +216,7 @@ def _running_profile_exes(profiles):
 
 import threading
 _CACHE_LOCK = threading.Lock()
-_RESOLVE_CACHE = {"sig": None, "ts": 0.0, "board": None, "active_ids": None, "fg": None}
+_RESOLVE_CACHE = {"sig": None, "ts": 0.0, "board": None, "active_ids": None, "fg": None, "cfg_ver": None}
 _RESOLVE_TTL = 1.0
 
 
@@ -230,19 +230,41 @@ def resolve_panel_board(cfg):
     """
     import time as _t
     now = _t.time()
-    fg = foreground_exe()
+
     profiles = cfg.get("panel_profiles") or []
-    running = _running_profile_exes(profiles)
-    sig = tuple(sorted(running))
+    if not profiles:
+        # Fast path: No profiles defined, skip process scans entirely
+        fg = foreground_exe()
+        return list(cfg.get("panel_board") or []), [], fg
 
     with _CACHE_LOCK:
         cache = _RESOLVE_CACHE
-        if (cache["board"] is not None
-                and cache["sig"] == sig
-                and (now - cache["ts"]) < _RESOLVE_TTL):
+        if cache["board"] is not None and (now - cache["ts"]) < _RESOLVE_TTL:
             return cache["board"], cache["active_ids"], cache["fg"]
 
-    PAGE = 12
+    fg = foreground_exe()
+    running = _running_profile_exes(profiles)
+    sig = tuple(sorted(running))
+
+    # Compute dynamic page size based on gauges, active sliders, and utility row (6 or 7 total row budget)
+    layout = {r.get("id"): r.get("enabled", True) for r in (cfg.get("panel_layout") or []) if isinstance(r, dict)}
+    gauges_cfg = cfg.get("panel_gauges") or {}
+    g_on = layout.get("gauges", True) and (gauges_cfg.get("enabled", True) if isinstance(gauges_cfg, dict) else True)
+    util_on = layout.get("utility", True)
+    util_rows = 1 if util_on else 0
+
+    sliders = cfg.get("panel_sliders") or []
+    show_sliders = cfg.get("show_sliders", True) and layout.get("sliders", True)
+    active_sliders = 0
+    if show_sliders:
+        for s in sliders:
+            if isinstance(s, dict) and s.get("enabled", True):
+                active_sliders += 1
+    slider_rows = 1 if active_sliders == 1 else (2 if active_sliders >= 2 else 0)
+    base_budget = 6 if g_on else 7
+    btn_rows = max(1, base_budget - util_rows - slider_rows)
+    PAGE = btn_rows * 4
+
     default_board = list(cfg.get("panel_board") or [])
     combined = list(default_board)
     active_ids = []
@@ -256,7 +278,7 @@ def resolve_panel_board(cfg):
         profile_board = list(p.get("board") or [])
         if not profile_board:
             continue
-        # Pad to next 12-tile page boundary
+        # Pad to next dynamic page boundary so profile starts on a clean page
         rem = len(combined) % PAGE
         if rem != 0 or len(combined) == 0:
             pad_count = (PAGE - rem) if rem != 0 else PAGE
@@ -300,12 +322,16 @@ def sanitize_sliders(raw):
 
 
 def sanitize_layout(raw):
-    defaults = {d["id"]: d["enabled"] for d in DEFAULT_LAYOUT}
+    defaults = {d["id"]: {"enabled": d["enabled"], "local": d.get("local", True), "remote": d.get("remote", True)} for d in DEFAULT_LAYOUT}
     if isinstance(raw, list):
         for item in raw:
             if isinstance(item, dict) and item.get("id") in defaults:
-                defaults[item["id"]] = bool(item.get("enabled", True))
-    return [{"id": k, "enabled": v} for k, v in defaults.items()]
+                entry = defaults[item["id"]]
+                en = bool(item.get("enabled", True))
+                loc = bool(item.get("local", en))
+                rem = bool(item.get("remote", en))
+                defaults[item["id"]] = {"enabled": loc or rem, "local": loc, "remote": rem}
+    return [{"id": k, "enabled": v["enabled"], "local": v["local"], "remote": v["remote"]} for k, v in defaults.items()]
 
 
 def sanitize_gauges(raw):
@@ -318,10 +344,14 @@ def sanitize_gauges(raw):
     return g
 
 
-def layout_enabled(cfg, section_id):
+def layout_enabled(cfg, section_id, target="local"):
     ensure_panel_defaults(cfg)
     for item in cfg.get("panel_layout") or []:
         if isinstance(item, dict) and item.get("id") == section_id:
+            if target == "local":
+                return bool(item.get("local", item.get("enabled", True)))
+            elif target == "remote":
+                return bool(item.get("remote", item.get("enabled", True)))
             return bool(item.get("enabled", True))
     return True
 

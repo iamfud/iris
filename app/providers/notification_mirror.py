@@ -23,7 +23,7 @@ except ImportError:
 
 
 class NotificationMirrorProvider:
-    POLL_SECONDS = 0.3
+    POLL_SECONDS = 1.0
 
     def __init__(self, cfg, serial_sender=None):
         self.cfg = cfg

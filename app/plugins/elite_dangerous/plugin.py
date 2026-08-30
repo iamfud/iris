@@ -16,88 +16,96 @@ from display_priority import (
     PRIO_PERSIST_MINOR,
 )
 from .connector import EDConnector
+from .binds_scanner import BindsWatcher
 
 log = logging.getLogger("iris.plugins.elite_dangerous")
 
 FUEL_LOW_PCT = 30.0
 
+# Critical alert colour (red flashing background). This is the ALERT channel —
+# distinct from the per-button STATUS border colour the panel derives from the
+# button profile. Kept as a single constant here: once the core exposes a
+# semantic (colour-less) alert API, this constant can be dropped.
+ALERT_COLOR = "#ff3355"
+
 LAYOUT = [
-    {"title": "Navigation", "fields": [
-        {"key": "system", "label": "System"},
-        {"key": "body", "label": "Body"},
-        {"key": "body_type", "label": "Type"},
-        {"key": "allegiance", "label": "Allegiance"},
-        {"key": "economy", "label": "Economy"},
-        {"key": "government", "label": "Government"},
-        {"key": "security", "label": "Security"},
-        {"key": "population", "label": "Population"},
+    {"title": "Navigation & Location", "fields": [
+        {"key": "system", "label": "Star System", "type": "string", "source": "state"},
+        {"key": "system_addr", "label": "System Address", "type": "string", "source": "state"},
+        {"key": "body", "label": "Body / Station", "type": "string", "source": "state"},
+        {"key": "body_type", "label": "Body Type", "type": "string", "source": "state"},
+        {"key": "allegiance", "label": "Allegiance", "type": "string", "source": "state"},
+        {"key": "economy", "label": "Economy", "type": "string", "source": "state"},
+        {"key": "government", "label": "Government", "type": "string", "source": "state"},
+        {"key": "security", "label": "Security Level", "type": "string", "source": "state"},
+        {"key": "population", "label": "Population", "type": "string", "source": "state"},
+        {"key": "jump_type", "label": "Jump Type", "type": "string", "source": "state"},
     ]},
-    {"title": "Commander", "fields": [
-        {"key": "commander", "label": "Name"},
-        {"key": "credits", "label": "Credits"},
-        {"key": "rank_combat", "label": "Combat Rank"},
-        {"key": "progress_combat", "label": "Combat Progress"},
-        {"key": "rank_trade", "label": "Trade Rank"},
-        {"key": "progress_trade", "label": "Trade Progress"},
-        {"key": "rank_explore", "label": "Explore Rank"},
-        {"key": "progress_explore", "label": "Explore Progress"},
-        {"key": "rank_empire", "label": "Empire"},
-        {"key": "rank_federation", "label": "Federation"},
+    {"title": "Ship Telemetry & Vitals", "fields": [
+        {"key": "ship", "label": "Active Ship", "type": "string", "source": "state"},
+        {"key": "hull_health", "label": "Hull Integrity", "type": "percentage", "source": "state"},
+        {"key": "fuel_level", "label": "Fuel Level (t)", "type": "float", "source": "state"},
+        {"key": "fuel_capacity", "label": "Fuel Capacity (t)", "type": "float", "source": "state"},
+        {"key": "fuel_scooped", "label": "Fuel Scooped", "type": "float", "source": "state"},
+        {"key": "cargo", "label": "Cargo Count (t)", "type": "integer", "source": "state"},
+        {"key": "target_ship", "label": "Targeted Ship", "type": "string", "source": "state"},
     ]},
-    {"title": "Ship", "fields": [
-        {"key": "ship", "label": "Ship"},
-        {"key": "hull_health", "label": "Hull"},
-        {"key": "shields_up", "label": "Shields", "source": "status", "display": "up_down"},
-        {"key": "fuel_level", "label": "Fuel"},
-        {"key": "fuel_capacity", "label": "Capacity"},
-        {"key": "fuel_scooped", "label": "Scooped"},
-        {"key": "cargo", "label": "Cargo"},
-        {"key": "docked", "label": "Docked", "source": "status", "display": "yes_no"},
-        {"key": "landed", "label": "Landed", "source": "status", "display": "yes_no"},
-        {"key": "landing_gear", "label": "Landing Gear", "source": "status", "display": "down_up"},
-        {"key": "hardpoints", "label": "Hardpoints", "source": "status", "display": "deployed_retracted"},
-        {"key": "cargo_scoop", "label": "Cargo Scoop", "source": "status", "display": "deployed_retracted"},
-        {"key": "flight_assist", "label": "Flight Assist", "source": "status", "display": "on_off"},
-        {"key": "silent_running", "label": "Silent Running", "source": "status", "display": "on_off"},
-        {"key": "lights_on", "label": "Lights", "source": "status", "display": "on_off"},
-        {"key": "night_vision", "label": "Night Vision", "source": "status", "display": "on_off"},
-        {"key": "in_srv", "label": "In SRV", "source": "status", "display": "yes_no"},
-        {"key": "in_fighter", "label": "In Fighter", "source": "status", "display": "yes_no"},
-        {"key": "on_foot", "label": "On Foot", "source": "status", "display": "yes_no"},
-        {"key": "taxi", "label": "Apex Taxi", "source": "status", "display": "yes_no"},
-        {"key": "multicrew", "label": "Multicrew", "source": "status", "display": "yes_no"},
-        {"key": "supercruise", "label": "Supercruise", "source": "status", "display": "yes_no"},
+    {"title": "Flight Controls & Systems", "fields": [
+        {"key": "landing_gear", "label": "Landing Gear", "type": "boolean", "source": "status", "display": "down_up"},
+        {"key": "cargo_scoop", "label": "Cargo Scoop", "type": "boolean", "source": "status", "display": "deployed_retracted"},
+        {"key": "flight_assist", "label": "Flight Assist", "type": "boolean", "source": "status", "display": "on_off"},
+        {"key": "hardpoints", "label": "Hardpoints", "type": "boolean", "source": "status", "display": "deployed_retracted"},
+        {"key": "lights_on", "label": "Exterior Lights", "type": "boolean", "source": "status", "display": "on_off"},
+        {"key": "night_vision", "label": "Night Vision", "type": "boolean", "source": "status", "display": "on_off"},
+        {"key": "silent_running", "label": "Silent Running", "type": "boolean", "source": "status", "display": "on_off"},
+        {"key": "shields_up", "label": "Shields", "type": "boolean", "source": "status", "display": "online_down"},
+        {"key": "supercruise", "label": "Supercruise", "type": "boolean", "source": "status", "display": "yes_no"},
+        {"key": "mass_locked", "label": "Mass Locked", "type": "boolean", "source": "status", "display": "yes_no"},
     ]},
-    {"title": "Combat", "fields": [
-        {"key": "target_ship", "label": "Target"},
-        {"key": "bounty_reward", "label": "Bounty Reward"},
-        {"key": "mission", "label": "Mission"},
-        {"key": "mission_reward", "label": "Mission Reward"},
-        {"key": "mass_locked", "label": "Mass Lock", "source": "status", "display": "yes_no"},
-        {"key": "wing_visible", "label": "Wing", "source": "status", "display": "yes_no"},
-        {"key": "last_repair", "label": "Last Repair"},
-        {"key": "last_repair_cost", "label": "Repair Cost"},
+    {"title": "Docking & Environment", "fields": [
+        {"key": "docked", "label": "Docked", "type": "boolean", "source": "status", "display": "yes_no"},
+        {"key": "landed", "label": "Surface Landed", "type": "boolean", "source": "status", "display": "yes_no"},
+        {"key": "in_srv", "label": "In SRV", "type": "boolean", "source": "status", "display": "yes_no"},
+        {"key": "in_fighter", "label": "In Fighter", "type": "boolean", "source": "status", "display": "yes_no"},
+        {"key": "on_foot", "label": "On Foot (Odyssey)", "type": "boolean", "source": "status", "display": "yes_no"},
+        {"key": "taxi", "label": "Apex Taxi", "type": "boolean", "source": "status", "display": "yes_no"},
+        {"key": "multicrew", "label": "Multicrew Active", "type": "boolean", "source": "status", "display": "yes_no"},
     ]},
-    {"title": "Exploration", "fields": [
-        {"key": "jump_type", "label": "Jump Type"},
-        {"key": "fsd_charging", "label": "FSD Charging", "source": "status", "display": "yes_no"},
-        {"key": "fsd_cooldown", "label": "FSD Cooldown", "source": "status", "display": "yes_no"},
-        {"key": "fsd_jump", "label": "FSD Jump", "source": "status", "display": "yes_no"},
-        {"key": "hyperdrive", "label": "Hyperdrive", "source": "status", "display": "yes_no"},
-        {"key": "glide", "label": "Glide", "source": "status", "display": "yes_no"},
-        {"key": "last_scan", "label": "Last Scan"},
-        {"key": "scan_distance", "label": "Scan Distance"},
-        {"key": "system_scan_pct", "label": "System Scan"},
-        {"key": "scooping_fuel", "label": "Fuel Scooping", "source": "status", "display": "yes_no"},
+    {"title": "Commander & Career Ranks", "fields": [
+        {"key": "commander", "label": "Commander Name", "type": "string", "source": "state"},
+        {"key": "credits", "label": "Credits / Wealth", "type": "credits", "source": "state"},
+        {"key": "rank_combat", "label": "Combat Rank", "type": "string", "source": "state"},
+        {"key": "progress_combat", "label": "Combat Progress", "type": "percentage", "source": "state"},
+        {"key": "rank_trade", "label": "Trade Rank", "type": "string", "source": "state"},
+        {"key": "progress_trade", "label": "Trade Progress", "type": "percentage", "source": "state"},
+        {"key": "rank_explore", "label": "Exploration Rank", "type": "string", "source": "state"},
+        {"key": "progress_explore", "label": "Exploration Progress", "type": "percentage", "source": "state"},
+        {"key": "rank_empire", "label": "Empire Rank", "type": "string", "source": "state"},
+        {"key": "rank_federation", "label": "Federation Rank", "type": "string", "source": "state"},
     ]},
-    {"title": "Powerplay", "fields": [
-        {"key": "powerplay_power", "label": "Power"},
-        {"key": "powerplay_rank", "label": "Rank"},
-        {"key": "powerplay_merits", "label": "Merits"},
+    {"title": "Frame Shift & Exploration", "fields": [
+        {"key": "fsd_charging", "label": "FSD Charging", "type": "boolean", "source": "status", "display": "yes_no"},
+        {"key": "fsd_cooldown", "label": "FSD Cooldown", "type": "boolean", "source": "status", "display": "yes_no"},
+        {"key": "fsd_jump", "label": "FSD Jump Active", "type": "boolean", "source": "status", "display": "yes_no"},
+        {"key": "hyperdrive", "label": "Hyperdrive Active", "type": "boolean", "source": "status", "display": "yes_no"},
+        {"key": "glide", "label": "Planetary Glide", "type": "boolean", "source": "status", "display": "yes_no"},
+        {"key": "scooping_fuel", "label": "Corona Fuel Scooping", "type": "boolean", "source": "status", "display": "yes_no"},
+        {"key": "last_scan", "label": "Last Scanned Body", "type": "string", "source": "state"},
+        {"key": "scan_distance", "label": "Scan Distance", "type": "string", "source": "state"},
+        {"key": "system_scan_pct", "label": "System Scan Progress", "type": "percentage", "source": "state"},
     ]},
-    {"title": "Fleet Carrier", "fields": [
-        {"key": "carrier_name", "label": "Name"},
-        {"key": "carrier_callsign", "label": "Callsign"},
+    {"title": "Operations, Powerplay & Carrier", "fields": [
+        {"key": "mission", "label": "Active Mission", "type": "string", "source": "state"},
+        {"key": "mission_reward", "label": "Mission Reward", "type": "credits", "source": "state"},
+        {"key": "bounty_reward", "label": "Claimed Bounty", "type": "credits", "source": "state"},
+        {"key": "wing_visible", "label": "Wing Visible", "type": "boolean", "source": "status", "display": "yes_no"},
+        {"key": "last_repair", "label": "Last Repair", "type": "string", "source": "state"},
+        {"key": "last_repair_cost", "label": "Last Repair Cost", "type": "credits", "source": "state"},
+        {"key": "powerplay_power", "label": "Pledged Power", "type": "string", "source": "state"},
+        {"key": "powerplay_rank", "label": "Powerplay Rank", "type": "string", "source": "state"},
+        {"key": "powerplay_merits", "label": "Powerplay Merits", "type": "string", "source": "state"},
+        {"key": "carrier_name", "label": "Fleet Carrier Name", "type": "string", "source": "state"},
+        {"key": "carrier_callsign", "label": "Carrier Callsign", "type": "string", "source": "state"},
     ]},
 ]
 
@@ -109,14 +117,17 @@ class Plugin:
     def __init__(self, cfg, serial_sender=None, overlays=None):
         self._connector = EDConnector()
         self._serial = serial_sender
+        self._cfg = cfg
         self.overlays = overlays
         self._running = False
         self._thread = None
         self._last_system = None
+        self._binds_watcher = BindsWatcher()
 
     def start(self):
         self._connector.connect()
         self._running = True
+        self._binds_watcher.check_for_updates(self._cfg)
         self._thread = threading.Thread(
             target=self._watch_system_changes,
             daemon=True,
@@ -129,7 +140,296 @@ class Plugin:
             name="ed-ship-watch",
         )
         self._ship_thread.start()
+        self._ensure_default_profile()
         log.info("elite_dangerous plugin started")
+
+    def get_options(self, key):
+        """Dynamic options provider for settings dropdowns."""
+        from .binds_scanner import list_available_binds_files, list_available_backups
+        if key == "available_binds_files":
+            return list_available_binds_files()
+        if key == "available_backups":
+            return list_available_backups()
+        return []
+
+    def handle_action(self, action_id, payload=None):
+        """Execute plugin actions from UI (import binds, create backup, restore)."""
+        import os
+        from .binds_scanner import (
+            get_bindings_dir,
+            get_active_binds_file,
+            backup_binds_file,
+            parse_binds_xml,
+            sync_binds_to_config,
+            restore_backup,
+            list_available_backups,
+        )
+        import plugin_manager
+        pcfg = plugin_manager.get_plugin_config(self.name)
+        selected_file = pcfg.get("selected_binds_file")
+
+        if action_id == "import_binds":
+            binds_dir = get_bindings_dir()
+            if not binds_dir:
+                return {"ok": False, "error": "Frontier Bindings directory not found"}
+            if selected_file:
+                target_path = os.path.join(binds_dir, selected_file)
+            else:
+                target_path, _ = get_active_binds_file()
+            if not target_path or not os.path.isfile(target_path):
+                return {"ok": False, "error": f"Binds file not found: {target_path}"}
+            backup_binds_file(target_path)
+            keys = parse_binds_xml(target_path)
+            self._binds_watcher._current_key_map = keys
+            count = sync_binds_to_config(self._cfg, keys)
+            from config import save_config
+            save_config(self._cfg)
+            log.info("[ed.binds] manually imported %d hotkeys from %s", count, target_path)
+            return {"ok": True, "message": f"Imported and synced {len(keys)} keybindings ({count} buttons updated) from {os.path.basename(target_path)}"}
+
+        if action_id == "backup_binds":
+            target_path, preset = get_active_binds_file()
+            if not target_path:
+                return {"ok": False, "error": "No active binds file found to backup"}
+            bk = backup_binds_file(target_path, preset)
+            if bk:
+                return {"ok": True, "message": f"Backup saved to Iris library: {os.path.basename(bk)}"}
+            return {"ok": False, "error": "Backup creation failed"}
+
+        if action_id == "restore_binds":
+            backups = list_available_backups()
+            if not backups:
+                return {"ok": False, "error": "No backups available in Iris plugin data"}
+            bk_file = (payload or {}).get("backup_file") or backups[0]
+            ok, msg = restore_backup(bk_file, self._cfg)
+            return {"ok": ok, "message": msg}
+
+        return {"ok": False, "error": f"Unknown action: {action_id}"}
+
+    def get_buttons_def(self):
+        """Return button definitions with live hotkeys synced from active .binds."""
+        import plugin_manager
+        manifest = plugin_manager.get_manifest(self.name) or {}
+        buttons = list(manifest.get("buttons", []))
+        out = []
+        for b in buttons:
+            b_copy = dict(b)
+            bid = b_copy.get("id") or b_copy.get("button_id")
+            if bid:
+                b_copy["hotkey"] = self._binds_watcher.get_key(bid, b_copy.get("default_hotkey", ""))
+            out.append(b_copy)
+        return out
+
+    def _ensure_default_profile(self):
+        """Install a default Elite Dangerous button-box profile if one doesn't exist.
+
+        Checks panel_profiles for any profile whose exe or name matches Elite
+        Dangerous.  If none is found, injects a fully-configured 12-slot profile
+        so the user has a ready-to-use button box the moment the plugin loads.
+        Does nothing if a matching profile already exists.
+        """
+        try:
+            from config import save_config
+            cfg = self._cfg
+            if not isinstance(cfg, dict):
+                return
+
+            profiles = cfg.get("panel_profiles") or []
+            ed_exe = "EliteDangerous64.exe"
+
+            # Already exists? Leave it alone.
+            for p in profiles:
+                if not isinstance(p, dict):
+                    continue
+                exe = (p.get("exe") or "").lower()
+                name = (p.get("name") or "").lower()
+                if "elite" in exe or "elite" in name or "EliteDangerous64" in (p.get("exe") or ""):
+                    return
+
+            default_board = [
+                {
+                    "type": "TOGGLE",
+                    "name": "Landing Gear",
+                    "icon": "airplane-landing",
+                    "icon_off": "airplane-takeoff",
+                    "color": "#ffb703",
+                    "plugin": "elite_dangerous",
+                    "button_id": "landing_gear",
+                    "widget_type": "status_toggle",
+                    "state_key": "landing_gear",
+                    "labels": {"on": "DOWN", "off": "UP"},
+                    "colors": {"on": "#ffaa00", "off": "#444444"},
+                    "hotkey": self._binds_watcher.get_key("landing_gear", "L"),
+                    "show_name": True, "show_icon": True, "show_state": True,
+                },
+                {
+                    "type": "TOGGLE",
+                    "name": "Cargo Scoop",
+                    "icon": "bag-personal",
+                    "color": "#ffb703",
+                    "plugin": "elite_dangerous",
+                    "button_id": "cargo_scoop",
+                    "widget_type": "status_toggle",
+                    "state_key": "cargo_scoop",
+                    "labels": {"on": "DEPLOYED", "off": "RETRACTED"},
+                    "colors": {"on": "#ffaa00", "off": "#444444"},
+                    "hotkey": self._binds_watcher.get_key("cargo_scoop", "Home"),
+                    "show_name": True, "show_icon": True, "show_state": True,
+                },
+                {
+                    "type": "TOGGLE",
+                    "name": "Flight Assist",
+                    "icon": "steering",
+                    "color": "#ffb703",
+                    "plugin": "elite_dangerous",
+                    "button_id": "flight_assist",
+                    "widget_type": "status_toggle",
+                    "state_key": "flight_assist",
+                    "labels": {"on": "OFF", "off": "ON"},
+                    "colors": {"on": "#ff3355", "off": "#00ff88"},
+                    "hotkey": self._binds_watcher.get_key("flight_assist", "Z"),
+                    "show_name": True, "show_icon": True, "show_state": True,
+                },
+                {
+                    "type": "TOGGLE",
+                    "name": "Ship Lights",
+                    "icon": "flare",
+                    "color": "#ffb703",
+                    "plugin": "elite_dangerous",
+                    "button_id": "lights",
+                    "widget_type": "status_toggle",
+                    "state_key": "lights_on",
+                    "labels": {"on": "ON", "off": "OFF"},
+                    "colors": {"on": "#ffaa00", "off": "#444444"},
+                    "hotkey": self._binds_watcher.get_key("lights", "Insert"),
+                    "show_name": True, "show_icon": True, "show_state": True,
+                },
+                {
+                    "type": "TOGGLE",
+                    "name": "Hardpoints",
+                    "icon": "crosshairs",
+                    "color": "#ffb703",
+                    "plugin": "elite_dangerous",
+                    "button_id": "hardpoints",
+                    "widget_type": "status_toggle",
+                    "state_key": "hardpoints",
+                    "labels": {"on": "DEPLOYED", "off": "RETRACTED"},
+                    "colors": {"on": "#ff3355", "off": "#444444"},
+                    "hotkey": self._binds_watcher.get_key("hardpoints", "U"),
+                    "show_name": True, "show_icon": True, "show_state": True,
+                },
+                {
+                    "type": "TOGGLE",
+                    "name": "Night Vision",
+                    "icon": "eye",
+                    "color": "#ffb703",
+                    "plugin": "elite_dangerous",
+                    "button_id": "night_vision",
+                    "widget_type": "status_toggle",
+                    "state_key": "night_vision",
+                    "labels": {"on": "ON", "off": "OFF"},
+                    "colors": {"on": "#00ff88", "off": "#444444"},
+                    "hotkey": self._binds_watcher.get_key("night_vision", "N"),
+                    "show_name": True, "show_icon": True, "show_state": True,
+                },
+                {
+                    "type": "TOGGLE",
+                    "name": "Silent Running",
+                    "icon": "ghost",
+                    "color": "#ffb703",
+                    "plugin": "elite_dangerous",
+                    "button_id": "silent_running",
+                    "widget_type": "status_toggle",
+                    "state_key": "silent_running",
+                    "labels": {"on": "ACTIVE", "off": "OFF"},
+                    "colors": {"on": "#ff3355", "off": "#444444"},
+                    "hotkey": self._binds_watcher.get_key("silent_running", "Delete"),
+                    "show_name": True, "show_icon": True, "show_state": True,
+                },
+                {
+                    "type": "TOGGLE",
+                    "name": "Supercruise",
+                    "icon": "rocket-launch",
+                    "color": "#ffb703",
+                    "plugin": "elite_dangerous",
+                    "button_id": "supercruise",
+                    "widget_type": "status_toggle",
+                    "state_key": "supercruise",
+                    "labels": {"on": "ACTIVE", "off": "IDLE"},
+                    "colors": {"on": "#48b2e9", "off": "#444444"},
+                    "hotkey": self._binds_watcher.get_key("supercruise", "J"),
+                    "show_name": True, "show_icon": True, "show_state": True,
+                },
+                {
+                    "type": "TOGGLE",
+                    "name": "Shields",
+                    "icon": "shield",
+                    "color": "#ffb703",
+                    "plugin": "elite_dangerous",
+                    "button_id": "shields",
+                    "widget_type": "display",
+                    "state_key": "shields_up",
+                    "labels": {"on": "ONLINE", "off": "DOWN"},
+                    "colors": {"on": "#00ff88", "off": "#ff3355"},
+                    "show_name": True, "show_icon": True, "show_state": True,
+                },
+                {
+                    "type": "TOGGLE",
+                    "name": "Mass Lock",
+                    "icon": "weight",
+                    "color": "#ffb703",
+                    "plugin": "elite_dangerous",
+                    "button_id": "mass_lock",
+                    "widget_type": "display",
+                    "state_key": "mass_locked",
+                    "labels": {"on": "LOCKED", "off": "CLEAR"},
+                    "colors": {"on": "#ff3355", "off": "#00ff88"},
+                    "show_name": True, "show_icon": True, "show_state": True,
+                },
+                {
+                    "type": "TOGGLE",
+                    "name": "FSD Charge",
+                    "icon": "speedometer",
+                    "color": "#ffb703",
+                    "plugin": "elite_dangerous",
+                    "button_id": "fsd_status",
+                    "widget_type": "display",
+                    "state_key": "fsd_charging",
+                    "labels": {"on": "CHARGING", "off": "READY"},
+                    "colors": {"on": "#ffaa00", "off": "#555555"},
+                    "show_name": True, "show_icon": True, "show_state": True,
+                },
+                {
+                    "type": "TOGGLE",
+                    "name": "Fuel Scoop",
+                    "icon": "gas-station",
+                    "color": "#ffb703",
+                    "plugin": "elite_dangerous",
+                    "button_id": "fuel_scoop",
+                    "widget_type": "display",
+                    "state_key": "scooping_fuel",
+                    "labels": {"on": "SCOOPING", "off": "IDLE"},
+                    "colors": {"on": "#ffee00", "off": "#555555"},
+                    "show_name": True, "show_icon": True, "show_state": True,
+                },
+            ]
+
+            new_profile = {
+                "id": "prof_elite_dangerous",
+                "name": "Elite Dangerous",
+                "exe": ed_exe,
+                "enabled": True,
+                "board": default_board,
+            }
+
+            profiles.append(new_profile)
+            cfg["panel_profiles"] = profiles
+            save_config(cfg)
+            log.info("[ed] installed default button-box profile")
+
+        except Exception as e:
+            log.warning("[ed] could not install default profile: %s", e)
+
 
     def stop(self):
         self._running = False
@@ -141,11 +441,12 @@ class Plugin:
                 self._serial.clear_display_prefix("ed.")
 
     def poll(self):
-        """Lightweight live state for UI polling — no event log, no layout."""
+        """Lightweight live state for UI polling."""
         return {
             "available": self._connector.available,
             "state": self._connector.live_state(),
             "status": self._connector.status(),
+            "layout": LAYOUT,
         }
 
     def _watch_system_changes(self):
@@ -207,13 +508,30 @@ class Plugin:
         }
         prev = {}
         shield_alert_active = False
+        tick_count = 0
         while self._running:
+            if not self._connector.game_running():
+                if shield_alert_active:
+                    shield_alert_active = False
+                    self._clear_shields_warning()
+                prev.clear()
+                time.sleep(1.0)
+                continue
+
             try:
                 st = self._connector.status()
             except Exception as e:
                 log.warning("[ed] ship state error: %s", e)
                 time.sleep(1.0)
                 continue
+
+            tick_count += 1
+            if tick_count % 4 == 0:  # Every 2s (4 * 0.5s)
+                try:
+                    self._binds_watcher.check_for_updates(self._cfg)
+                except Exception as ex:
+                    log.debug("[ed] periodic binds check error: %s", ex)
+
             for key, (label, on_msg, off_msg) in ship_labels.items():
                 cur = st.get(key)
                 if cur is None:
@@ -243,14 +561,12 @@ class Plugin:
                         )
                 prev[key] = cur
 
-            # Shield-down alert: STATE-driven, not edge-triggered. While the
-            # status reports shields DOWN the alert is active — sent once per
-            # episode, re-armed when shields come back online. The connector
-            # keeps shields_up authoritative from the journal ShieldState event,
-            # so a stale Status.json flag can't re-fire it during recovery.
+            # Shield-down alert: STATE-driven, not edge-triggered. Only fire
+            # during active flight when the game is running and player is undocked.
+            in_flight = not st.get("docked", False) and not st.get("landed", False) and not st.get("on_foot", False)
             shields = st.get("shields_up")
             if shields is not None:
-                if shields is False:
+                if shields is False and in_flight:
                     if not shield_alert_active:
                         self._alert_shields_down()
                         self._set_shields_warning()
@@ -265,25 +581,36 @@ class Plugin:
 
     def _alert_shields_down(self):
         """Red rapid-flash alert when the ship shield generator fails."""
-        if not self._serial:
-            return
-        try:
-            if hasattr(self._serial, "send_alert"):
-                self._serial.send_alert(
-                    "SHIELDS DOWN",
-                    "Shield generator has failed",
-                    key="ed.shields",
+        log.info("[ed] shields down alert triggered")
+        if self.overlays:
+            try:
+                self.overlays.hero(
+                    title="SHIELDS DOWN",
+                    subtitle="Shield generator has failed!",
+                    fields=[("Status", "CRITICAL"), ("Shields", "OFFLINE")],
+                    duration=6,
                 )
-            else:
-                self._serial.notify(
-                    "ed.shields",
-                    "SHIELDS DOWN",
-                    "Shield generator has failed",
-                    theme="alert",
-                )
-            log.info("[ed] shields down alert sent")
-        except Exception as e:
-            log.warning("[ed] shield alert error: %s", e)
+            except Exception as e:
+                log.debug("[ed] shield overlay error: %s", e)
+
+        if self._serial:
+            try:
+                if hasattr(self._serial, "send_alert"):
+                    self._serial.send_alert(
+                        "SHIELDS DOWN",
+                        "Shield generator has failed",
+                        key="ed.shields",
+                    )
+                else:
+                    self._serial.notify(
+                        "ed.shields",
+                        "SHIELDS DOWN",
+                        "Shield generator has failed",
+                        theme="alert",
+                    )
+                log.info("[ed] shields down alert sent to hardware")
+            except Exception as e:
+                log.warning("[ed] shield alert error: %s", e)
 
     def _set_shields_warning(self):
         """Flag the Shields button red while the shield generator is down.
@@ -291,29 +618,42 @@ class Plugin:
         The warning colour overrides the button's normal on/off colour; when it
         is cleared the button returns to its previous saved value.
         """
-        if not self._serial:
-            return
         try:
-            if hasattr(self._serial, "set_warning"):
+            import warning_state
+            warning_state.set_warning(
+                "elite_dangerous:shields",
+                color=ALERT_COLOR,
+                message="SHIELDS DOWN",
+            )
+        except Exception as e:
+            log.debug("[ed] warning_state set error: %s", e)
+
+        if self._serial and hasattr(self._serial, "set_warning"):
+            try:
                 self._serial.set_warning(
                     "elite_dangerous:shields",
-                    color="#ff3355",
+                    color=ALERT_COLOR,
                     message="SHIELDS DOWN",
                 )
-        except Exception as e:
-            log.warning("[ed] shield warning error: %s", e)
+            except Exception as e:
+                log.warning("[ed] shield warning error: %s", e)
 
     def _clear_shields_warning(self):
         """Turn the warning off; the button returns to its saved colour."""
-        if not self._serial:
-            return
         try:
-            if hasattr(self._serial, "clear_warning"):
-                self._serial.clear_warning("elite_dangerous:shields")
-            if hasattr(self._serial, "clear_display"):
-                self._serial.clear_display("ed.shields")
+            import warning_state
+            warning_state.clear_warning("elite_dangerous:shields")
         except Exception as e:
-            log.warning("[ed] shield warning clear error: %s", e)
+            log.debug("[ed] warning_state clear error: %s", e)
+
+        if self._serial:
+            try:
+                if hasattr(self._serial, "clear_warning"):
+                    self._serial.clear_warning("elite_dangerous:shields")
+                if hasattr(self._serial, "clear_display"):
+                    self._serial.clear_display("ed.shields")
+            except Exception as e:
+                log.warning("[ed] shield warning clear error: %s", e)
 
     def _fuel_percent(self):
         """Return fuel % (0-100) from journal fuel tons, or None if unknown."""

@@ -32,23 +32,69 @@ _STATUS_FLAGS = {
     0x00000200: "cargo_scoop",
     0x00000400: "silent_running",
     0x00000800: "scooping_fuel",
+    0x00001000: "srv_handbrake",
+    0x00002000: "srv_turret",
+    0x00004000: "srv_under_ship",
+    0x00008000: "srv_drive_assist",
     0x00010000: "mass_locked",
-    0x00040000: "in_srv",
-    0x00080000: "in_fighter",
-    0x00200000: "night_vision",
-    0x00800000: "fsd_charging",
-    0x01000000: "fsd_cooldown",
-    0x04000000: "fsd_jump",
-    0x08000000: "hyperdrive",
-    0x10000000: "glide",
-    0x20000000: "on_foot",
-    0x40000000: "taxi",
-    0x80000000: "multicrew",
+    0x00020000: "fsd_charging",
+    0x00040000: "fsd_cooldown",
+    0x00080000: "low_fuel",
+    0x00100000: "overheating",
+    0x00200000: "has_lat_long",
+    0x00400000: "is_in_danger",
+    0x00800000: "being_interdicted",
+    0x01000000: "in_mainship",
+    0x02000000: "in_fighter",
+    0x04000000: "in_srv",
+    0x08000000: "hud_analysis_mode",
+    0x10000000: "night_vision",
+    0x20000000: "alt_from_avg_radius",
+    0x40000000: "fsd_jump",
+    0x80000000: "srv_high_beam",
 }
 
 
-def _parse_status_flags(flags_int):
-    return {name: bool(flags_int & bit) for bit, name in _STATUS_FLAGS.items()}
+def _parse_status_flags(data):
+    if isinstance(data, int):
+        flags_int = data
+        data_dict = {}
+    elif isinstance(data, dict):
+        flags_int = data.get("Flags", 0)
+        data_dict = data
+    else:
+        flags_int = 0
+        data_dict = {}
+
+    res = {name: bool(flags_int & bit) for bit, name in _STATUS_FLAGS.items()}
+
+    # Extract live numeric telemetry values if present in Status.json
+    if "ShieldPercent" in data_dict:
+        try:
+            res["shield_percent"] = round(float(data_dict["ShieldPercent"]) * 100.0, 1)
+        except Exception:
+            pass
+    if "Fuel" in data_dict and isinstance(data_dict["Fuel"], dict):
+        try:
+            res["fuel_main"] = round(float(data_dict["Fuel"].get("FuelMain", 0.0)), 1)
+            res["fuel_reservoir"] = round(float(data_dict["Fuel"].get("FuelReservoir", 0.0)), 2)
+        except Exception:
+            pass
+    if "Cargo" in data_dict:
+        try:
+            res["cargo_count"] = int(data_dict["Cargo"])
+        except Exception:
+            pass
+    if "LegalStatus" in data_dict:
+        res["legal_status"] = str(data_dict["LegalStatus"])
+    if "FireGroup" in data_dict:
+        res["fire_group"] = int(data_dict["FireGroup"])
+    if "GuiFocus" in data_dict:
+        res["gui_focus"] = int(data_dict["GuiFocus"])
+    if "Pips" in data_dict and isinstance(data_dict["Pips"], list):
+        res["pips"] = data_dict["Pips"]
+
+    return res
 
 
 def _glob_journals():
@@ -168,13 +214,13 @@ class EliteJournalWatcher:
 
     @staticmethod
     def read_status():
-        """Read and parse Status.json.  Returns flag dict or None."""
+        """Read and parse Status.json.  Returns flag/telemetry dict or None."""
         if not os.path.isfile(STATUS_PATH):
             return None
         try:
             with open(STATUS_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            return _parse_status_flags(data.get("Flags", 0))
+            return _parse_status_flags(data)
         except Exception:
             return None
 
@@ -234,7 +280,7 @@ class EliteJournalWatcher:
                 if os.path.isfile(STATUS_PATH):
                     with open(STATUS_PATH, "r", encoding="utf-8", errors="replace") as f:
                         data = json.load(f)
-                    flags = _parse_status_flags(data.get("Flags", 0))
+                    flags = _parse_status_flags(data)
                     if self.on_status:
                         self.on_status(flags)
             except Exception:

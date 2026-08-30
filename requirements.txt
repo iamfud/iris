@@ -12,16 +12,10 @@ psutil>=5.9.0
 comtypes>=1.1.14
 pycaw>=20181226
 
-# Windows SMTC (System Media Transport Controls) for now-playing
-winrt>=2.0.0
-
-# Audio visualizer (WASAPI loopback via pyaudiowpatch, FFT)
-pyaudio>=0.2.14
-pyaudiowpatch  # patched PortAudio with WASAPI loopback support
-numpy>=1.24.0
-
-# Hotkey injection (overlay HOTKEY tiles)
-keyboard>=0.13.5
+# Windows SMTC and Native Vision OCR (Windows.Media.Ocr)
+winrt-runtime>=2.0.0
+winrt-Windows.Media.Ocr>=3.0.0
+winrt-Windows.Graphics.Imaging>=3.0.0
 
 # Build / packaging
 pyinstaller>=6.0

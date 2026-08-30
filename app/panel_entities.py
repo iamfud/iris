@@ -251,12 +251,21 @@ def get_plugin_entities() -> List[Dict[str, Any]]:
             # 3. Live Data / Sensors defined in manifest
             live_data = manifest.get("live_data") or {}
             raw_fields = live_data.get("fields") or {}
+            field_items = []
             if isinstance(raw_fields, dict):
-                field_items = list(raw_fields.items())
+                field_items.extend(list(raw_fields.items()))
             elif isinstance(raw_fields, list):
-                field_items = [(f.get("key") or f.get("id"), f) for f in raw_fields if isinstance(f, dict) and (f.get("key") or f.get("id"))]
-            else:
-                field_items = []
+                for f in raw_fields:
+                    if isinstance(f, dict) and (f.get("key") or f.get("id")):
+                        field_items.append((f.get("key") or f.get("id"), f))
+            
+            # Support nested live_data layout sections
+            for section in live_data.get("layout") or []:
+                if isinstance(section, dict):
+                    sec_fields = section.get("fields") or []
+                    for f in sec_fields:
+                        if isinstance(f, dict) and (f.get("key") or f.get("id")):
+                            field_items.append((f.get("key") or f.get("id"), f))
 
             for sid, sdef in field_items:
                 if not sid:
@@ -264,18 +273,113 @@ def get_plugin_entities() -> List[Dict[str, Any]]:
                 ent_id = f"{name}.{sid}"
                 if any(e["id"] == ent_id for e in entities):
                     continue
+                raw_dtype = (sdef.get("type") or "string").lower() if isinstance(sdef, dict) else "string"
+                if raw_dtype in ("percentage", "float", "integer", "number"):
+                    vtype = "number"
+                elif raw_dtype in ("boolean", "bool", "status", "toggle"):
+                    vtype = "boolean"
+                else:
+                    vtype = "string"
                 entities.append({
                     "id": ent_id,
                     "plugin": name,
                     "domain": domain,
                     "name": (sdef.get("label") or sdef.get("name") or sid.replace("_", " ").title()) if isinstance(sdef, dict) else sid.replace("_", " ").title(),
                     "type": "data",
+                    "data_type": vtype,
+                    "raw_data_type": raw_dtype,
                     "icon": (sdef.get("icon") or "gauge") if isinstance(sdef, dict) else "gauge",
                     "color": "#48B2E9",
                     "unit": (sdef.get("unit") or "") if isinstance(sdef, dict) else "",
                     "writable": False,
                     "description": (sdef.get("description") or "") if isinstance(sdef, dict) else "",
                 })
+
+            # 4. OpenRGB Profiles
+            if name == "openrgb":
+                profiles = []
+                inst = plugin_manager.get(name)
+                if inst and hasattr(inst, "get_options"):
+                    try:
+                        profiles = inst.get_options("openrgb_profiles") or []
+                    except Exception:
+                        pass
+                if not profiles:
+                    try:
+                        from plugins.openrgb.connector import OpenRGBConnector
+                        conn = OpenRGBConnector()
+                        profiles = conn.get_options("openrgb_profiles")
+                    except Exception:
+                        pass
+                for p in profiles:
+                    clean_id = p.lower().replace(" ", "_").replace("(", "").replace(")", "").replace("[", "").replace("]", "")
+                    ent_id = f"openrgb.profile.{clean_id}"
+                    if not any(e["id"] == ent_id for e in entities):
+                        entities.append({
+                            "id": ent_id,
+                            "plugin": "openrgb",
+                            "button_id": "profile",
+                            "domain": "OpenRGB",
+                            "name": p,
+                            "type": "action",
+                            "icon": "palette",
+                            "color": "#00ff88",
+                            "writable": True,
+                            "openrgb_profile": p,
+                            "default_action": "openrgb_profile",
+                            "state_key": "active_profile",
+                            "labels": {"on": "ACTIVE", "off": "IDLE"},
+                            "description": f"Switch OpenRGB to '{p}' profile",
+                        })
+            # 5. Home Assistant Controllable Entities
+            if name == "ha":
+                ha_entities = []
+                inst = plugin_manager.get(name)
+                if inst and hasattr(inst, "get_entities"):
+                    try:
+                        ha_entities = inst.get_entities() or []
+                    except Exception:
+                        pass
+                if not ha_entities:
+                    try:
+                        from plugins.ha.connector import HASSConnector
+                        conn = HASSConnector(plugin_manager._cfg)
+                        ha_entities = conn.get_entities()
+                    except Exception:
+                        pass
+                
+                DOM_ICONS = {
+                    "light": "lightbulb",
+                    "switch": "power",
+                    "scene": "palette-swatch",
+                    "script": "script-text",
+                    "sun": "weather-sunny",
+                    "climate": "thermostat",
+                }
+                for he in ha_entities:
+                    eid = he.get("entity_id", "")
+                    hdom = he.get("domain", "ha")
+                    fname = he.get("friendly_name") or eid
+                    ent_id = f"ha.{eid}"
+                    if not any(e["id"] == ent_id for e in entities):
+                        is_writable = hdom in ("light", "switch", "scene", "script", "climate", "input_boolean")
+                        entities.append({
+                            "id": ent_id,
+                            "plugin": "ha",
+                            "button_id": eid,
+                            "domain": f"Home Assistant ({hdom.title()})",
+                            "name": fname,
+                            "type": "action" if is_writable else "data",
+                            "data_type": "string" if not is_writable else None,
+                            "icon": DOM_ICONS.get(hdom, "home-automation"),
+                            "color": "#48B2E9",
+                            "writable": is_writable,
+                            "ha_entity_id": eid,
+                            "ha_domain": hdom,
+                            "default_action": "ha_toggle",
+                            "state_key": eid,
+                            "description": f"Home Assistant {hdom}: {fname}",
+                        })
     except Exception as e:
         log.debug("Plugin entity discovery failed: %s", e)
 
@@ -289,19 +393,35 @@ def get_entity_registry() -> List[Dict[str, Any]]:
     return registry
 
 
-def get_live_entity_states() -> Dict[str, Dict[str, Any]]:
-    """Collect live states for all registered entities."""
+def get_entity(entity_id: str) -> Optional[Dict[str, Any]]:
+    """Return a single entity definition by ID or None."""
+    if not entity_id:
+        return None
+    for e in get_entity_registry():
+        if e.get("id") == entity_id or e.get("state_key") == entity_id:
+            return e
+    return None
+
+
+def get_live_entity_states(plugin_button_states=None) -> Dict[str, Dict[str, Any]]:
+    """Return dictionary of {entity_id: {"active": bool, "label": str, ...}} for live UI binding."""
     states: Dict[str, Dict[str, Any]] = {}
+
+    # Hardware connected
+    try:
+        from main import get_serial_comm
+        sc = get_serial_comm()
+        states["system.display"] = {
+            "active": bool(sc and sc.is_connected),
+            "label": "ON" if (sc and sc.is_connected) else "OFF",
+        }
+    except Exception:
+        pass
 
     # Core states
     try:
         from ws_bridge import _app
         if _app is not None:
-            states["system.display"] = {
-                "active": bool(_app.cfg.get("pc_stats_manual", False)),
-                "label": "ON" if _app.cfg.get("pc_stats_manual") else "OFF",
-                "value": bool(_app.cfg.get("pc_stats_manual")),
-            }
             states["system.overlay"] = {
                 "active": bool(getattr(_app, "_overlay_shown", False)),
                 "label": "ACTIVE" if getattr(_app, "_overlay_shown", False) else "HIDDEN",
@@ -331,37 +451,60 @@ def get_live_entity_states() -> Dict[str, Dict[str, Any]]:
                     states["pc_stats.cpu_usage"] = {"value": st["cpu_usage"], "label": f"{st['cpu_usage']}%"}
                 if "ram_usage" in st:
                     states["pc_stats.ram_usage"] = {"value": st["ram_usage"], "label": f"{st['ram_usage']}%"}
+    except Exception:
+        pass
 
-            # Media Provider live telemetry
-            media_prov = getattr(_app, "_media_provider", None)
-            if media_prov is None and getattr(_app, "_providers", None):
-                for p in _app._providers:
-                    if hasattr(p, "get_artwork"):
-                        media_prov = p
-                        break
-            if media_prov is not None:
-                m_data = media_prov.poll_data() if hasattr(media_prov, "poll_data") else {}
-                is_playing = m_data.get("status") == "playing"
-                states["media.player"] = {
-                    "active": is_playing,
-                    "title": m_data.get("title", ""),
-                    "artist": m_data.get("artist", ""),
-                    "album": m_data.get("album", ""),
-                    "has_art": bool(m_data.get("has_art")),
-                    "art_id": m_data.get("art_id", ""),
-                    "label": (m_data.get("title") or "Player")[:14],
-                }
-                states["media.play_pause"] = {
-                    "active": is_playing,
-                    "label": "PAUSE" if is_playing else "PLAY",
+    # Media Player
+    try:
+        from providers.media import get_media_payload
+        m_data = get_media_payload()
+        if m_data and m_data.get("available"):
+            status = m_data.get("playback_status") or m_data.get("status")
+            is_playing = (status == "playing")
+            states["media.player"] = {
+                "active": is_playing,
+                "status": status,
+                "title": m_data.get("title", ""),
+                "artist": m_data.get("artist", ""),
+                "album": m_data.get("album", ""),
+                "has_art": bool(m_data.get("has_art")),
+                "art_id": m_data.get("art_id", ""),
+                "label": (m_data.get("title") or "Player")[:14],
+            }
+            states["media.play_pause"] = {
+                "active": is_playing,
+                "label": "PAUSE" if is_playing else "PLAY",
+            }
+    except Exception:
+        pass
+
+    # OpenRGB active profile states
+    try:
+        import plugin_manager
+        inst = plugin_manager.get("openrgb")
+        if inst and hasattr(inst, "poll"):
+            p_poll = inst.poll()
+            act_prof = p_poll.get("active_profile") or ""
+            for prof in (p_poll.get("profiles") or []):
+                clean_id = prof.lower().replace(" ", "_").replace("(", "").replace(")", "").replace("[", "").replace("]", "")
+                clean_prof = prof.replace(" (Device)", "").replace(" (Effect)", "").strip().lower()
+                clean_act = act_prof.replace(" (Device)", "").replace(" (Effect)", "").strip().lower()
+                is_active = (clean_prof == clean_act) if (clean_prof and clean_act) else False
+                states[f"openrgb.profile.{clean_id}"] = {
+                    "active": is_active,
+                    "label": "ACTIVE" if is_active else "IDLE",
+                    "value": is_active,
                 }
     except Exception:
         pass
 
     # Plugin states
     try:
-        import plugin_manager
-        p_states = plugin_manager.get_plugin_button_states()
+        if plugin_button_states is None:
+            import plugin_manager
+            p_states = plugin_manager.get_plugin_button_states()
+        else:
+            p_states = plugin_button_states
         for k, v in p_states.items():
             # key is "plugin:button_id"
             ent_id = k.replace(":", ".")

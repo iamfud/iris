@@ -36,7 +36,8 @@ def _local_utc_offset():
 
 class SerialSender:
     def __init__(self):
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        self._write_lock = threading.Lock()
         self._forced_port = None
         self._ser = None
         self._on_connect_queue = {}
@@ -273,30 +274,40 @@ class SerialSender:
         log.info("[serial] factory reset done; device defaults re-queued")
 
     def reset_device(self):
+        ser = None
         with self._lock:
             if not self._ser or not self._ser.is_open:
                 log.warning("[serial] reset: no serial connection")
                 return False
-            port = self._ser.port
-            try:
-                log.info("[serial] pulsing DTR+RTS on %s", port)
-                # ESP8266 reset: falling edge on DTR# through capacitor → RST pulse
-                self._ser.dtr = True
-                self._ser.rts = True
+            ser = self._ser
+            port = ser.port
+
+        try:
+            log.info("[serial] pulsing DTR+RTS on %s", port)
+            with self._write_lock:
+                ser.dtr = True
+                ser.rts = True
                 time.sleep(0.1)
-                self._ser.dtr = False
-                self._ser.rts = False
+                ser.dtr = False
+                ser.rts = False
                 time.sleep(0.1)
-                self._ser.dtr = True
-                self._ser.rts = True
+                ser.dtr = True
+                ser.rts = True
                 time.sleep(0.1)
-                self._ser.dtr = False
-                self._ser.rts = False
-                time.sleep(2.5)
-            except Exception as e:
-                log.warning("[serial] DTR/RTS reset failed: %s", e)
-                self._ser = None
-                return False
+                ser.dtr = False
+                ser.rts = False
+            # Wait outside lock for device reboot
+            time.sleep(2.5)
+        except Exception as e:
+            log.warning("[serial] DTR/RTS reset failed: %s", e)
+            with self._lock:
+                if self._ser is ser:
+                    try:
+                        self._ser.close()
+                    except Exception:
+                        pass
+                    self._ser = None
+            return False
         log.info("[serial] device reset via DTR/RTS on %s", port)
         return True
 
@@ -323,29 +334,35 @@ class SerialSender:
         while True:
             time.sleep(1.0)
             try:
-                with self._lock:
-                    self._display.tick()
+                self._display.tick()
             except Exception:
                 log.exception("[serial] display arbiter error")
 
     def _write(self, line):
-        with self._lock:
-            return self._write_locked(line)
+        return self._write_locked(line)
 
     def _write_locked(self, line):
         raw = line.encode("utf-8") if isinstance(line, str) else line
-        if self._ser and self._ser.is_open:
+        with self._lock:
+            ser = self._ser
+        if not (ser and ser.is_open):
+            return False
+        with self._write_lock:
+            if not (ser and ser.is_open):
+                return False
             try:
-                self._ser.write(raw)
-                self._ser.flush()
+                ser.write(raw)
+                ser.flush()
                 return True
             except Exception as e:
                 log.warning("[serial] write error: %s", e)
-                try:
-                    self._ser.close()
-                except Exception:
-                    pass
-                self._ser = None
+                with self._lock:
+                    if self._ser is ser:
+                        try:
+                            self._ser.close()
+                        except Exception:
+                            pass
+                        self._ser = None
         return False
 
     def _send_and_wait(self, line, prefix="STATUS:", timeout=10):
@@ -359,15 +376,22 @@ class SerialSender:
             time.sleep(0.3)
         else:
             return False, "not connected"
+
         with self._lock:
-            if not (self._ser and self._ser.is_open):
+            ser = self._ser
+        if not (ser and ser.is_open):
+            return False, "lost connection"
+
+        with self._write_lock:
+            if not (ser and ser.is_open):
                 return False, "lost connection"
             try:
-                self._ser.reset_input_buffer()
-                self._ser.write((line + "\n").encode("utf-8"))
-                self._ser.flush()
+                ser.reset_input_buffer()
+                ser.write((line + "\n").encode("utf-8"))
+                ser.flush()
             except Exception as e:
                 return False, str(e)
+
         while not self._rx_q.empty():
             try:
                 self._rx_q.get_nowait()
@@ -385,20 +409,31 @@ class SerialSender:
 
     def _reader(self):
         while True:
-            line = None
+            ser = None
             with self._lock:
                 if self._ser and self._ser.is_open:
-                    try:
-                        self._ser.timeout = 0.1
-                        raw = self._ser.readline()
-                        if raw:
-                            line = raw.decode("utf-8", errors="ignore").strip()
-                    except Exception:
+                    ser = self._ser
+            if not ser:
+                time.sleep(0.05)
+                continue
+
+            line = None
+            try:
+                ser.timeout = 0.1
+                raw = ser.readline()
+                if raw:
+                    line = raw.decode("utf-8", errors="ignore").strip()
+            except Exception:
+                with self._lock:
+                    if self._ser is ser:
                         try:
                             self._ser.close()
                         except Exception:
                             pass
                         self._ser = None
+                time.sleep(0.05)
+                continue
+
             if line:
                 try:
                     self._dispatch_q.put_nowait(line)
@@ -410,8 +445,6 @@ class SerialSender:
                     self._rx_q.put_nowait(line)
                 except queue.Full:
                     pass
-            else:
-                time.sleep(0.02)
 
     def _dispatcher(self):
         while not self._dispatch_stop.is_set():
@@ -429,32 +462,39 @@ class SerialSender:
         _min_reconnect = 0.0
         while True:
             time.sleep(3)
+            ser = None
             with self._lock:
                 if self._ser and self._ser.is_open:
-                    try:
-                        present = {p.device for p in serial.tools.list_ports.comports()}
-                        if self._ser.port in present:
-                            continue
-                    except Exception:
-                        continue
-                    try:
-                        self._ser.close()
-                    except Exception:
-                        pass
-                    self._ser = None
-                if time.time() < _min_reconnect:
-                    continue
-                port = self._forced_port or self._find_derek_port()
-                if not port:
-                    continue
+                    ser = self._ser
+            if ser:
                 try:
-                    self._ser = serial.Serial(port, 115200, timeout=1, dsrdtr=False, rtscts=False)
-                    self._ser.dtr = False
-                    self._ser.rts = False
-                    log.info(f"[serial] connected to {port}")
-                except Exception as e:
-                    log.debug(f"[serial] connect failed {port}: {e}")
+                    present = {p.device for p in serial.tools.list_ports.comports()}
+                    if ser.port in present:
+                        continue
+                except Exception:
                     continue
+                with self._lock:
+                    if self._ser is ser:
+                        try:
+                            self._ser.close()
+                        except Exception:
+                            pass
+                        self._ser = None
+            if time.time() < _min_reconnect:
+                continue
+            port = self._forced_port or self._find_derek_port()
+            if not port:
+                continue
+            try:
+                new_ser = serial.Serial(port, 115200, timeout=1, dsrdtr=False, rtscts=False)
+                new_ser.dtr = False
+                new_ser.rts = False
+                with self._lock:
+                    self._ser = new_ser
+                log.info(f"[serial] connected to {port}")
+            except Exception as e:
+                log.debug(f"[serial] connect failed {port}: {e}")
+                continue
             if self._ser and self._ser.is_open:
                 time.sleep(3)
                 with self._lock:

@@ -16,10 +16,25 @@ import json
 import logging
 import os
 import psutil
+import paths
 
 log = logging.getLogger("iris.plugins")
 
-_PLUGIN_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plugins")
+
+def builtin_plugins_dir():
+    """Return the built-in plugins directory."""
+    return paths.get_builtin_plugins_dir()
+
+
+def user_plugins_dir():
+    """Return the user plugin directory, creating it if it doesn't exist."""
+    return paths.get_user_plugins_dir()
+
+
+# Kept for compatibility
+_BUILTIN_PLUGIN_DIR = builtin_plugins_dir()
+_USER_PLUGIN_DIR = user_plugins_dir()
+
 _instances = {}
 _manifests = {}
 _cfg = {}
@@ -28,45 +43,90 @@ _overlays = None
 
 
 def _plugin_path(name):
-    return os.path.join(_PLUGIN_DIR, name)
+    """Return the directory for a named plugin, preferring user over built-in."""
+    u_dir = user_plugins_dir()
+    b_dir = builtin_plugins_dir()
+    user = os.path.join(u_dir, name)
+    if os.path.isdir(user):
+        return user
+    return os.path.join(b_dir, name)
 
 
-def discover_plugins():
-    """Return list of (name, manifest) for all installed plugins."""
-    if not os.path.isdir(_PLUGIN_DIR):
-        return []
+_DISCOVERED_CACHE = None
+
+
+def invalidate_plugin_discovery():
+    global _DISCOVERED_CACHE
+    _DISCOVERED_CACHE = None
+
+
+def discover_plugins(force=False):
+    """Return list of (name, manifest) for all installed plugins.
+
+    Scans the single plugins folder (built-in + user add-ons share it).
+    Location: portable -> <root>/plugins, installed -> Documents/Iris/plugins.
+    """
+    global _DISCOVERED_CACHE
+    if not force and _DISCOVERED_CACHE is not None:
+        return list(_DISCOVERED_CACHE)
+
+    # Collect entries from both dirs; user plugins take precedence by name
+    seen = {}  # name -> (plugin_dir, is_user)
+    b_dir = builtin_plugins_dir()
+    u_dir = user_plugins_dir()
+    for base, is_user in [(b_dir, False), (u_dir, True)]:
+        if not os.path.isdir(base):
+            continue
+        for entry in sorted(os.listdir(base)):
+            mpath = os.path.join(base, entry, "plugin.json")
+            if os.path.isfile(mpath):
+                seen[entry] = (base, is_user)
+
+    # Put the parent of the 'plugins' package on sys.path so that
+    # `import plugins.<name>.connector` (used below) resolves in both source
+    # and frozen builds, wherever the plugins folder lives.
+    import sys
+    root = paths.plugins_root()
+    if root not in sys.path:
+        sys.path.insert(0, root)
+
     result = []
-    for entry in sorted(os.listdir(_PLUGIN_DIR)):
-        mpath = os.path.join(_PLUGIN_DIR, entry, "plugin.json")
-        if os.path.isfile(mpath):
+    for entry in sorted(seen):
+        base, is_user = seen[entry]
+        plugin_dir = os.path.join(base, entry)
+        mpath = os.path.join(plugin_dir, "plugin.json")
+        try:
+            with open(mpath, encoding="utf-8") as f:
+                manifest = json.load(f)
+            manifest.setdefault("name", entry)
+            manifest.setdefault("type", "service")
+            manifest.setdefault("message_not_running", "")
+            manifest.setdefault("settings", [])
+            manifest.setdefault("buttons", [])
+            manifest.setdefault("preset_layout", [])
+            manifest["user_plugin"] = is_user
             try:
-                with open(mpath) as f:
-                    manifest = json.load(f)
-                manifest.setdefault("name", entry)
-                manifest.setdefault("type", "service")
-                manifest.setdefault("message_not_running", "")
-                manifest.setdefault("settings", [])
-                manifest.setdefault("buttons", [])
-                manifest.setdefault("preset_layout", [])
-                try:
-                    mod = importlib.import_module(f"plugins.{entry}.connector")
-                    for name_in_mod in dir(mod):
-                        obj = getattr(mod, name_in_mod)
-                        if isinstance(obj, type) and hasattr(obj, "controls"):
+                mod = importlib.import_module(f"plugins.{entry}.connector")
+                for name_in_mod in dir(mod):
+                    obj = getattr(mod, name_in_mod)
+                    if isinstance(obj, type) and (hasattr(obj, "controls") or hasattr(obj, "get_settings")):
+                        if hasattr(obj, "controls"):
                             ctrl_list = obj.controls()
                             if ctrl_list:
                                 manifest["controls"] = ctrl_list
-                            if hasattr(obj, "get_settings"):
-                                conn_settings = obj.get_settings()
-                                if conn_settings:
-                                    _merge_settings(manifest, conn_settings)
-                            break
-                except Exception:
-                    pass
-                _manifests[entry] = manifest
-                result.append((entry, manifest))
-            except Exception as e:
-                log.warning("[pm] invalid manifest %s: %s", mpath, e)
+                        conn_settings = None
+                        if hasattr(obj, "get_settings"):
+                            conn_settings = obj.get_settings()
+                        if conn_settings:
+                            _merge_settings(manifest, conn_settings)
+                        break
+            except Exception:
+                pass
+            _manifests[entry] = manifest
+            result.append((entry, manifest))
+        except Exception as e:
+            log.warning("[pm] invalid manifest %s: %s", mpath, e)
+    _DISCOVERED_CACHE = list(result)
     return result
 
 
@@ -118,6 +178,69 @@ def refresh_settings(name):
         pass
 
 
+class SerialSenderOutputProxy:
+    """Wraps serial_sender to enforce the 'display' output routing toggle."""
+    def __init__(self, target, plugin_name):
+        self._target = target
+        self._plugin_name = plugin_name
+
+    def _is_enabled(self):
+        outputs = get_plugin_outputs(self._plugin_name)
+        if isinstance(outputs, dict) and "display" in outputs:
+            return bool(outputs["display"])
+        manifest = get_manifest(self._plugin_name) or {}
+        for o in manifest.get("outputs") or []:
+            if o.get("id") == "display":
+                return bool(o.get("enabled", True))
+        return True
+
+    def __getattr__(self, name):
+        attr = getattr(self._target, name)
+        if not callable(attr):
+            return attr
+
+        # Clears, releases, and button warning states ALWAYS pass through
+        if any(w in name for w in ("release", "clear", "stop", "warning")):
+            return attr
+
+        def wrapper(*args, **kwargs):
+            if not self._is_enabled():
+                return None
+            return attr(*args, **kwargs)
+        return wrapper
+
+
+class OverlaysOutputProxy:
+    """Wraps overlays to enforce the 'overlay' output routing toggle."""
+    def __init__(self, target, plugin_name):
+        self._target = target
+        self._plugin_name = plugin_name
+
+    def _is_enabled(self):
+        outputs = get_plugin_outputs(self._plugin_name)
+        if isinstance(outputs, dict) and "overlay" in outputs:
+            return bool(outputs["overlay"])
+        manifest = get_manifest(self._plugin_name) or {}
+        for o in manifest.get("outputs") or []:
+            if o.get("id") == "overlay":
+                return bool(o.get("enabled", True))
+        return True
+
+    def __getattr__(self, name):
+        attr = getattr(self._target, name)
+        if not callable(attr):
+            return attr
+
+        if any(w in name for w in ("hide", "clear", "dismiss", "stop")):
+            return attr
+
+        def wrapper(*args, **kwargs):
+            if not self._is_enabled():
+                return None
+            return attr(*args, **kwargs)
+        return wrapper
+
+
 def load_plugin(name, cfg, serial_sender=None, overlays=None):
     """Import and instantiate a plugin by name. Returns None on failure."""
     try:
@@ -126,7 +249,9 @@ def load_plugin(name, cfg, serial_sender=None, overlays=None):
         if cls is None:
             log.warning("[pm] %s has no Plugin class", name)
             return None
-        return cls(cfg, serial_sender, overlays)
+        wrapped_serial = SerialSenderOutputProxy(serial_sender, name) if serial_sender is not None else None
+        wrapped_overlays = OverlaysOutputProxy(overlays, name) if overlays is not None else None
+        return cls(cfg, wrapped_serial, wrapped_overlays)
     except Exception as e:
         log.warning("[pm] failed to load %s: %s", name, e)
         return None
@@ -176,11 +301,13 @@ def on_tap(plugin_name, control_id, value=None):
     inst = _instances.get(plugin_name)
     if inst is None:
         log.warning("[pm] tap on unknown plugin %s", plugin_name)
-        return
+        return False
     try:
         inst.on_tap(control_id, value)
+        return True
     except Exception as e:
         log.warning("[pm] %s.on_tap(%s) failed: %s", plugin_name, control_id, e)
+        return False
 
 
 def invoke_action(plugin_name, action_id):
@@ -234,6 +361,20 @@ def set_plugin_outputs(name, outputs):
     from config import save_config
     save_config(_cfg)
 
+    # If display was turned off, clear any active progress/display claims immediately
+    if outputs.get("display") is False and _serial_sender is not None:
+        try:
+            if hasattr(_serial_sender, "release_progress_prefix"):
+                _serial_sender.release_progress_prefix(f"{name}.")
+                _serial_sender.release_progress_prefix("ed.")
+            if hasattr(_serial_sender, "clear_display_prefix"):
+                _serial_sender.clear_display_prefix(f"{name}.")
+                _serial_sender.clear_display_prefix("ed.")
+            if hasattr(_serial_sender, "clear_display"):
+                _serial_sender.clear_display()
+        except Exception as e:
+            log.debug("[pm] error clearing serial display on output disable: %s", e)
+
 
 # ── Process detection ──────────────────────────────────────────
 
@@ -241,14 +382,11 @@ def is_exe_running(exe_name):
     """Check if a process with the given exe name is running."""
     if not exe_name:
         return False
-    exe_lower = exe_name.lower().strip()
-    for proc in psutil.process_iter(["name"]):
-        try:
-            if proc.info["name"] and proc.info["name"].lower() == exe_lower:
-                return True
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            continue
-    return False
+    try:
+        from win_platform import is_process_running
+        return is_process_running(exe_name, ttl=1.0)
+    except Exception:
+        return False
 
 
 def _check_requirements(requirements):
@@ -294,6 +432,104 @@ def _stop_plugin(name):
         log.warning("[pm] %s stop failed: %s", name, e)
     del _instances[name]
     log.info("[pm] stopped %s", name)
+    sync_plugin_themes()
+
+
+# ── Dynamic Plugin Theme Engine ────────────────────────────────
+_saved_base_theme = None
+_active_themed_plugin = None
+
+
+def is_exe_foreground(exe_name: str) -> bool:
+    """Check if the given executable name is currently the active foreground window."""
+    if not exe_name:
+        return False
+    try:
+        import ctypes
+        import psutil
+        user32 = ctypes.windll.user32
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return False
+        pid = ctypes.c_ulong()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if not pid.value:
+            return False
+        proc_name = psutil.Process(pid.value).name().lower().strip()
+        target_name = os.path.basename(exe_name).lower().strip()
+        return proc_name == target_name or (target_name and (target_name in proc_name or proc_name in target_name))
+    except Exception:
+        return False
+
+
+def _is_plugin_focused(manifest, pcfg):
+    """Check if the plugin's target executable is the active foreground window."""
+    exe_target = pcfg.get("exe_path") or manifest.get("exe_default") or ""
+    return is_exe_foreground(exe_target)
+
+
+def sync_plugin_themes():
+    """Check active plugins for declared themes and auto-switch / restore theme on window focus."""
+    global _saved_base_theme, _active_themed_plugin
+    if not _cfg or not isinstance(_cfg, dict):
+        return
+
+    active_theme_candidate = None
+    candidate_plugin = None
+
+    for name, manifest in _manifests.items():
+        theme_def = manifest.get("theme")
+        if not theme_def or not isinstance(theme_def, dict):
+            continue
+        pcfg = _cfg.get("plugins", {}).get(name, {})
+        if not pcfg.get("enabled", True):
+            continue
+        if pcfg.get("auto_theme") is False:
+            continue
+
+        # Check if plugin's game/app window is actively in the foreground (focused)
+        is_focused = _is_plugin_focused(manifest, pcfg)
+
+        if is_focused:
+            active_theme_candidate = theme_def
+            candidate_plugin = name
+            break
+
+    if candidate_plugin:
+        if _active_themed_plugin != candidate_plugin:
+            # Snapshot original theme before taking over
+            if _saved_base_theme is None:
+                cur_th = _cfg.get("theme") or {}
+                _saved_base_theme = {
+                    "mode": cur_th.get("mode", "iris"),
+                    "accent": cur_th.get("accent", "#B23AF6"),
+                    "neon": cur_th.get("neon", "#48B2E9"),
+                }
+            _active_themed_plugin = candidate_plugin
+            theme_payload = {
+                "mode": active_theme_candidate.get("mode", "custom"),
+                "neon": active_theme_candidate.get("neon", "#ffaa00"),
+                "accent": active_theme_candidate.get("accent", "#ff5500")
+            }
+            _cfg["theme"] = theme_payload
+            log.info("[pm] auto-applied game theme for %s: %s", candidate_plugin, theme_payload)
+            _broadcast_theme(theme_payload)
+    else:
+        # Restore previously snapshotted theme
+        if _active_themed_plugin is not None and _saved_base_theme is not None:
+            log.info("[pm] restored base theme after %s closed: %s", _active_themed_plugin, _saved_base_theme)
+            _cfg["theme"] = dict(_saved_base_theme)
+            _broadcast_theme(_saved_base_theme)
+            _saved_base_theme = None
+            _active_themed_plugin = None
+
+
+def _broadcast_theme(theme_dict):
+    try:
+        import ws_bridge
+        ws_bridge.broadcast({"type": "theme", "theme": theme_dict})
+    except Exception:
+        pass
 
 
 # ── Lifecycle check ────────────────────────────────────────────
@@ -338,6 +574,8 @@ def check_plugins():
             _start_plugin(name)
         else:
             _stop_plugin(name)
+
+    sync_plugin_themes()
 
 
 # ── Rich status for API ────────────────────────────────────────

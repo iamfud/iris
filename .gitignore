@@ -23,6 +23,13 @@ app/panel_https_key.pem
 .idea/
 .claude/
 
+# iOS / Android artifacts
+*.apk
+*.mp4
+
+# Local archive of old backups / stray dev files
+_archive_*/
+
 # Windows
 Thumbs.db
 Desktop.ini

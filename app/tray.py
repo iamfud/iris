@@ -1,6 +1,7 @@
 """Iris — Tray icon and static menu."""
 
 import logging
+import sys
 from pathlib import Path
 import pystray
 from PIL import Image
@@ -10,7 +11,10 @@ log = logging.getLogger("iris.tray")
 
 _ICON_CACHE = {}
 
-_MEDIA_DIR = Path(__file__).resolve().parent.parent / "media"
+if getattr(sys, "frozen", False):
+    _MEDIA_DIR = Path(sys._MEIPASS) / "media"
+else:
+    _MEDIA_DIR = Path(__file__).resolve().parent.parent / "media"
 
 
 def make_icon_image(size=TRAY_ICON_SIZE, online=False):
@@ -42,6 +46,10 @@ def build_tray_menu(app):
             "Show/Hide Panel",
             lambda *a: app._on_tray_click(),
             default=True,
+        ),
+        pystray.MenuItem(
+            "Quick Actions Toolbar",
+            lambda *a: app._open_capture_toolbar(),
         ),
         pystray.MenuItem(
             "Iris Settings",

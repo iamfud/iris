@@ -7,12 +7,75 @@ from PIL import Image
 
 log = logging.getLogger("iris.platform")
 _DIALOG_LOCK = threading.Lock()
+_PROCESS_CACHE_LOCK = threading.Lock()
+_PROCESS_NAMES_CACHE = set()
+_PROCESS_NAMES_CACHE_TS = 0.0
 
 
+def get_running_process_names(ttl: float = 1.0) -> set[str]:
+    """Return a cached set of lowercase running process executable names (e.g. {'notepad.exe', 'elitedangerous64.exe'}).
+    
+    Refreshes at most once every `ttl` seconds to eliminate redundant full process-table scans across
+    the vision system, plugin auto-activation, iTunes probes, and board resolution.
+    """
+    global _PROCESS_NAMES_CACHE, _PROCESS_NAMES_CACHE_TS
+    import time
+    now = time.time()
+    with _PROCESS_CACHE_LOCK:
+        if _PROCESS_NAMES_CACHE and (now - _PROCESS_NAMES_CACHE_TS) < ttl:
+            return _PROCESS_NAMES_CACHE
+        try:
+            import psutil
+            names = set()
+            for p in psutil.process_iter(["name"]):
+                try:
+                    n = p.info.get("name")
+                    if n:
+                        names.add(n.lower())
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    pass
+            _PROCESS_NAMES_CACHE = names
+            _PROCESS_NAMES_CACHE_TS = now
+            return _PROCESS_NAMES_CACHE
+        except Exception as e:
+            log.debug("[process_cache] get_running_process_names failed: %s", e)
+            return _PROCESS_NAMES_CACHE or set()
 
 
-def get_current_default_audio_output():
+def is_process_running(name_or_list, ttl: float = 1.0) -> bool:
+    """Check if any process in name_or_list (str or iterable of str) is currently running."""
+    if not name_or_list:
+        return False
+    procs = get_running_process_names(ttl=ttl)
+    if isinstance(name_or_list, str):
+        target = name_or_list.lower().strip()
+        if not target.endswith(".exe") and target in procs:
+            return True
+        if target.endswith(".exe") and target in procs:
+            return True
+        # Also check without/with .exe
+        alt = target + ".exe" if not target.endswith(".exe") else target[:-4]
+        return target in procs or alt in procs
+    for item in name_or_list:
+        if is_process_running(item, ttl=ttl):
+            return True
+    return False
+
+_DEFAULT_AUDIO_CACHE = None
+_DEFAULT_AUDIO_TS = 0.0
+_DEFAULT_AUDIO_LOCK = threading.Lock()
+
+
+def get_current_default_audio_output(ttl: float = 1.0):
     """Return the endpoint ID of the current default audio render device, or None."""
+    import time
+    global _DEFAULT_AUDIO_CACHE, _DEFAULT_AUDIO_TS
+    now = time.time()
+    if ttl > 0:
+        with _DEFAULT_AUDIO_LOCK:
+            if _DEFAULT_AUDIO_CACHE is not None and (now - _DEFAULT_AUDIO_TS) < ttl:
+                return _DEFAULT_AUDIO_CACHE
+
     try:
         import comtypes
         from pycaw.api.mmdeviceapi import IMMDeviceEnumerator
@@ -22,12 +85,38 @@ def get_current_default_audio_output():
             CLSID_MMDeviceEnumerator, IMMDeviceEnumerator,
             comtypes.CLSCTX_INPROC_SERVER)
         default = de.GetDefaultAudioEndpoint(EDataFlow.eRender.value, ERole.eConsole.value)
-        return default.GetId()
+        dev_id = default.GetId()
+        with _DEFAULT_AUDIO_LOCK:
+            _DEFAULT_AUDIO_CACHE = dev_id
+            _DEFAULT_AUDIO_TS = now
+        return dev_id
     except Exception as e:
         log.debug("[audio] get_current_default: %s", e)
         return None
 
 
+def get_audio_output_devices() -> list[dict]:
+    """Return list of active audio playback devices [{id, name}, ...]."""
+    devices = []
+    try:
+        import comtypes
+        from pycaw.api.mmdeviceapi import IMMDeviceEnumerator
+        from pycaw.constants import CLSID_MMDeviceEnumerator, EDataFlow
+        from pycaw.utils import AudioUtilities
+
+        comtypes.CoInitialize()
+        de = comtypes.CoCreateInstance(
+            CLSID_MMDeviceEnumerator, IMMDeviceEnumerator,
+            comtypes.CLSCTX_INPROC_SERVER)
+        col = de.EnumAudioEndpoints(EDataFlow.eRender.value, 1)  # DEVICE_STATE_ACTIVE = 1
+        render_ids = {col.Item(i).GetId() for i in range(col.GetCount())}
+
+        for d in AudioUtilities.GetAllDevices():
+            if d.id in render_ids:
+                devices.append({"id": d.id, "name": d.FriendlyName or "Audio Device"})
+    except Exception as e:
+        log.warning("[audio] get_audio_output_devices failed: %s", e)
+    return devices
 
 
 def set_default_audio_output(device_key: str) -> bool:
@@ -68,11 +157,15 @@ def set_default_audio_output(device_key: str) -> bool:
         import comtypes
         from pycaw.utils import AudioUtilities
         from pycaw.constants import ERole
+        import time
         comtypes.CoInitialize()
         AudioUtilities.SetDefaultDevice(
             endpoint_id,
             roles=[ERole.eConsole, ERole.eMultimedia, ERole.eCommunications],
         )
+        with _DEFAULT_AUDIO_LOCK:
+            _DEFAULT_AUDIO_CACHE = endpoint_id
+            _DEFAULT_AUDIO_TS = time.time()
         log.info("[audio] default output set -> %s", endpoint_id[:50])
         return True
     except ImportError:
@@ -194,21 +287,103 @@ def _resolve_appx_exe(icon_path: str) -> str | None:
         return None
 
 
-def _extract_via_ps(icon_path, size=256):
-    """Extract an app icon via native Windows Shell API (256x256 Jumbo High-DPI) or fallback.
+def extract_url_favicon(url, size=256):
+    """Extract and download a high-resolution favicon for a URL/domain.
     
     Returns a PIL RGBA Image or None.
     """
+    import io
+    import urllib.request
+    from urllib.parse import urlparse
+    from PIL import Image
+
+    if not url:
+        return None
+    url_str = str(url).strip()
+    if not url_str.startswith(("http://", "https://")):
+        url_str = "https://" + url_str
+
+    try:
+        parsed = urlparse(url_str)
+        domain = parsed.netloc or parsed.path.split("/")[0]
+        if not domain or "." not in domain:
+            return None
+
+        # Google s2 favicon service provides clean up to 128/256px png icons
+        favicon_urls = [
+            f"https://www.google.com/s2/favicons?domain={domain}&sz=128",
+            f"https://icons.duckduckgo.com/ip3/{domain}.ico",
+            f"https://{domain}/favicon.ico",
+        ]
+
+        req_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+
+        for f_url in favicon_urls:
+            try:
+                req = urllib.request.Request(f_url, headers=req_headers)
+                with urllib.request.urlopen(req, timeout=3.5) as resp:
+                    if resp.status == 200:
+                        data = resp.read()
+                        if data and len(data) > 64:
+                            img = Image.open(io.BytesIO(data))
+                            if getattr(img, "n_frames", 1) > 1:
+                                try:
+                                    best_frame = 0
+                                    best_size = 0
+                                    for i in range(img.n_frames):
+                                        img.seek(i)
+                                        s = img.size[0] * img.size[1]
+                                        if s > best_size:
+                                            best_size = s
+                                            best_frame = i
+                                    img.seek(best_frame)
+                                except Exception:
+                                    pass
+                            img.load()
+                            return _normalize_icon_size(img.convert("RGBA"), size)
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return None
+_EXTRACTED_ICON_CACHE = {}
+
+
+def _extract_via_ps(icon_path, size=256):
+    """Extract an app icon via native Windows Shell API (256x256 Jumbo High-DPI) or fallback.
+    
+    Cached in-memory to prevent repeated Windows API/PowerShell overhead.
+    Returns a PIL RGBA Image or None.
+    """
+    if not icon_path:
+        return None
+    raw_val = str(icon_path).strip().strip('"\'')
+    cache_key = (raw_val.lower(), int(size))
+    if cache_key in _EXTRACTED_ICON_CACHE:
+        cached = _EXTRACTED_ICON_CACHE[cache_key]
+        return cached.copy() if cached else None
+    
+    img = _extract_via_ps_impl(raw_val, size)
+    _EXTRACTED_ICON_CACHE[cache_key] = img.copy() if img else None
+    return img
+
+
+def _extract_via_ps_impl(raw_val, size=256):
     import os
     import subprocess
     import tempfile
     from PIL import Image
 
-    if not icon_path:
+    if not raw_val:
         return None
+    if raw_val.startswith(("http://", "https://")) or (("." in raw_val) and ("/" in raw_val or "\\" not in raw_val) and not os.path.isabs(raw_val) and not raw_val.lower().endswith((".exe", ".lnk", ".bat", ".cmd", ".vbs", ".ps1"))):
+        url_img = extract_url_favicon(raw_val, size=size)
+        if url_img:
+            return url_img
 
-    icon_path = str(icon_path).strip().strip('"\'')
-    icon_path = os.path.expandvars(os.path.expanduser(icon_path))
+    icon_path = os.path.expandvars(os.path.expanduser(raw_val))
     if not os.path.isfile(icon_path):
         import shutil
         which_p = shutil.which(icon_path)

@@ -8,26 +8,26 @@
 
 var _escMap = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 var MEDIA_PLAYER_BRAND_ICONS = {
-  spotify: '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none"><circle cx="12" cy="12" r="12" fill="#1ED760"/><path d="M17.5 16.2c-.2.3-.6.4-.9.2-2.5-1.5-5.6-1.9-9.3-1-.4.1-.7-.1-.8-.5-.1-.4.1-.7.5-.8 4.1-1 7.6-.5 10.3 1.2.3.2.4.6.2.9zm1.2-2.7c-.3.4-.8.5-1.2.3-2.9-1.8-7.3-2.3-10.7-1.3-.4.1-.9-.1-1-.5-.1-.4.1-.9.5-1 3.9-1.2 8.8-.6 12.1 1.4.4.2.5.7.3 1.1zm.1-2.9c-3.5-2.1-9.2-2.3-12.5-1.3-.5.2-1.1-.1-1.3-.6-.2-.5.1-1.1.6-1.3 3.9-1.2 10.2-1 14.2 1.4.5.3.6.9.3 1.4-.3.5-.9.7-1.3.4z" fill="#000"/></svg>',
-  itunes: '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none"><rect width="24" height="24" rx="5" fill="#FA243C"/><path d="M16.5 6.2v8.6c0 1.5-1.2 2.7-2.7 2.7s-2.7-1.2-2.7-2.7 1.2-2.7 2.7-2.7c.4 0 .8.1 1.2.3V8.8l-5.5 1.2v6c0 1.5-1.2 2.7-2.7 2.7S4.1 17.5 4.1 16s1.2-2.7 2.7-2.7c.4 0 .8.1 1.2.3v-8l8.5-1.9v2.5z" fill="#fff"/></svg>',
-  applemusic: '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none"><rect width="24" height="24" rx="5" fill="#FA243C"/><path d="M16.5 6.2v8.6c0 1.5-1.2 2.7-2.7 2.7s-2.7-1.2-2.7-2.7 1.2-2.7 2.7-2.7c.4 0 .8.1 1.2.3V8.8l-5.5 1.2v6c0 1.5-1.2 2.7-2.7 2.7S4.1 17.5 4.1 16s1.2-2.7 2.7-2.7c.4 0 .8.1 1.2.3v-8l8.5-1.9v2.5z" fill="#fff"/></svg>',
-  "apple music": '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none"><rect width="24" height="24" rx="5" fill="#FA243C"/><path d="M16.5 6.2v8.6c0 1.5-1.2 2.7-2.7 2.7s-2.7-1.2-2.7-2.7 1.2-2.7 2.7-2.7c.4 0 .8.1 1.2.3V8.8l-5.5 1.2v6c0 1.5-1.2 2.7-2.7 2.7S4.1 17.5 4.1 16s1.2-2.7 2.7-2.7c.4 0 .8.1 1.2.3v-8l8.5-1.9v2.5z" fill="#fff"/></svg>',
-  "vlc media player": '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none"><path d="M12 2l-2.5 7h5L12 2z" fill="#FF8800"/><path d="M9.2 10l-.8 2.5h7.2L14.8 10H9.2z" fill="#FFFFFF"/><path d="M8.1 13.5l-.9 3h9.6l-.9-3H8.1z" fill="#FF8800"/><path d="M6.9 17.5l-1.1 3.5h12.4l-1.1-3.5H6.9z" fill="#FFFFFF"/><path d="M3 21.5h18v1.5H3v-1.5z" fill="#FF8800"/><path d="M5 22h14l-1-1H6l-1 1z" fill="#E65100"/></svg>',
-  vlc: '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none"><path d="M12 2l-2.5 7h5L12 2z" fill="#FF8800"/><path d="M9.2 10l-.8 2.5h7.2L14.8 10H9.2z" fill="#FFFFFF"/><path d="M8.1 13.5l-.9 3h9.6l-.9-3H8.1z" fill="#FF8800"/><path d="M6.9 17.5l-1.1 3.5h12.4l-1.1-3.5H6.9z" fill="#FFFFFF"/><path d="M3 21.5h18v1.5H3v-1.5z" fill="#FF8800"/><path d="M5 22h14l-1-1H6l-1 1z" fill="#E65100"/></svg>',
-  "windows media player": '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none"><rect width="24" height="24" rx="5" fill="#0078D4"/><circle cx="12" cy="12" r="7.5" fill="#FFB900"/><polygon points="10,8 16,12 10,16" fill="#FFFFFF"/></svg>',
-  "media player": '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none"><rect width="24" height="24" rx="5" fill="#0078D4"/><circle cx="12" cy="12" r="7.5" fill="#FFB900"/><polygon points="10,8 16,12 10,16" fill="#FFFFFF"/></svg>',
-  wmplayer: '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none"><rect width="24" height="24" rx="5" fill="#0078D4"/><circle cx="12" cy="12" r="7.5" fill="#FFB900"/><polygon points="10,8 16,12 10,16" fill="#FFFFFF"/></svg>',
-  windowsmediaplayer: '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none"><rect width="24" height="24" rx="5" fill="#0078D4"/><circle cx="12" cy="12" r="7.5" fill="#FFB900"/><polygon points="10,8 16,12 10,16" fill="#FFFFFF"/></svg>',
-  foobar2000: '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none"><circle cx="12" cy="12" r="11" fill="#2B2B2B" stroke="#888" stroke-width="1"/><circle cx="8.5" cy="10" r="2.5" fill="#fff"/><circle cx="15.5" cy="10" r="2.5" fill="#fff"/><circle cx="9" cy="10" r="1.2" fill="#000"/><circle cx="16" cy="10" r="1.2" fill="#000"/><ellipse cx="12" cy="16" rx="4" ry="2" fill="#fff"/></svg>',
-  foobar: '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none"><circle cx="12" cy="12" r="11" fill="#2B2B2B" stroke="#888" stroke-width="1"/><circle cx="8.5" cy="10" r="2.5" fill="#fff"/><circle cx="15.5" cy="10" r="2.5" fill="#fff"/><circle cx="9" cy="10" r="1.2" fill="#000"/><circle cx="16" cy="10" r="1.2" fill="#000"/><ellipse cx="12" cy="16" rx="4" ry="2" fill="#fff"/></svg>',
-  musicbee: '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none"><circle cx="12" cy="12" r="11" fill="#FFA000"/><path d="M7 11h10v2H7zM9 15h6v2H9z" fill="#212121"/><circle cx="9" cy="7.5" r="1.5" fill="#212121"/><circle cx="15" cy="7.5" r="1.5" fill="#212121"/><path d="M12 4v3" stroke="#212121" stroke-width="1.5" stroke-linecap="round"/></svg>',
-  aimp: '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none"><circle cx="12" cy="12" r="11" fill="#FF5722"/><polygon points="9,6 18,12 9,18" fill="#FFFFFF"/><polygon points="12,9 18,12 12,15" fill="#FFCCBC"/></svg>',
-  tidal: '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none"><rect width="24" height="24" rx="5" fill="#000"/><g fill="#fff" transform="translate(2, 2) scale(0.833)"><polygon points="6,3 9,6 6,9 3,6"/><polygon points="12,3 15,6 12,9 9,6"/><polygon points="18,3 21,6 18,9 15,6"/><polygon points="12,9 15,12 12,15 9,12"/></g></svg>',
-  plexamp: '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none"><rect width="24" height="24" rx="5" fill="#1F2326"/><polygon points="8,4 14,12 8,20 12,20 18,12 12,4" fill="#E5A00D"/></svg>',
-  winamp: '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none"><rect width="24" height="24" rx="5" fill="#1C2128"/><path d="M14 3L6 13h5l-2 8 10-11h-5l2-7z" fill="#FFAA00" stroke="#FF8800" stroke-width="0.5"/></svg>',
-  "mpc-hc": '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none"><rect width="24" height="24" rx="5" fill="#1565C0"/><path d="M4 6h16v12H4z" fill="#212121"/><path d="M4 6l3 4h3L7 6h3l3 4h3l-3-4h3l3 4h2V6H4z" fill="#EEEEEE"/><polygon points="10,11 15,14 10,17" fill="#FFFFFF"/></svg>',
-  "mpc-be": '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none"><rect width="24" height="24" rx="5" fill="#1565C0"/><path d="M4 6h16v12H4z" fill="#212121"/><path d="M4 6l3 4h3L7 6h3l3 4h3l-3-4h3l3 4h2V6H4z" fill="#EEEEEE"/><polygon points="10,11 15,14 10,17" fill="#FFFFFF"/></svg>',
-  mpc: '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none"><rect width="24" height="24" rx="5" fill="#1565C0"/><path d="M4 6h16v12H4z" fill="#212121"/><path d="M4 6l3 4h3L7 6h3l3 4h3l-3-4h3l3 4h2V6H4z" fill="#EEEEEE"/><polygon points="10,11 15,14 10,17" fill="#FFFFFF"/></svg>'
+  spotify: '<svg viewBox="0 0 24 24" width="24" height="24" style="max-width:100%;max-height:100%;display:block" fill="none"><circle cx="12" cy="12" r="12" fill="#1ED760"/><path d="M17.5 16.2c-.2.3-.6.4-.9.2-2.5-1.5-5.6-1.9-9.3-1-.4.1-.7-.1-.8-.5-.1-.4.1-.7.5-.8 4.1-1 7.6-.5 10.3 1.2.3.2.4.6.2.9zm1.2-2.7c-.3.4-.8.5-1.2.3-2.9-1.8-7.3-2.3-10.7-1.3-.4.1-.9-.1-1-.5-.1-.4.1-.9.5-1 3.9-1.2 8.8-.6 12.1 1.4.4.2.5.7.3 1.1zm.1-2.9c-3.5-2.1-9.2-2.3-12.5-1.3-.5.2-1.1-.1-1.3-.6-.2-.5.1-1.1.6-1.3 3.9-1.2 10.2-1 14.2 1.4.5.3.6.9.3 1.4-.3.5-.9.7-1.3.4z" fill="#000"/></svg>',
+  itunes: '<svg viewBox="0 0 24 24" width="24" height="24" style="max-width:100%;max-height:100%;display:block" fill="none"><rect width="24" height="24" rx="5" fill="#FA243C"/><path d="M16.5 6.2v8.6c0 1.5-1.2 2.7-2.7 2.7s-2.7-1.2-2.7-2.7 1.2-2.7 2.7-2.7c.4 0 .8.1 1.2.3V8.8l-5.5 1.2v6c0 1.5-1.2 2.7-2.7 2.7S4.1 17.5 4.1 16s1.2-2.7 2.7-2.7c.4 0 .8.1 1.2.3v-8l8.5-1.9v2.5z" fill="#fff"/></svg>',
+  applemusic: '<svg viewBox="0 0 24 24" width="24" height="24" style="max-width:100%;max-height:100%;display:block" fill="none"><rect width="24" height="24" rx="5" fill="#FA243C"/><path d="M16.5 6.2v8.6c0 1.5-1.2 2.7-2.7 2.7s-2.7-1.2-2.7-2.7 1.2-2.7 2.7-2.7c.4 0 .8.1 1.2.3V8.8l-5.5 1.2v6c0 1.5-1.2 2.7-2.7 2.7S4.1 17.5 4.1 16s1.2-2.7 2.7-2.7c.4 0 .8.1 1.2.3v-8l8.5-1.9v2.5z" fill="#fff"/></svg>',
+  "apple music": '<svg viewBox="0 0 24 24" width="24" height="24" style="max-width:100%;max-height:100%;display:block" fill="none"><rect width="24" height="24" rx="5" fill="#FA243C"/><path d="M16.5 6.2v8.6c0 1.5-1.2 2.7-2.7 2.7s-2.7-1.2-2.7-2.7 1.2-2.7 2.7-2.7c.4 0 .8.1 1.2.3V8.8l-5.5 1.2v6c0 1.5-1.2 2.7-2.7 2.7S4.1 17.5 4.1 16s1.2-2.7 2.7-2.7c.4 0 .8.1 1.2.3v-8l8.5-1.9v2.5z" fill="#fff"/></svg>',
+  "vlc media player": '<svg viewBox="0 0 24 24" width="24" height="24" style="max-width:100%;max-height:100%;display:block" fill="none"><path d="M12 2l-2.5 7h5L12 2z" fill="#FF8800"/><path d="M9.2 10l-.8 2.5h7.2L14.8 10H9.2z" fill="#FFFFFF"/><path d="M8.1 13.5l-.9 3h9.6l-.9-3H8.1z" fill="#FF8800"/><path d="M6.9 17.5l-1.1 3.5h12.4l-1.1-3.5H6.9z" fill="#FFFFFF"/><path d="M3 21.5h18v1.5H3v-1.5z" fill="#FF8800"/><path d="M5 22h14l-1-1H6l-1 1z" fill="#E65100"/></svg>',
+  vlc: '<svg viewBox="0 0 24 24" width="24" height="24" style="max-width:100%;max-height:100%;display:block" fill="none"><path d="M12 2l-2.5 7h5L12 2z" fill="#FF8800"/><path d="M9.2 10l-.8 2.5h7.2L14.8 10H9.2z" fill="#FFFFFF"/><path d="M8.1 13.5l-.9 3h9.6l-.9-3H8.1z" fill="#FF8800"/><path d="M6.9 17.5l-1.1 3.5h12.4l-1.1-3.5H6.9z" fill="#FFFFFF"/><path d="M3 21.5h18v1.5H3v-1.5z" fill="#FF8800"/><path d="M5 22h14l-1-1H6l-1 1z" fill="#E65100"/></svg>',
+  "windows media player": '<svg viewBox="0 0 24 24" width="24" height="24" style="max-width:100%;max-height:100%;display:block" fill="none"><rect width="24" height="24" rx="5" fill="#0078D4"/><circle cx="12" cy="12" r="7.5" fill="#FFB900"/><polygon points="10,8 16,12 10,16" fill="#FFFFFF"/></svg>',
+  "media player": '<svg viewBox="0 0 24 24" width="24" height="24" style="max-width:100%;max-height:100%;display:block" fill="none"><rect width="24" height="24" rx="5" fill="#0078D4"/><circle cx="12" cy="12" r="7.5" fill="#FFB900"/><polygon points="10,8 16,12 10,16" fill="#FFFFFF"/></svg>',
+  wmplayer: '<svg viewBox="0 0 24 24" width="24" height="24" style="max-width:100%;max-height:100%;display:block" fill="none"><rect width="24" height="24" rx="5" fill="#0078D4"/><circle cx="12" cy="12" r="7.5" fill="#FFB900"/><polygon points="10,8 16,12 10,16" fill="#FFFFFF"/></svg>',
+  windowsmediaplayer: '<svg viewBox="0 0 24 24" width="24" height="24" style="max-width:100%;max-height:100%;display:block" fill="none"><rect width="24" height="24" rx="5" fill="#0078D4"/><circle cx="12" cy="12" r="7.5" fill="#FFB900"/><polygon points="10,8 16,12 10,16" fill="#FFFFFF"/></svg>',
+  foobar2000: '<svg viewBox="0 0 24 24" width="24" height="24" style="max-width:100%;max-height:100%;display:block" fill="none"><circle cx="12" cy="12" r="11" fill="#2B2B2B" stroke="#888" stroke-width="1"/><circle cx="8.5" cy="10" r="2.5" fill="#fff"/><circle cx="15.5" cy="10" r="2.5" fill="#fff"/><circle cx="9" cy="10" r="1.2" fill="#000"/><circle cx="16" cy="10" r="1.2" fill="#000"/><ellipse cx="12" cy="16" rx="4" ry="2" fill="#fff"/></svg>',
+  foobar: '<svg viewBox="0 0 24 24" width="24" height="24" style="max-width:100%;max-height:100%;display:block" fill="none"><circle cx="12" cy="12" r="11" fill="#2B2B2B" stroke="#888" stroke-width="1"/><circle cx="8.5" cy="10" r="2.5" fill="#fff"/><circle cx="15.5" cy="10" r="2.5" fill="#fff"/><circle cx="9" cy="10" r="1.2" fill="#000"/><circle cx="16" cy="10" r="1.2" fill="#000"/><ellipse cx="12" cy="16" rx="4" ry="2" fill="#fff"/></svg>',
+  musicbee: '<svg viewBox="0 0 24 24" width="24" height="24" style="max-width:100%;max-height:100%;display:block" fill="none"><circle cx="12" cy="12" r="11" fill="#FFA000"/><path d="M7 11h10v2H7zM9 15h6v2H9z" fill="#212121"/><circle cx="9" cy="7.5" r="1.5" fill="#212121"/><circle cx="15" cy="7.5" r="1.5" fill="#212121"/><path d="M12 4v3" stroke="#212121" stroke-width="1.5" stroke-linecap="round"/></svg>',
+  aimp: '<svg viewBox="0 0 24 24" width="24" height="24" style="max-width:100%;max-height:100%;display:block" fill="none"><circle cx="12" cy="12" r="11" fill="#FF5722"/><polygon points="9,6 18,12 9,18" fill="#FFFFFF"/><polygon points="12,9 18,12 12,15" fill="#FFCCBC"/></svg>',
+  tidal: '<svg viewBox="0 0 24 24" width="24" height="24" style="max-width:100%;max-height:100%;display:block" fill="none"><rect width="24" height="24" rx="5" fill="#000"/><g fill="#fff" transform="translate(2, 2) scale(0.833)"><polygon points="6,3 9,6 6,9 3,6"/><polygon points="12,3 15,6 12,9 9,6"/><polygon points="18,3 21,6 18,9 15,6"/><polygon points="12,9 15,12 12,15 9,12"/></g></svg>',
+  plexamp: '<svg viewBox="0 0 24 24" width="24" height="24" style="max-width:100%;max-height:100%;display:block" fill="none"><rect width="24" height="24" rx="5" fill="#1F2326"/><polygon points="8,4 14,12 8,20 12,20 18,12 12,4" fill="#E5A00D"/></svg>',
+  winamp: '<svg viewBox="0 0 24 24" width="24" height="24" style="max-width:100%;max-height:100%;display:block" fill="none"><rect width="24" height="24" rx="5" fill="#1C2128"/><path d="M14 3L6 13h5l-2 8 10-11h-5l2-7z" fill="#FFAA00" stroke="#FF8800" stroke-width="0.5"/></svg>',
+  "mpc-hc": '<svg viewBox="0 0 24 24" width="24" height="24" style="max-width:100%;max-height:100%;display:block" fill="none"><rect width="24" height="24" rx="5" fill="#1565C0"/><path d="M4 6h16v12H4z" fill="#212121"/><path d="M4 6l3 4h3L7 6h3l3 4h3l-3-4h3l3 4h2V6H4z" fill="#EEEEEE"/><polygon points="10,11 15,14 10,17" fill="#FFFFFF"/></svg>',
+  "mpc-be": '<svg viewBox="0 0 24 24" width="24" height="24" style="max-width:100%;max-height:100%;display:block" fill="none"><rect width="24" height="24" rx="5" fill="#1565C0"/><path d="M4 6h16v12H4z" fill="#212121"/><path d="M4 6l3 4h3L7 6h3l3 4h3l-3-4h3l3 4h2V6H4z" fill="#EEEEEE"/><polygon points="10,11 15,14 10,17" fill="#FFFFFF"/></svg>',
+  mpc: '<svg viewBox="0 0 24 24" width="24" height="24" style="max-width:100%;max-height:100%;display:block" fill="none"><rect width="24" height="24" rx="5" fill="#1565C0"/><path d="M4 6h16v12H4z" fill="#212121"/><path d="M4 6l3 4h3L7 6h3l3 4h3l-3-4h3l3 4h2V6H4z" fill="#EEEEEE"/><polygon points="10,11 15,14 10,17" fill="#FFFFFF"/></svg>'
 };
 
 function getMediaPlayerBrandIcon(nameOrPath) {
@@ -52,7 +52,7 @@ var _IRIS_TOKEN = "";
 // True only inside the desktop app's panel window (pywebview). App-only
 // settings sections (e.g. Network security) are hidden from phone/browser.
 function _isApp() {
-  return !!(window.pywebview && window.pywebview.api);
+  return !!(window.pywebview && window.pywebview.api) || (typeof IS_APP !== 'undefined' && IS_APP);
 }
 
 function apiFetch(url, opts) {
@@ -164,41 +164,91 @@ class SettingsRenderer {
     }
 
     var LABEL_DEFAULTS = {
-      status: "Status",
-      configuration: "Configuration",
+      status: "Connection",
+      configuration: "Game Detection",
       buttons: "Button Controls",
       outputs: "Output Routing",
-      live_data: "Live Data",
       actions: "Actions",
       diagnostics: "Diagnostics",
     };
 
     var self = this;
-    var html = '<section class="settings-content">';
 
-    var sectionOrder = [
-      { key: "status",        render: "_renderPluginStatus" },
-      { key: "configuration", render: "_renderPluginConfig" },
-      { key: "buttons",       render: "_renderPluginButtons" },
-      { key: "outputs",       render: "_renderPluginOutputs" },
-      { key: "live_data",     render: "_renderPluginLiveData" },
-      { key: "actions",       render: "_renderPluginActions" },
-      { key: "diagnostics",   render: "_renderPluginDiagnostics" },
-    ];
-
-    sectionOrder.forEach(function (s) {
-      if (!capabilities[s.key]) return;
-      var content = self[s.render](name, p, pluginData, pluginStateData);
-      if (!content) return;
-      var label = (p.labels && p.labels[s.key]) || LABEL_DEFAULTS[s.key] || s.key;
-      html += '<div class="settings-section">';
+    function buildSectionCard(sKey, renderFn) {
+      if (!capabilities[sKey]) return null;
+      var content = self[renderFn](name, p, pluginData, pluginStateData, config);
+      if (!content) return null;
+      var label = (p.labels && p.labels[sKey]) || LABEL_DEFAULTS[sKey] || sKey;
+      var html = '<div class="settings-section plugin-section-' + sKey + '">';
       html += '<h2 class="settings-section-title">' + self._esc(label) + '</h2>';
       html += '<div class="settings-card">';
       html += content;
       html += '</div></div>';
-    });
+      return { key: sKey, html: html };
+    }
 
-    html += "</section>";
+    var col1Html = "";
+    var col2Html = "";
+    var col1Height = 0;
+    var col2Height = 0;
+
+    function addToCol(colNum, html, estHeight) {
+      if (colNum === 1) {
+        col1Html += html;
+        col1Height += estHeight;
+      } else {
+        col2Html += html;
+        col2Height += estHeight;
+      }
+    }
+
+    // 1. Column 1: Connection (Status)
+    var statusCard = buildSectionCard("status", "_renderPluginStatus");
+    if (statusCard) addToCol(1, statusCard.html, 140);
+
+    // 2. Column 2: Output Routing (Outputs)
+    var outputsCard = buildSectionCard("outputs", "_renderPluginOutputs");
+    if (outputsCard) addToCol(2, outputsCard.html, 160);
+
+    // 3. Column 1: Plugin Specific Controls (Configuration / Game Detection)
+    var configCard = buildSectionCard("configuration", "_renderPluginConfig");
+    if (configCard) addToCol(1, configCard.html, 180);
+
+    // 4. Column 2: Button Controls (Buttons)
+    var buttonsCard = buildSectionCard("buttons", "_renderPluginButtons");
+    if (buttonsCard) addToCol(2, buttonsCard.html, 340);
+
+    // Actions & Diagnostics
+    var actionsCard = buildSectionCard("actions", "_renderPluginActions");
+    if (actionsCard) {
+      if (col1Height <= col2Height) addToCol(1, actionsCard.html, 100);
+      else addToCol(2, actionsCard.html, 100);
+    }
+    var diagCard = buildSectionCard("diagnostics", "_renderPluginDiagnostics");
+    if (diagCard) {
+      if (col1Height <= col2Height) addToCol(1, diagCard.html, 100);
+      else addToCol(2, diagCard.html, 100);
+    }
+
+    // 5. Below: 2 columns of telemetry category cards, distributed by shortest stack
+    if (capabilities.live_data) {
+      var telemetryCards = this._getPluginLiveDataCardList(name, p, pluginData, pluginStateData);
+      telemetryCards.forEach(function(card) {
+        var estH = 50 + (card.fieldCount || 4) * 32;
+        if (col1Height <= col2Height) {
+          addToCol(1, card.html, estH);
+        } else {
+          addToCol(2, card.html, estH);
+        }
+      });
+    }
+
+    var html = '<section class="settings-content plugin-settings-layout">';
+    html += '<div class="plugin-masonry-container">';
+    html += '<div class="plugin-masonry-col plugin-masonry-col-1">' + col1Html + '</div>';
+    html += '<div class="plugin-masonry-col plugin-masonry-col-2">' + col2Html + '</div>';
+    html += '</div>';
+    html += '</section>';
     return html;
   }
 
@@ -245,7 +295,7 @@ class SettingsRenderer {
           var values = {};
           values[ctrl.key] = pluginCfg[ctrl.key];
           if (ctrl.key === "enabled") values[ctrl.key] = p.enabled !== false;
-          html += self._renderControl(ctrl, values);
+          html += self._renderControl(ctrl, values, pluginStateData);
         });
       });
     } else {
@@ -253,13 +303,13 @@ class SettingsRenderer {
         type: "toggle",
         key: "_plugin_enabled_" + name,
         label: "Enabled",
-      }, { _plugin_enabled: p.enabled !== false });
+      }, { _plugin_enabled: p.enabled !== false }, pluginStateData);
       if (ptype === "app") {
         html += self._renderControl({
           type: "folder_picker",
           key: "_plugin_exe_" + name,
           label: "Target executable",
-        }, { _plugin_exe: p.exe_path || p.exe_default || "" });
+        }, { _plugin_exe: p.exe_path || p.exe_default || "" }, pluginStateData);
       }
     }
     html += "</div></div>";
@@ -302,9 +352,16 @@ class SettingsRenderer {
           var ps = pluginStateData || {};
           var liveState = ps.state || {};
           var liveStatus = ps.status || {};
-          val = liveState[f.key] !== undefined ? liveState[f.key] : liveStatus[f.key];
+          // Check state, then status, then top-level pluginStateData
+          val = liveState[f.key] !== undefined ? liveState[f.key] :
+                liveStatus[f.key] !== undefined ? liveStatus[f.key] :
+                ps[f.key];
         }
         if (val === undefined || val === null) val = "—";
+        // Handle list/array values (e.g., profiles)
+        if (Array.isArray(val)) {
+          val = val.join(", ");
+        }
         html += self._detailRow(f.label, String(val));
       });
     }
@@ -319,34 +376,43 @@ class SettingsRenderer {
   }
 
   _renderPluginConfig(name, p, pluginData, pluginStateData) {
-    var settings = p.settings || [];
-    if (settings.length === 0) {
-      var html = "";
-      html += this._renderControl({
-        type: "toggle",
-        key: "_plugin_enabled_" + name,
-        label: "Enabled",
-      }, { _plugin_enabled: p.enabled !== false });
-      if ((p.type || "service") === "app") {
-        html += this._renderControl({
-          type: "folder_picker",
-          key: "_plugin_exe_" + name,
-          label: "Target executable",
-        }, { _plugin_exe: p.exe_path || p.exe_default || "" });
-      }
-      return html;
-    }
-
     var self = this;
     var pcfg = p.config || {};
     var html = "";
+
+    // Enabled toggle
+    html += this._renderControl({
+      type: "toggle",
+      key: "enabled",
+      label: "Enabled",
+      description: "Enable or disable this plugin"
+    }, { enabled: p.enabled !== false }, pluginStateData);
+
+    if ((p.type || "service") === "app") {
+      html += this._renderControl({
+        type: "folder_picker",
+        key: "exe_path",
+        label: "Target executable",
+        description: "Executable path for auto-detection"
+      }, { exe_path: p.exe_path || p.exe_default || "" }, pluginStateData);
+    }
+
+    if (p.theme) {
+      html += this._renderControl({
+        type: "toggle",
+        key: "auto_theme",
+        label: "Auto Apply Game Theme",
+        description: "Switch Iris to " + (p.theme.description || "game colours") + " when running and restore on exit"
+      }, { auto_theme: pcfg.auto_theme !== false }, pluginStateData);
+    }
+
+    var settings = p.settings || [];
     settings.forEach(function (section) {
       if (!section.controls || !section.controls.length) return;
       section.controls.forEach(function (ctrl) {
         var values = {};
-        values[ctrl.key] = pcfg[ctrl.key];
-        if (ctrl.key === "enabled") values[ctrl.key] = p.enabled !== false;
-        html += self._renderControl(ctrl, values);
+        values[ctrl.key] = pcfg[ctrl.key] !== undefined ? pcfg[ctrl.key] : (ctrl.default || "");
+        html += self._renderControl(ctrl, values, pluginStateData);
       });
     });
     return html;
@@ -382,10 +448,9 @@ class SettingsRenderer {
     var profiles = (p && p.panel_profiles) ||
                    (config && config.panel_profiles) ||
                    (this._configCache && this._configCache.panel_profiles) ||
-                   (typeof panelDraft !== "undefined" && panelDraft && panelDraft.panel_profiles) ||
                    (typeof featureConfig !== "undefined" && featureConfig && featureConfig.panel_profiles) || [];
 
-    // Find matching profile for this plugin if exists
+    // Find matching profile for this plugin
     var matchingProf = profiles.find(function(prof) {
       if (!prof || typeof prof !== "object") return false;
       var profExe = (prof.exe || "").toLowerCase();
@@ -395,95 +460,157 @@ class SettingsRenderer {
       return (profExe && pluginExe && (profExe.indexOf(pluginExe) !== -1 || pluginExe.indexOf(profExe.replace(".exe", "")) !== -1)) ||
              (profName && pluginName && (profName.indexOf(pluginName) !== -1 || pluginName.indexOf(profName) !== -1));
     });
-    var defaultTargetId = matchingProf ? matchingProf.id : (profiles.length > 0 ? profiles[0].id : "__default__");
+    var defaultTargetId = matchingProf ? matchingProf.id : (profiles.length > 0 ? profiles[0].id : "__new__");
 
-    var html = '<div class="plugin-button-studio">';
-
-    // 1. Export Bar
-    html += '<div class="plugin-export-bar">';
-    html += '<div class="plugin-export-info">';
-    html += '<span class="material-icons-outlined plugin-export-icon">grid_view</span>';
-    html += '<div>';
-    html += '<div class="plugin-export-title">Export to Button Box</div>';
-    html += '<div class="plugin-export-desc">Push configured buttons directly into a Button Profile for your device.</div>';
-    html += '</div></div>';
-
-    html += '<div class="plugin-export-actions">';
-    html += '<label class="plugin-export-target-lbl">Target Profile:</label>';
-    html += '<select id="plugin-btn-target-profile" class="settings-select plugin-export-select">';
-    html += '<option value="__default__"' + (defaultTargetId === "__default__" ? ' selected' : '') + '>Default Board</option>';
-    profiles.forEach(function(prof) {
-      var sel = prof.id === defaultTargetId ? ' selected' : '';
-      var sub = prof.exe ? prof.exe : (prof.is_group ? "Group" : "App Profile");
-      html += '<option value="' + self._esc(prof.id) + '"' + sel + '>' + self._esc(prof.name || prof.id) + ' (' + self._esc(sub) + ')</option>';
-    });
-    html += '<option value="__new__"' + (defaultTargetId === "__new__" ? ' selected' : '') + '>+ Create New Profile for ' + self._esc(p.display_name) + '</option>';
-    html += '</select>';
-
-    html += '<button type="button" class="btn btn-primary btn-export-all" data-plugin="' + self._esc(name) + '" title="Export full 12-button matrix into the selected profile">';
-    html += '<span class="material-icons-outlined" style="font-size:16px;vertical-align:middle;margin-right:4px">send</span> Export 12-Button Preset</button>';
-    html += '</div></div>';
-
-    // 2. Buttons Grid
-    html += '<div class="plugin-buttons-grid">';
     var ps = pluginStateData || {};
     var liveState = ps.state || ps || {};
     var liveStatus = ps.status || {};
 
-    buttons.forEach(function(btn) {
+    var html = '<div class="plugin-button-studio">';
+
+    // Compact export bar
+    html += '<div class="plugin-export-bar">';
+    html += '<div class="plugin-export-actions">';
+    html += '<select id="plugin-btn-target-profile" class="settings-select plugin-export-select">';
+    profiles.forEach(function(prof) {
+      var sel = prof.id === defaultTargetId ? ' selected' : '';
+      var sub = prof.exe ? prof.exe : "App Profile";
+      html += '<option value="' + self._esc(prof.id) + '"' + sel + '>' + self._esc(prof.name || prof.id) + ' (' + self._esc(sub) + ')</option>';
+    });
+    html += '<option value="__new__"' + (defaultTargetId === "__new__" || profiles.length === 0 ? ' selected' : '') + '>+ Create new profile for ' + self._esc(p.display_name) + '</option>';
+    html += '</select>';
+    html += '<button type="button" class="settings-btn primary btn-export-all" data-plugin="' + self._esc(name) + '">';
+    html += '<span class="material-icons-outlined" style="font-size:16px;vertical-align:middle;margin-right:4px">send</span>Export to Profile</button>';
+    html += '</div></div>';
+
+    // 4×3 button grid
+    html += '<div class="plugin-btn-grid">';
+    for (var i = 0; i < 12; i++) {
+      var btn = buttons[i];
+      if (!btn) {
+        html += '<div class="plugin-btn-slot plugin-btn-slot--empty"></div>';
+        continue;
+      }
       var skey = btn.state_key || "";
       var val = liveStatus[skey] !== undefined ? liveStatus[skey] : liveState[skey];
       var is_on = false;
       if (typeof val === "boolean") is_on = val;
       else if (typeof val === "number") is_on = val > 0;
-      else if (typeof val === "string") is_on = ["down", "deployed", "on", "active", "charging", "true", "yes", "online"].indexOf(val.toLowerCase()) !== -1;
+      else if (typeof val === "string") is_on = ["down","deployed","on","active","charging","true","yes","online"].indexOf(val.toLowerCase()) !== -1;
 
-      var labels = btn.labels || {};
-      var lblText = is_on ? (labels.on || "ON") : (labels.off || "OFF");
       var colors = btn.colors || {};
-      var activeColor = colors.on || "var(--neon-grn)";
-      var inactiveColor = colors.off || "var(--fg-dim)";
-      var badgeColor = is_on ? activeColor : inactiveColor;
-      var activeBg = is_on ? "rgba(0, 255, 136, 0.08)" : "transparent";
+      var onColor  = colors.on  || btn.color || "var(--neon-grn)";
+      var offColor = colors.off || "#444444";
+      var tileColor = is_on ? onColor : offColor;
+      var labels = btn.labels || {};
+      var stateLabel = is_on ? (labels.on || "ON") : (labels.off || "OFF");
+      var glowStyle = is_on ? ("box-shadow:0 0 10px " + onColor + "44, inset 0 0 6px " + onColor + "22;") : "";
+      var borderStyle = "border-color:" + tileColor + ";";
+      var iconName = btn.icon || "toggle-switch";
+      var iconChar = typeof mdiChar === "function" ? mdiChar(iconName) : "";
 
-      html += '<div class="plugin-btn-card" data-btn-id="' + self._esc(btn.id) + '">';
-
-      // Tile Visual Mockup
-      html += '<div class="plugin-btn-tile-preview" style="border-color:' + (is_on ? activeColor : 'var(--bg-card-border)') + '; background:' + activeBg + '">';
-      html += '<span class="md" data-md="' + self._esc(btn.icon || 'puzzle') + '"></span>';
-      html += '<span class="plugin-btn-tile-title">' + self._esc(btn.name || btn.id) + '</span>';
-      html += '<span class="plugin-btn-tile-badge" style="color:' + badgeColor + '; border-color:' + badgeColor + '">' + self._esc(lblText) + '</span>';
+      html += '<div class="plugin-btn-slot" data-btn-id="' + self._esc(btn.id) + '" style="' + borderStyle + glowStyle + '">';
+      html += '<span class="plugin-btn-slot-badge" style="color:' + tileColor + ';border-bottom-color:' + tileColor + '44;">' + self._esc(stateLabel) + '</span>';
+      html += '<span class="plugin-btn-slot-icon md" data-md="' + self._esc(iconName) + '" style="color:' + tileColor + '">' + self._esc(iconChar) + '</span>';
+      html += '<span class="plugin-btn-slot-name">' + self._esc(btn.name || btn.id) + '</span>';
       html += '</div>';
+    }
+    html += '</div>';
 
-      // Info and Controls
-      html += '<div class="plugin-btn-details">';
-      html += '<div class="plugin-btn-head">';
-      html += '<span class="plugin-btn-name">' + self._esc(btn.name || btn.id) + '</span>';
-      html += '<span class="plugin-btn-type-pill">' + self._esc(btn.widget_type || 'status_toggle') + '</span>';
-      html += '</div>';
-      if (btn.description) {
-        html += '<div class="plugin-btn-desc">' + self._esc(btn.description) + '</div>';
-      }
-
-      html += '<div class="plugin-btn-inputs-row">';
-      html += '<div class="plugin-btn-input-group">';
-      html += '<label>Hotkey:</label>';
-      html += '<input type="text" class="settings-input plugin-btn-hotkey-input" data-plugin="' + self._esc(name) + '" data-btn-id="' + self._esc(btn.id) + '" value="' + self._esc(btn.default_hotkey || '') + '" placeholder="e.g. L">';
-      html += '</div>';
-
-      html += '<button type="button" class="btn btn-sm btn-ghost btn-export-single" data-plugin="' + self._esc(name) + '" data-btn-id="' + self._esc(btn.id) + '" title="Send this single button to target profile">';
-      html += '<span class="material-icons-outlined" style="font-size:14px;vertical-align:middle;margin-right:2px">add_to_photos</span> Send to Profile</button>';
-      html += '</div>';
-
-      html += '</div></div>';
-    });
-
-    html += '</div></div>';
+    html += '</div>';
     return html;
   }
 
+  _getPluginLiveDataCardList(name, p, pluginData, pluginStateData) {
+    var self = this;
+    var ps = pluginStateData || {};
+    var liveState = ps.state || {};
+    var liveStatus = ps.status || {};
+    var liveLayout = ps.layout || (pluginData && pluginData.layout);
+
+    // Resolve live value for a field def
+    function resolveVal(f) {
+      var src = f.source === "status" ? liveStatus : (liveState[f.key] !== undefined ? liveState : liveStatus);
+      var raw = src[f.key];
+      if (raw === undefined || raw === null || raw === "") return null;
+      if (typeof raw === "boolean") {
+        var d = f.display || "yes_no";
+        var text = raw ? "Yes" : "No";
+        if (d === "up_down")            text = raw ? "Up" : "Down";
+        if (d === "down_up")            text = raw ? "Down" : "Up";
+        if (d === "on_off")             text = raw ? "On" : "Off";
+        if (d === "deployed_retracted") text = raw ? "Deployed" : "Retracted";
+        if (d === "online_down")        text = raw ? "Online" : "Down";
+        var badgeCls = raw ? "plugin-data-badge--on" : "plugin-data-badge--off";
+        return '<span class="plugin-data-badge ' + badgeCls + '">' + self._esc(text) + '</span>';
+      }
+      if (typeof raw === "number" && src[f.key + "_unit"]) return self._esc(raw + " " + src[f.key + "_unit"]);
+      return '<span class="plugin-data-val plugin-data-val--live">' + self._esc(String(raw)) + '</span>';
+    }
+
+    // Infer a human type string from a live value (or fall back to the field definition)
+    function inferType(f) {
+      if (f.type) return f.type;
+      var src = f.source === "status" ? liveStatus : (liveState[f.key] !== undefined ? liveState : liveStatus);
+      var raw = src[f.key];
+      if (raw === undefined) return "string";
+      var t = typeof raw;
+      if (t === "boolean") return "boolean";
+      if (t === "number")  return Number.isInteger(raw) ? "integer" : "float";
+      return "string";
+    }
+
+    // Use the layout from the snapshot/poll when available; fall back to live_data_def layout/fields
+    var sections = [];
+    var liveDataDef = p.live_data_def || p.live_data || {};
+    if (liveLayout && Array.isArray(liveLayout) && liveLayout.length > 0) {
+      sections = liveLayout;
+    } else if (liveDataDef && liveDataDef.layout && Array.isArray(liveDataDef.layout) && liveDataDef.layout.length > 0) {
+      sections = liveDataDef.layout;
+    } else if (liveDataDef && liveDataDef.fields && Array.isArray(liveDataDef.fields) && liveDataDef.fields.length > 0) {
+      sections = [{ title: liveDataDef.title || "Data", fields: liveDataDef.fields }];
+    } else {
+      // Auto-build from merged state + status keys
+      var stateFields  = Object.keys(liveState).map(function(k) { return { key: k, label: k.replace(/_/g, " ").replace(/\b\w/g, function(c) { return c.toUpperCase(); }), source: "state" }; });
+      var statusFields = Object.keys(liveStatus).map(function(k) { return { key: k, label: k.replace(/_/g, " ").replace(/\b\w/g, function(c) { return c.toUpperCase(); }), source: "status" }; });
+      if (stateFields.length)  sections.push({ title: "State",  fields: stateFields });
+      if (statusFields.length) sections.push({ title: "Status", fields: statusFields });
+    }
+
+    var list = [];
+    sections.forEach(function(section) {
+      if (!section.fields || !section.fields.length) return;
+      var cardHtml = '<div class="settings-section plugin-section-telemetry-group">';
+      cardHtml += '<h2 class="settings-section-title">' + self._esc(section.title) + '</h2>';
+      cardHtml += '<div class="settings-card plugin-telemetry-card">';
+      cardHtml += '<table class="plugin-data-table">';
+      cardHtml += '<thead><tr><th>Field</th><th>Type</th><th>Value / Status</th></tr></thead>';
+      cardHtml += '<tbody>';
+      section.fields.forEach(function(f) {
+        var valHtml = resolveVal(f);
+        var type = inferType(f);
+        if (valHtml === null) {
+          valHtml = '<span class="plugin-data-val plugin-data-val--empty">—</span>';
+        }
+        cardHtml += '<tr>';
+        cardHtml += '<td class="plugin-data-field">' + self._esc(f.label || f.key) + '</td>';
+        cardHtml += '<td class="plugin-data-type">' + self._esc(type) + '</td>';
+        cardHtml += '<td class="plugin-data-cell">' + valHtml + '</td>';
+        cardHtml += '</tr>';
+      });
+      cardHtml += '</tbody></table></div></div>';
+      list.push({ title: section.title, fieldCount: section.fields.length, html: cardHtml });
+    });
+    return list;
+  }
+
+  _renderPluginLiveDataCards(name, p, pluginData, pluginStateData) {
+    var cards = this._getPluginLiveDataCardList(name, p, pluginData, pluginStateData);
+    return cards.map(function(c) { return c.html; }).join("");
+  }
+
   _renderPluginLiveData(name, p, pluginData, pluginStateData) {
-    return this._renderPluginData(name, pluginData, pluginStateData);
+    return this._renderPluginLiveDataCards(name, p, pluginData, pluginStateData);
   }
 
   _renderPluginActions(name, p, pluginData, pluginStateData) {
@@ -546,11 +673,11 @@ class SettingsRenderer {
   _renderSection(section, config) {
     var self = this;
     var controls = (section.controls && section.controls.length) ? section.controls : [];
-    var isWide = !!section.full_width;
+    var isWide = !!section.full_width || section.columns === 2;
     if (!isWide) {
       for (var k = 0; k < controls.length; k++) {
         var t = controls[k].type;
-        if (t === "theme" || t === "devices" || t === "table" || t === "media_player_picker" || t === "media_player") {
+        if (t === "theme" || t === "devices" || t === "table") {
           isWide = true;
           break;
         }
@@ -564,10 +691,14 @@ class SettingsRenderer {
     var html = '<div class="' + sectionClass + '"';
     if (isWide) html += ' data-span="full"';
     html += '>';
+    html += '<div class="settings-collapsible">';
     if (section.title) {
-      html += '<h2 class="settings-section-title">' + this._esc(section.title) + "</h2>";
+      html += '<a href="#" class="collapse-toggle settings-section-title">' +
+        '&#9660; ' + this._esc(section.title) + "</a>";
     }
+    html += '<div class="collapse-content">';
     var cardClass = "settings-card";
+    if (section.columns === 2) cardClass += " settings-card-cols-2";
     if (section.qr_top_right) cardClass += " settings-card-net";
     html += '<div class="' + cardClass + '">';
 
@@ -586,8 +717,12 @@ class SettingsRenderer {
     if (section.instructions) {
       html += '<div class="settings-instructions">';
       var items = Array.isArray(section.instructions) ? section.instructions : [section.instructions];
-      items.forEach(function (li) {
-        html += "<p>" + self._esc(li) + "</p>";
+      items.forEach(function (li, idx) {
+        if (idx === 0) {
+          html += '<h3 class="settings-section-title">' + self._esc(li) + "</h3>";
+        } else {
+          html += "<p>" + self._esc(li) + "</p>";
+        }
       });
       html += "</div>";
     }
@@ -599,12 +734,14 @@ class SettingsRenderer {
 
     html += "</div>";
     html += "</div>";
+    html += "</div>";
+    html += "</div>";
     return html;
   }
 
   /* ── Control renderer ───────────────────────────────────────── */
 
-  _renderControl(ctrl, config) {
+  _renderControl(ctrl, config, pluginStateData) {
     switch (ctrl.type) {
       case "toggle":
         return this._renderToggle(ctrl, config);
@@ -612,14 +749,19 @@ class SettingsRenderer {
         return this._renderText(ctrl, config);
       case "password":
         return this._renderPassword(ctrl, config);
+      case "hotkey":
+        return this._renderHotkey(ctrl, config);
       case "select":
-        return this._renderSelect(ctrl, config);
+        return this._renderSelect(ctrl, config, pluginStateData);
       case "slider":
         return this._renderSlider(ctrl, config);
       case "number":
         return this._renderNumber(ctrl, config);
       case "button":
         return this._renderButton(ctrl, config);
+      case "buttons":
+      case "button_group":
+        return this._renderButtons(ctrl, config);
       case "info":
         return this._renderInfo(ctrl, config);
       case "qr":
@@ -649,13 +791,16 @@ class SettingsRenderer {
   _renderToggle(ctrl, config) {
     var val = config[ctrl.key];
     var on = val ? "on" : "";
-    var html = '<div class="settings-toggle-row"';
+    var html = '<div class="settings-control">';
+    html += '<div class="settings-toggle-row"';
     if (ctrl.description) html += ' title="' + this._esc(ctrl.description) + '"';
     html += ">";
     html += '<span class="settings-toggle-label">' + this._esc(ctrl.label) + "</span>";
     html += '<div class="settings-toggle ' + on + '" data-key="' + this._esc(ctrl.key) + '">';
     html += '<div class="settings-toggle-thumb"></div>';
     html += "</div>";
+    html += "</div>";
+    html += this._tip(ctrl);
     html += "</div>";
     return html;
   }
@@ -672,6 +817,25 @@ class SettingsRenderer {
     html += ' value="' + this._esc(val) + '"';
     if (ctrl.placeholder) html += ' placeholder="' + this._esc(ctrl.placeholder) + '"';
     html += ">";
+    html += this._tip(ctrl);
+    html += "</div>";
+    return html;
+  }
+
+  /* ── Hotkey input ───────────────────────────────────────────── */
+
+  _renderHotkey(ctrl, config) {
+    var val = config[ctrl.key] || ctrl.default || "";
+    var html = '<div class="settings-control">';
+    if (ctrl.label) {
+      html += '<label class="settings-label">' + this._esc(ctrl.label) + "</label>";
+    }
+    html += '<div class="pe-hotkey-input-row" style="display:flex; gap:6px; align-items:center;">';
+    html += '<input type="text" class="settings-input pe-hotkey-input settings-hotkey-input" data-key="' + this._esc(ctrl.key) + '"';
+    html += ' value="' + this._esc(val) + '" placeholder="e.g. ' + this._esc(ctrl.default || "Ctrl+Alt+I") + '" style="flex:1;">';
+    html += '<button type="button" class="settings-btn pe-hotkey-capture-btn settings-hotkey-capture-btn" data-hotkey-target="' + this._esc(ctrl.key) + '">Capture</button>';
+    html += '</div>';
+    html += this._tip(ctrl);
     html += "</div>";
     return html;
   }
@@ -727,7 +891,7 @@ class SettingsRenderer {
 
   /* ── Select dropdown ────────────────────────────────────────── */
 
-  _renderSelect(ctrl, config) {
+  _renderSelect(ctrl, config, pluginStateData) {
     var val;
     if (ctrl.value_from) {
       val = config[ctrl.value_from];
@@ -740,17 +904,28 @@ class SettingsRenderer {
     }
     html += '<select class="settings-select" data-key="' + this._esc(ctrl.key) + '"';
     if (ctrl.value_from) html += ' data-value-from="' + this._esc(ctrl.value_from) + '"';
+    if (ctrl.options_key) html += ' data-options-key="' + this._esc(ctrl.options_key) + '"';
     html += ">";
-    if (ctrl.options) {
+    var options = ctrl.options || [];
+    // If options not pre-populated but options_key exists, try to get from pluginStateData
+    if (!options.length && ctrl.options_key && pluginStateData) {
+      var ps = pluginStateData;
+      var liveState = ps.state || {};
+      options = liveState[ctrl.options_key] || ps[ctrl.options_key] || liveState.profiles || ps.profiles || [];
+    }
+    if (options.length) {
       var self = this;
-      ctrl.options.forEach(function (opt) {
-        var sel = opt.value === val ? " selected" : "";
-        html += '<option value="' + self._esc(opt.value) + '"' + sel + ">";
-        html += self._esc(opt.label);
+      options.forEach(function (opt) {
+        var optVal = typeof opt === "object" ? opt.value : opt;
+        var optLabel = typeof opt === "object" ? (opt.label || optVal) : opt;
+        var sel = optVal === val ? " selected" : "";
+        html += '<option value="' + self._esc(optVal) + '"' + sel + ">";
+        html += self._esc(optLabel);
         html += "</option>";
       });
     }
     html += "</select>";
+    html += this._tip(ctrl);
     html += "</div>";
     return html;
   }
@@ -774,6 +949,7 @@ class SettingsRenderer {
     if (ctrl.step !== undefined) html += ' step="' + ctrl.step + '"';
     html += ' value="' + this._esc(String(val)) + '"';
     html += ">";
+    html += this._tip(ctrl);
     html += "</div>";
     return html;
   }
@@ -804,6 +980,7 @@ class SettingsRenderer {
     html += ">";
     if (ctrl.unit) html += '<span class="settings-unit">' + this._esc(ctrl.unit) + "</span>";
     html += "</div>";
+    html += this._tip(ctrl);
     html += "</div>";
     return html;
   }
@@ -818,6 +995,30 @@ class SettingsRenderer {
     if (ctrl.icon) html += '<span class="material-icons-outlined">' + this._esc(ctrl.icon) + "</span> ";
     html += this._esc(ctrl.label || "Button");
     html += "</button>";
+    html += "</div>";
+    return html;
+  }
+
+  /* ── Multi-button Row ────────────────────────────────────────── */
+
+  _renderButtons(ctrl) {
+    var self = this;
+    var buttons = ctrl.buttons || [];
+    var html = '<div class="settings-control">';
+    if (ctrl.label) {
+      html += '<label class="settings-label">' + this._esc(ctrl.label) + "</label>";
+    }
+    html += '<div class="settings-buttons-row" style="display:flex;gap:10px;align-items:center;">';
+    buttons.forEach(function (btn) {
+      html += '<button type="button" class="settings-btn" style="flex:1" data-action="' + self._esc(btn.action || "") + '"';
+      if (btn.target) html += ' data-target="' + self._esc(btn.target) + '"';
+      html += ">";
+      if (btn.icon) html += '<span class="material-icons-outlined">' + self._esc(btn.icon) + "</span> ";
+      html += self._esc(btn.label || "Button");
+      html += "</button>";
+    });
+    html += "</div>";
+    if (ctrl.description) html += this._tip(ctrl);
     html += "</div>";
     return html;
   }
@@ -850,7 +1051,7 @@ class SettingsRenderer {
     return html;
   }
 
-  /* ── Paired devices list ────────────────────────────────────── */
+  /* ── Paired devices list (managed via modal) ────────────────── */
 
   _renderDevices(ctrl, config) {
     var html = '<div class="settings-control">';
@@ -860,11 +1061,10 @@ class SettingsRenderer {
     if (ctrl.description) {
       html += '<div class="settings-hint">' + this._esc(ctrl.description) + "</div>";
     }
-    html += '<div class="settings-devices" data-devices>';
-    html += '<div class="settings-devices-empty">Loading…</div>';
+    html += '<div class="settings-password-row">';
+    html += '<button class="settings-btn settings-devices-manage">';
+    html += '<span class="material-icons-outlined">devices_other</span> Manage devices</button>';
     html += "</div>";
-    html += '<button class="settings-btn settings-devices-refresh">';
-    html += '<span class="material-icons-outlined">refresh</span> Refresh</button>';
     html += "</div>";
     return html;
   }
@@ -884,6 +1084,7 @@ class SettingsRenderer {
     html += '<span class="material-icons-outlined">folder_open</span>';
     html += "</button>";
     html += "</div>";
+    html += this._tip(ctrl);
     html += "</div>";
     return html;
   }
@@ -904,6 +1105,7 @@ class SettingsRenderer {
     html += '<span class="material-icons-outlined">folder_open</span>';
     html += "</button>";
     html += "</div>";
+    html += this._tip(ctrl);
     html += "</div>";
     return html;
   }
@@ -911,41 +1113,33 @@ class SettingsRenderer {
   /* ── Visual Theme Control ───────────────────────────────────── */
 
   _renderTheme(ctrl, config) {
-    var theme = config.theme || { mode: "iris", accent: "#B23AF6", neon: "#79E8FC" };
+    var theme = config.theme || { mode: "iris", accent: "#B23AF6", neon: "#48B2E9" };
     var mode = theme.mode || "iris";
     var accent = theme.accent || "#B23AF6";
-    var neon = theme.neon || "#79E8FC";
+    var neon = theme.neon || "#48B2E9";
 
     var html = '<div class="settings-control theme-engine-control">';
     html += '<label class="settings-label" style="font-weight:700; margin-bottom:8px; display:block;">Visual Theme</label>';
-    
+    html += this._tip(ctrl);
+
     html += '<div class="theme-presets-grid">';
     
     // 1. Iris preset
     html += '<div class="theme-preset-card' + (mode === 'iris' ? ' active' : '') + '" data-theme-mode="iris">';
-    html += '<div class="theme-preset-swatch" style="background: linear-gradient(135deg, #B23AF6 0%, #79E8FC 100%);"></div>';
-    html += '<div class="theme-preset-info">';
+    html += '<div class="theme-preset-swatch" style="background: linear-gradient(135deg, #48B2E9 0%, #B23AF6 100%);"></div>';
     html += '<span class="theme-preset-title">Iris</span>';
-    html += '<span class="theme-preset-desc">Cyberpunk Neon Gradient</span>';
-    html += '</div>';
     html += '</div>';
 
     // 2. Monochrome preset
     html += '<div class="theme-preset-card' + (mode === 'monochrome' ? ' active' : '') + '" data-theme-mode="monochrome">';
-    html += '<div class="theme-preset-swatch" style="background: linear-gradient(135deg, #444444 0%, #FFFFFF 100%);"></div>';
-    html += '<div class="theme-preset-info">';
+    html += '<div class="theme-preset-swatch" style="background: linear-gradient(135deg, #FFFFFF 0%, #666666 100%);"></div>';
     html += '<span class="theme-preset-title">Monochrome</span>';
-    html += '<span class="theme-preset-desc">Stealth High-Contrast</span>';
-    html += '</div>';
     html += '</div>';
 
     // 3. Custom preset
     html += '<div class="theme-preset-card' + (mode === 'custom' ? ' active' : '') + '" data-theme-mode="custom">';
-    html += '<div class="theme-preset-swatch" style="background: linear-gradient(135deg, ' + this._esc(accent) + ' 0%, ' + this._esc(neon) + ' 100%);" id="theme-custom-swatch"></div>';
-    html += '<div class="theme-preset-info">';
+    html += '<div class="theme-preset-swatch" style="background: linear-gradient(135deg, ' + this._esc(neon) + ' 0%, ' + this._esc(accent) + ' 100%);" id="theme-custom-swatch"></div>';
     html += '<span class="theme-preset-title">Custom</span>';
-    html += '<span class="theme-preset-desc">2-Colour Gradient</span>';
-    html += '</div>';
     html += '</div>';
 
     html += '</div>';
@@ -955,18 +1149,18 @@ class SettingsRenderer {
     html += '<div class="theme-color-input-row">';
     
     html += '<div class="theme-color-field">';
-    html += '<label class="settings-label" style="font-size:12px; margin-bottom:4px;">Color 1: Accent</label>';
+    html += '<label class="settings-label" style="font-size:12px; margin-bottom:4px;">Color 1: Primary Neon</label>';
     html += '<div class="theme-color-picker-wrap">';
-    html += '<input type="color" class="theme-color-native" id="theme-accent-color" value="' + this._esc(accent) + '">';
-    html += '<input type="text" class="settings-input theme-color-hex" id="theme-accent-hex" value="' + this._esc(accent) + '" maxlength="7">';
+    html += '<input type="color" class="theme-color-native" id="theme-neon-color" value="' + this._esc(neon) + '">';
+    html += '<input type="text" class="settings-input theme-color-hex" id="theme-neon-hex" value="' + this._esc(neon) + '" maxlength="7">';
     html += '</div>';
     html += '</div>';
 
     html += '<div class="theme-color-field">';
-    html += '<label class="settings-label" style="font-size:12px; margin-bottom:4px;">Color 2: Neon</label>';
+    html += '<label class="settings-label" style="font-size:12px; margin-bottom:4px;">Color 2: Neon Accent</label>';
     html += '<div class="theme-color-picker-wrap">';
-    html += '<input type="color" class="theme-color-native" id="theme-neon-color" value="' + this._esc(neon) + '">';
-    html += '<input type="text" class="settings-input theme-color-hex" id="theme-neon-hex" value="' + this._esc(neon) + '" maxlength="7">';
+    html += '<input type="color" class="theme-color-native" id="theme-accent-color" value="' + this._esc(accent) + '">';
+    html += '<input type="text" class="settings-input theme-color-hex" id="theme-accent-hex" value="' + this._esc(accent) + '" maxlength="7">';
     html += '</div>';
     html += '</div>';
 
@@ -1018,32 +1212,27 @@ class SettingsRenderer {
     return html;
   }
 
-  /* ── Media player picker ───────────────────────────────────────── */
-
   _renderMediaPlayerPicker(ctrl, config) {
     var val = config[ctrl.key] || "";
     var html = '<div class="settings-control media-player-picker-wrap" data-key="' + this._esc(ctrl.key) + '">';
     if (ctrl.label) {
       html += '<label class="settings-label">' + this._esc(ctrl.label) + "</label>";
     }
-    if (ctrl.description) {
-      html += '<p class="settings-description">' + this._esc(ctrl.description) + "</p>";
+
+    html += '<div class="media-player-row" style="display:flex;align-items:center;gap:8px;">';
+    html += '<div class="media-player-icon-preview" id="media-player-icon-preview" style="width:36px;height:36px;border-radius:6px;background:var(--bg-control, #1A1C20);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden;"><span class="material-icons-outlined" style="font-size:20px;color:var(--fg-dim);">music_note</span></div>';
+    html += '<select class="settings-select media-player-select" id="media-player-select" style="flex:1;min-width:0;">';
+    html += '<option value="">Scanning installed players...</option>';
+    if (val) {
+      html += '<option value="' + this._esc(val) + '" selected>' + this._esc(val.split(/[\\/]/).pop() || val) + '</option>';
     }
+    html += '</select>';
+    html += '<button type="button" class="settings-btn media-player-browse-btn" data-target="' + this._esc(ctrl.key) + '" style="white-space:nowrap;flex-shrink:0;">Browse</button>';
+    html += '</div>';
 
-    // Detected player chips row
-    html += '<div class="media-player-chips" id="media-player-chips-list">';
-    html += '<span class="media-player-detect-loading"><span class="material-icons-outlined" style="font-size:14px;">sync</span> Scanning installed players...</span>';
-    html += "</div>";
-
-    // Manual input & browse row with live icon preview
-    html += '<div class="media-player-input-row">';
-    html += '<div class="media-player-icon-preview" id="media-player-icon-preview"><span class="material-icons-outlined">music_note</span></div>';
-    html += '<input type="text" class="settings-input media-player-input" data-key="' + this._esc(ctrl.key) + '"';
-    html += ' value="' + this._esc(val) + '" placeholder="Path to player executable (e.g. Spotify.exe, vlc.exe)">';
-    html += '<button type="button" class="settings-btn media-player-browse-btn" data-target="' + this._esc(ctrl.key) + '">Browse...</button>';
-    html += '<button type="button" class="settings-btn settings-btn-secondary media-player-clear-btn" title="Clear player">Clear</button>';
-    html += "</div>";
-
+    if (ctrl.description) {
+      html += this._tip(ctrl);
+    }
     html += "</div>";
     return html;
   }
@@ -1161,34 +1350,46 @@ class SettingsRenderer {
     var self = this;
     var targetSelect = container.querySelector("#plugin-btn-target-profile");
 
-    // Apply MDI icons in the preview tiles
+    // Resolve MDI icons in the grid tiles
     if (typeof applyMdiIcons === "function") {
       applyMdiIcons(container);
     }
 
-    // Helper: collect configured buttons with any custom hotkey inputs
+    // Build the buttons payload from buttons_def preserving all author properties
     function getButtonsPayload() {
-      var btns = (p.buttons_def || []).map(function(b) {
-        var copy = Object.assign({}, b);
-        var input = container.querySelector('.plugin-btn-hotkey-input[data-btn-id="' + self._cssEsc(b.id) + '"]');
-        if (input && input.value) {
-          copy.hotkey = input.value.trim();
-        }
-        return copy;
+      return (p.buttons_def || []).map(function(b) {
+        var bid = b.id || b.button_id;
+        return {
+          type: (b.widget_type === "display" || b.type === "SENSOR") ? "TOGGLE" : (b.type || "TOGGLE"),
+          name: b.name || bid,
+          icon: b.icon || "toggle-switch",
+          icon_off: b.icon_off || "",
+          color: b.color || (name === "elite_dangerous" ? "#ffb703" : ""),
+          colors: b.colors || { on: "#00ff88", off: "#444444" },
+          labels: b.labels || { on: "ON", off: "OFF" },
+          plugin: name,
+          button_id: bid,
+          widget_type: b.widget_type || "status_toggle",
+          state_key: b.state_key || bid,
+          hotkey: b.hotkey || b.default_hotkey || "",
+          show_name: b.show_name !== false,
+          show_icon: b.show_icon !== false,
+          show_state: b.show_state !== false,
+          use_app_icon: false,
+          show_album_art: false
+        };
       });
-      return btns;
     }
 
-    // Export full 12-button preset
+    // Export full preset
     var exportAllBtn = container.querySelector(".btn-export-all");
     if (exportAllBtn) {
       exportAllBtn.addEventListener("click", async function() {
-        var profileId = targetSelect ? targetSelect.value : "__default__";
+        var profileId = (targetSelect && targetSelect.value && targetSelect.value !== "__default__") ? targetSelect.value : "__new__";
         var btns = getButtonsPayload();
         exportAllBtn.disabled = true;
-        var origText = exportAllBtn.innerHTML;
-        exportAllBtn.innerHTML = '<span class="material-icons-outlined" style="font-size:16px;vertical-align:middle;margin-right:4px">hourglass_empty</span> Exporting...';
-
+        var origHtml = exportAllBtn.innerHTML;
+        exportAllBtn.innerHTML = '<span class="material-icons-outlined" style="font-size:16px;vertical-align:middle;margin-right:4px">hourglass_empty</span>Exporting...';
         try {
           var res = await apiFetch(self._apiBase + "/api/panel/export_buttons", {
             method: "POST",
@@ -1204,73 +1405,22 @@ class SettingsRenderer {
           });
           var data = await res.json();
           if (data && data.ok) {
-            exportAllBtn.innerHTML = '<span class="material-icons-outlined" style="font-size:16px;vertical-align:middle;margin-right:4px">check</span> Exported to ' + self._esc(data.target_profile || "Profile") + '!';
+            exportAllBtn.innerHTML = '<span class="material-icons-outlined" style="font-size:16px;vertical-align:middle;margin-right:4px">check</span>Exported to ' + self._esc(data.target_profile || "Profile") + '!';
             if (typeof fetchPanel === "function") fetchPanel();
             if (typeof fetchConfig === "function") fetchConfig();
-            setTimeout(function() {
-              exportAllBtn.disabled = false;
-              exportAllBtn.innerHTML = origText;
-            }, 2000);
+            setTimeout(function() { exportAllBtn.disabled = false; exportAllBtn.innerHTML = origHtml; }, 2000);
           } else {
             alert("Export failed: " + (data ? data.error : "Unknown error"));
             exportAllBtn.disabled = false;
-            exportAllBtn.innerHTML = origText;
+            exportAllBtn.innerHTML = origHtml;
           }
         } catch (err) {
           alert("Export failed: " + err);
           exportAllBtn.disabled = false;
-          exportAllBtn.innerHTML = origText;
+          exportAllBtn.innerHTML = origHtml;
         }
       });
     }
-
-    // Export single button
-    container.querySelectorAll(".btn-export-single").forEach(function(btn) {
-      btn.addEventListener("click", async function() {
-        var btnId = this.dataset.btnId;
-        var profileId = targetSelect ? targetSelect.value : "__default__";
-        var allBtns = getButtonsPayload();
-        var targetBtn = allBtns.find(function(b) { return b.id === btnId; });
-        if (!targetBtn) return;
-
-        btn.disabled = true;
-        var origText = btn.innerHTML;
-        btn.innerHTML = '<span class="material-icons-outlined" style="font-size:14px;vertical-align:middle">hourglass_empty</span>';
-
-        try {
-          var res = await apiFetch(self._apiBase + "/api/panel/export_buttons", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              plugin: name,
-              profile_id: profileId,
-              profile_name: p.display_name,
-              profile_exe: p.exe_default || "",
-              buttons: [targetBtn],
-              replace_all: false
-            })
-          });
-          var data = await res.json();
-          if (data && data.ok) {
-            btn.innerHTML = '<span class="material-icons-outlined" style="font-size:14px;vertical-align:middle">check</span> Sent';
-            if (typeof fetchPanel === "function") fetchPanel();
-            if (typeof fetchConfig === "function") fetchConfig();
-            setTimeout(function() {
-              btn.disabled = false;
-              btn.innerHTML = origText;
-            }, 1500);
-          } else {
-            alert("Export failed: " + (data ? data.error : "Unknown error"));
-            btn.disabled = false;
-            btn.innerHTML = origText;
-          }
-        } catch (err) {
-          alert("Export failed: " + err);
-          btn.disabled = false;
-          btn.innerHTML = origText;
-        }
-      });
-    });
   }
 
   _bindPluginActions(container, name, actionDefs, actionCallback) {
@@ -1393,6 +1543,82 @@ class SettingsRenderer {
         }
         break;
 
+      case "hotkey":
+        var hotkeyInput = container.querySelector(".settings-hotkey-input[data-key='" + self._cssEsc(ctrl.key) + "']");
+        var capBtn = container.querySelector(".settings-hotkey-capture-btn[data-hotkey-target='" + self._cssEsc(ctrl.key) + "']");
+        if (hotkeyInput) {
+          var debounceHk = 300;
+          var timerHk = null;
+          var capturing = false;
+
+          var CODE_MAP = {
+            "Digit1":"1","Digit2":"2","Digit3":"3","Digit4":"4","Digit5":"5",
+            "Digit6":"6","Digit7":"7","Digit8":"8","Digit9":"9","Digit0":"0",
+            "KeyA":"A","KeyB":"B","KeyC":"C","KeyD":"D","KeyE":"E","KeyF":"F",
+            "KeyG":"G","KeyH":"H","KeyI":"I","KeyJ":"J","KeyK":"K","KeyL":"L",
+            "KeyM":"M","KeyN":"N","KeyO":"O","KeyP":"P","KeyQ":"Q","KeyR":"R",
+            "KeyS":"S","KeyT":"T","KeyU":"U","KeyV":"V","KeyW":"W","KeyX":"X",
+            "KeyY":"Y","KeyZ":"Z",
+            "F1":"F1","F2":"F2","F3":"F3","F4":"F4","F5":"F5","F6":"F6",
+            "F7":"F7","F8":"F8","F9":"F9","F10":"F10","F11":"F11","F12":"F12",
+            "F13":"F13","F14":"F14","F15":"F15","F16":"F16","F17":"F17","F18":"F18",
+            "F19":"F19","F20":"F20","F21":"F21","F22":"F22","F23":"F23","F24":"F24",
+            "Space":"Space","Enter":"Enter","Backspace":"Backspace","Tab":"Tab","Escape":"Esc",
+            "Delete":"Delete","Insert":"Insert","Home":"Home","End":"End",
+            "PageUp":"PageUp","PageDown":"PageDown",
+            "ArrowUp":"Up","ArrowDown":"Down","ArrowLeft":"Left","ArrowRight":"Right"
+          };
+
+          function setCapture(on) {
+            capturing = on;
+            if (capBtn) {
+              capBtn.textContent = on ? "Recording..." : "Capture";
+              capBtn.classList.toggle("pe-hotkey-capture-active", on);
+            }
+            hotkeyInput.readOnly = on;
+            if (on) hotkeyInput.focus();
+          }
+
+          if (capBtn) {
+            capBtn.addEventListener("click", function() { setCapture(!capturing); });
+          }
+
+          hotkeyInput.addEventListener("keydown", function(e) {
+            if (!capturing) return;
+            if (e.key === "Escape") { setCapture(false); e.preventDefault(); return; }
+            if (e.key === "Backspace" || e.key === "Delete") {
+              hotkeyInput.value = "";
+              config[ctrl.key] = "";
+              saveCallback({ [ctrl.key]: "" });
+              e.preventDefault();
+              return;
+            }
+            var mod = [];
+            if (e.ctrlKey) mod.push("Ctrl");
+            if (e.altKey) mod.push("Alt");
+            if (e.shiftKey) mod.push("Shift");
+            var token = CODE_MAP[e.code];
+            if (!token) return;
+            var val = mod.length ? mod.join("+") + "+" + token : token;
+            hotkeyInput.value = val;
+            config[ctrl.key] = val;
+            saveCallback({ [ctrl.key]: val });
+            setCapture(false);
+            e.preventDefault();
+          });
+
+          hotkeyInput.addEventListener("input", function() {
+            clearTimeout(timerHk);
+            var val = this.value.trim();
+            timerHk = setTimeout(function() {
+              config[ctrl.key] = val;
+              saveCallback({ [ctrl.key]: val });
+            }, debounceHk);
+          });
+          hotkeyInput.addEventListener("blur", function() { if (capturing) setCapture(false); });
+        }
+        break;
+
       case "password":
         self._bindPasswordControl(container, ctrl);
         break;
@@ -1503,42 +1729,62 @@ class SettingsRenderer {
         break;
 
       case "button":
-        var buttons = container.querySelectorAll(
-          ".settings-btn[data-action='" + ctrl.action + "']");
-        buttons.forEach(function (el) {
-          el.addEventListener("click", function () {
-            if (ctrl.action === "navigate" || ctrl.action === "open_page") {
-              var targetPage = ctrl.target || "library";
-              if (typeof window.navigateToPage === "function") {
-                window.navigateToPage(targetPage);
-              } else {
-                var navBtn = document.querySelector(".nav-item[data-page='" + targetPage + "']");
-                if (navBtn) navBtn.click();
+      case "buttons":
+      case "button_group":
+        var btnList = ctrl.buttons || [ctrl];
+        btnList.forEach(function (b) {
+          var buttons = container.querySelectorAll(
+            ".settings-btn[data-action='" + b.action + "']");
+          buttons.forEach(function (el) {
+            if (el._bound) return;
+            el._bound = true;
+            el.addEventListener("click", function () {
+              if (b.action === "navigate" || b.action === "open_page") {
+                var targetPage = b.target || "library";
+                if (typeof window.navigateToPage === "function") {
+                  window.navigateToPage(targetPage);
+                } else {
+                  var navBtn = document.querySelector(".nav-item[data-page='" + targetPage + "']");
+                  if (navBtn) navBtn.click();
+                }
+                return;
               }
-              return;
-            }
-            if (ctrl.action === "copy_token") {
-              apiFetch(self._apiBase + "/api/config")
-                .then(function (res) { return res.ok ? res.json() : {}; })
-                .then(function (data) {
-                  var token = data.http_token || "";
-                  if (token && navigator.clipboard && navigator.clipboard.writeText) {
-                    navigator.clipboard.writeText(token).then(function () {
-                      setTimeout(function () {
-                        if (navigator.clipboard.readText) {
-                          navigator.clipboard.readText().then(function (t) {
-                            if (t === token) navigator.clipboard.writeText("");
-                          }).catch(function () {});
-                        }
-                      }, 30000);
-                    }).catch(function () {});
-                  }
-                })
-                .catch(function () {});
-              var old = el.textContent;
-              el.textContent = "Copied!";
-              setTimeout(function () { el.textContent = old; }, 1200);
-            }
+              if (b.action === "copy_token") {
+                apiFetch(self._apiBase + "/api/config")
+                  .then(function (res) { return res.ok ? res.json() : {}; })
+                  .then(function (data) {
+                    var token = data.http_token || "";
+                    if (token && navigator.clipboard && navigator.clipboard.writeText) {
+                      navigator.clipboard.writeText(token).then(function () {
+                        setTimeout(function () {
+                          if (navigator.clipboard.readText) {
+                            navigator.clipboard.readText().then(function (t) {
+                              if (t === token) navigator.clipboard.writeText("");
+                            }).catch(function () {});
+                          }
+                        }, 30000);
+                      }).catch(function () {});
+                    }
+                  })
+                  .catch(function () {});
+                var old = el.textContent;
+                el.textContent = "Copied!";
+                setTimeout(function () { el.textContent = old; }, 1200);
+              }
+              if (b.action === "open_plugins_folder") {
+                var old = el.textContent;
+                apiFetch(self._apiBase + "/api/plugins/open_folder", { method: "POST" })
+                  .then(function (res) { return res.ok ? res.json() : Promise.reject(res.status); })
+                  .then(function () {
+                    el.textContent = "Opened!";
+                    setTimeout(function () { el.textContent = old; }, 1500);
+                  })
+                  .catch(function () {
+                    el.textContent = "Error";
+                    setTimeout(function () { el.textContent = old; }, 1500);
+                  });
+              }
+            });
           });
         });
         break;
@@ -1562,65 +1808,101 @@ class SettingsRenderer {
         break;
 
       case "devices":
-        var devBox = container.querySelector("[data-devices]");
-        var devRefresh = container.querySelector(".settings-devices-refresh");
-        if (!devBox) break;
-
-        function renderDeviceRows(devices) {
-          if (!devices || !devices.length) {
-            devBox.innerHTML =
-              '<div class="settings-devices-empty">No devices have paired yet.</div>';
-            return;
-          }
-          var html = "";
-          devices.forEach(function (d) {
-            html += '<div class="settings-device-row" data-device-id="' + self._esc(d.id) + '">';
-            html += '<div class="settings-device-meta">';
-            html += '<span class="settings-device-name">' + self._esc(d.name) + "</span>";
-            if (d.ua) {
-              html += '<span class="settings-device-ua">' + self._esc(d.ua) + "</span>";
-            }
-            if (d.last_seen) {
-              try {
-                html += '<span class="settings-device-seen">Last seen ' +
-                  new Date(d.last_seen * 1000).toLocaleString() + "</span>";
-              } catch (_) {}
-            }
-            html += "</div>";
-            html += '<button class="settings-btn settings-btn-danger device-revoke" data-dev="' +
-              self._esc(d.id) + '">Revoke</button>';
-            html += "</div>";
-          });
-          devBox.innerHTML = html;
-          devBox.querySelectorAll(".device-revoke").forEach(function (rev) {
-            rev.addEventListener("click", function () {
-              apiFetch(self._apiBase + "/api/devices/revoke", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ id: rev.dataset.dev }),
-              })
-                .then(function (res) { return res.json(); })
-                .then(function (data) { if (data && data.ok) loadDeviceRows(); })
-                .catch(function () {});
-            });
-          });
-        }
-
-        function loadDeviceRows() {
-          devBox.innerHTML = '<div class="settings-devices-empty">Loading…</div>';
-          apiFetch(self._apiBase + "/api/devices")
-            .then(function (res) { return res.ok ? res.json() : { ok: false, devices: [] }; })
-            .then(function (data) { renderDeviceRows((data && data.devices) || []); })
-            .catch(function () {
-              devBox.innerHTML =
-                '<div class="settings-devices-empty">Could not load devices.</div>';
-            });
-        }
-
-        loadDeviceRows();
-        if (devRefresh) devRefresh.onclick = loadDeviceRows;
+        var manageBtn = container.querySelector(".settings-devices-manage");
+        if (!manageBtn) break;
+        manageBtn.addEventListener("click", function () {
+          self._openDevicesModal(ctrl);
+        });
         break;
     }
+  }
+
+  /* ── Paired devices modal (review + revoke) ─────────────────── */
+
+  _openDevicesModal(ctrl) {
+    var self = this;
+    var html =
+      '<div class="panel-modal-backdrop" id="devices-modal">' +
+        '<div class="panel-modal">' +
+          '<div class="panel-modal-header">' +
+            '<h3>Paired devices</h3>' +
+            '<div class="panel-modal-subtitle">Devices that have entered the panel password.</div>' +
+          '</div>' +
+          '<div class="settings-devices" data-devices>' +
+            '<div class="settings-devices-empty">Loading…</div>' +
+          '</div>' +
+          '<div class="panel-modal-actions">' +
+            '<button type="button" class="settings-btn" id="devices-close">Close</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    var wrap = document.createElement("div");
+    wrap.innerHTML = html;
+    document.body.appendChild(wrap);
+
+    var devBox = wrap.querySelector("[data-devices]");
+    var closeBtn = wrap.querySelector("#devices-close");
+
+    function close() {
+      if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
+    }
+
+    function renderDeviceRows(devices) {
+      if (!devices || !devices.length) {
+        devBox.innerHTML =
+          '<div class="settings-devices-empty">No devices have paired yet.</div>';
+        return;
+      }
+      var rows = "";
+      devices.forEach(function (d) {
+        rows += '<div class="settings-device-row" data-device-id="' + self._esc(d.id) + '">';
+        rows += '<div class="settings-device-meta">';
+        rows += '<span class="settings-device-name">' + self._esc(d.name) + "</span>";
+        if (d.ua) {
+          rows += '<span class="settings-device-ua">' + self._esc(d.ua) + "</span>";
+        }
+        if (d.last_seen) {
+          try {
+            rows += '<span class="settings-device-seen">Last seen ' +
+              new Date(d.last_seen * 1000).toLocaleString() + "</span>";
+          } catch (_) {}
+        }
+        rows += "</div>";
+        rows += '<button class="settings-btn settings-btn-danger device-revoke" data-dev="' +
+          self._esc(d.id) + '">Revoke</button>';
+        rows += "</div>";
+      });
+      devBox.innerHTML = rows;
+      devBox.querySelectorAll(".device-revoke").forEach(function (rev) {
+        rev.addEventListener("click", function () {
+          apiFetch(self._apiBase + "/api/devices/revoke", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: rev.dataset.dev }),
+          })
+            .then(function (res) { return res.json(); })
+            .then(function (data) { if (data && data.ok) loadDeviceRows(); })
+            .catch(function () {});
+        });
+      });
+    }
+
+    function loadDeviceRows() {
+      devBox.innerHTML = '<div class="settings-devices-empty">Loading…</div>';
+      apiFetch(self._apiBase + "/api/devices")
+        .then(function (res) { return res.ok ? res.json() : { ok: false, devices: [] }; })
+        .then(function (data) { renderDeviceRows((data && data.devices) || []); })
+        .catch(function () {
+          devBox.innerHTML =
+            '<div class="settings-devices-empty">Could not load devices.</div>';
+        });
+    }
+
+    loadDeviceRows();
+    if (closeBtn) closeBtn.addEventListener("click", close);
+    wrap.addEventListener("click", function (e) {
+      if (e.target === wrap) close();
+    });
   }
 
   /* ── Panel password control (set / change dialog) ───────────── */
@@ -1893,16 +2175,15 @@ class SettingsRenderer {
     var wrap = container.querySelector('.media-player-picker-wrap[data-key="' + self._cssEsc(ctrl.key) + '"]');
     if (!wrap) return;
 
-    var chipsList = wrap.querySelector("#media-player-chips-list");
-    var input = wrap.querySelector(".media-player-input");
+    var selectEl = wrap.querySelector(".media-player-select");
     var iconPreview = wrap.querySelector("#media-player-icon-preview");
     var browseBtn = wrap.querySelector(".media-player-browse-btn");
-    var clearBtn = wrap.querySelector(".media-player-clear-btn");
+    var currentPath = config[ctrl.key] || "";
 
     function updateIcon(path) {
       if (!iconPreview) return;
       if (!path) {
-        iconPreview.innerHTML = '<span class="material-icons-outlined">music_note</span>';
+        iconPreview.innerHTML = '<span class="material-icons-outlined" style="font-size:20px;color:var(--fg-dim);">music_note</span>';
         return;
       }
       var brandSvg = getMediaPlayerBrandIcon(path);
@@ -1916,95 +2197,76 @@ class SettingsRenderer {
       var img = document.createElement("img");
       img.src = iconUrl;
       img.alt = "App Icon";
+      img.style.width = "100%";
+      img.style.height = "100%";
+      img.style.objectFit = "contain";
       img.onload = function () {
         iconPreview.innerHTML = "";
         iconPreview.appendChild(img);
       };
       img.onerror = function () {
-        iconPreview.innerHTML = '<span class="material-icons-outlined">play_circle</span>';
+        iconPreview.innerHTML = '<span class="material-icons-outlined" style="font-size:20px;color:var(--fg-dim);">play_circle</span>';
       };
     }
 
     function setPath(p, save) {
-      if (input) input.value = p || "";
-      config[ctrl.key] = p || "";
-      updateIcon(p);
-      highlightActiveChip(p);
+      currentPath = p || "";
+      config[ctrl.key] = currentPath;
+      if (selectEl) {
+        var exists = false;
+        for (var i = 0; i < selectEl.options.length; i++) {
+          if (selectEl.options[i].value && currentPath && selectEl.options[i].value.toLowerCase() === currentPath.toLowerCase()) {
+            selectEl.selectedIndex = i;
+            exists = true;
+            break;
+          }
+        }
+        if (!exists && currentPath) {
+          var opt = document.createElement("option");
+          opt.value = currentPath;
+          opt.text = "Custom: " + (currentPath.split(/[\\/]/).pop() || currentPath);
+          opt.selected = true;
+          selectEl.appendChild(opt);
+        } else if (!currentPath) {
+          selectEl.selectedIndex = 0;
+        }
+      }
+      updateIcon(currentPath);
       if (save && saveCallback) {
-        saveCallback({ [ctrl.key]: p || "" });
+        saveCallback({ [ctrl.key]: currentPath });
       }
     }
 
-    function highlightActiveChip(activePath) {
-      if (!chipsList) return;
-      var norm = (activePath || "").toLowerCase().replace(/\\/g, "/");
-      chipsList.querySelectorAll(".media-player-chip").forEach(function (chip) {
-        var chipPath = (chip.dataset.path || "").toLowerCase().replace(/\\/g, "/");
-        if (norm && chipPath === norm) {
-          chip.classList.add("active");
-        } else {
-          chip.classList.remove("active");
-        }
-      });
-    }
+    updateIcon(currentPath);
 
-    // Initial icon preview
-    updateIcon(input ? input.value : "");
-
-    // Fetch detected players
+    // Fetch detected players to populate dropdown
     apiFetch((self._apiBase || "") + "/api/media/players")
       .then(function (res) { return res.ok ? res.json() : { players: [] }; })
       .then(function (data) {
-        if (!chipsList) return;
+        if (!selectEl) return;
         var players = data.players || [];
-        if (!players.length) {
-          chipsList.innerHTML = '<span class="media-player-detect-none">No standard media players detected</span>';
-          return;
-        }
-        var html = '<span class="media-player-chips-label">Detected:</span>';
+        var html = '<option value="">(None / Disabled)</option>';
+        var foundSelected = false;
         players.forEach(function (p) {
-          var brandSvg = getMediaPlayerBrandIcon(p.name) || getMediaPlayerBrandIcon(p.path);
-          html += '<button type="button" class="media-player-chip" data-path="' + self._esc(p.path) + '" data-name="' + self._esc(p.name) + '" title="' + self._esc(p.path) + '">';
-          if (brandSvg) {
-            html += '<span class="media-player-chip-icon-svg">' + brandSvg + '</span>';
-          } else {
-            var token = typeof sessionTokenQuery === "function" ? sessionTokenQuery() : "";
-            var iconUrl = (self._apiBase || "") + "/api/panel/icon?path=" + encodeURIComponent(p.path) + token;
-            html += '<img class="media-player-chip-icon" src="' + iconUrl + '" alt="">';
-          }
-          html += '<span>' + self._esc(p.name) + '</span>';
-          html += '</button>';
+          var isSel = (currentPath && p.path.toLowerCase() === currentPath.toLowerCase());
+          if (isSel) foundSelected = true;
+          html += '<option value="' + self._esc(p.path) + '"' + (isSel ? ' selected' : '') + '>' + self._esc(p.name) + '</option>';
         });
-        chipsList.innerHTML = html;
-        chipsList.querySelectorAll("img.media-player-chip-icon").forEach(function (img) {
-          img.addEventListener("error", function () { this.style.display = "none"; });
-        });
-
-        // Wire chip clicks
-        chipsList.querySelectorAll(".media-player-chip").forEach(function (chip) {
-          chip.addEventListener("click", function () {
-            var path = this.dataset.path || "";
-            setPath(path, true);
-          });
-        });
-        highlightActiveChip(input ? input.value : "");
+        if (currentPath && !foundSelected) {
+          html += '<option value="' + self._esc(currentPath) + '" selected>Custom: ' + self._esc(currentPath.split(/[\\/]/).pop() || currentPath) + '</option>';
+        }
+        selectEl.innerHTML = html;
+        updateIcon(selectEl.value || currentPath);
       })
       .catch(function () {
-        if (chipsList) chipsList.innerHTML = '<span class="media-player-detect-none">Could not scan players</span>';
+        if (selectEl && !selectEl.options.length) {
+          selectEl.innerHTML = '<option value="">(None / Disabled)</option>';
+        }
       });
 
-    // Input debounce
-    if (input) {
-      var timer = null;
-      input.addEventListener("input", function () {
-        clearTimeout(timer);
-        var val = input.value.trim();
-        updateIcon(val);
-        highlightActiveChip(val);
-        timer = setTimeout(function () {
-          config[ctrl.key] = val;
-          if (saveCallback) saveCallback({ [ctrl.key]: val });
-        }, 400);
+    if (selectEl) {
+      selectEl.addEventListener("change", function () {
+        setPath(selectEl.value, true);
       });
     }
 
@@ -2024,13 +2286,6 @@ class SettingsRenderer {
             })
             .catch(function () {});
         }
-      });
-    }
-
-    // Clear button
-    if (clearBtn) {
-      clearBtn.addEventListener("click", function () {
-        setPath("", true);
       });
     }
   }
@@ -2098,10 +2353,10 @@ class SettingsRenderer {
 
   _bindTheme(container, ctrl, config, saveCallback) {
     var self = this;
-    var theme = config.theme || { mode: "iris", accent: "#B23AF6", neon: "#79E8FC" };
+    var theme = config.theme || { mode: "iris", accent: "#B23AF6", neon: "#48B2E9" };
     var currentMode = theme.mode || "iris";
     var currentAccent = theme.accent || "#B23AF6";
-    var currentNeon = theme.neon || "#79E8FC";
+    var currentNeon = theme.neon || "#48B2E9";
 
     var presetCards = container.querySelectorAll(".theme-preset-card");
     var customPickers = container.querySelector("#theme-custom-pickers");
@@ -2122,14 +2377,14 @@ class SettingsRenderer {
         window.applyTheme(themeObj);
       }
       if (customSwatch) {
-        customSwatch.style.background = "linear-gradient(135deg, " + currentAccent + " 0%, " + currentNeon + " 100%)";
+        customSwatch.style.background = "linear-gradient(135deg, " + currentNeon + " 0%, " + currentAccent + " 100%)";
       }
       var prevGrad = container.querySelector("#theme-preview-grad");
       if (prevGrad) {
         var stops = prevGrad.querySelectorAll("stop");
         if (stops.length >= 2) {
-          var c1 = currentMode === "iris" ? "#B23AF6" : (currentMode === "monochrome" ? "#666666" : currentAccent);
-          var c2 = currentMode === "iris" ? "#79E8FC" : (currentMode === "monochrome" ? "#FFFFFF" : currentNeon);
+          var c1 = currentMode === "iris" ? "#48B2E9" : (currentMode === "monochrome" ? "#FFFFFF" : currentNeon);
+          var c2 = currentMode === "iris" ? "#B23AF6" : (currentMode === "monochrome" ? "#666666" : currentAccent);
           stops[0].setAttribute("stop-color", c1);
           stops[1].setAttribute("stop-color", c2);
         }
@@ -2192,7 +2447,18 @@ class SettingsRenderer {
     var applyBtn = container.querySelector("#theme-apply-btn");
     if (applyBtn) {
       applyBtn.addEventListener("click", function () {
-        updatePreviewAndTheme();
+        var themeObj = {
+          mode: currentMode,
+          accent: currentAccent,
+          neon: currentNeon
+        };
+        config.theme = themeObj;
+        if (typeof window.applyTheme === "function") {
+          window.applyTheme(themeObj);
+        }
+        var saveTimer = self._saveTimers["theme"];
+        if (saveTimer) clearTimeout(saveTimer);
+        saveCallback({ theme: themeObj });
         apiFetch(self._apiBase + "/api/portal/reload", { method: "POST" }).catch(function () {});
         var origHtml = applyBtn.innerHTML;
         applyBtn.innerHTML = '<span class="material-icons-outlined" style="font-size:18px;">check</span> Applied & Synced!';
@@ -2206,6 +2472,13 @@ class SettingsRenderer {
   _esc(s) {
     if (!s) return "";
     return String(s).replace(/[&<>"']/g, function (m) { return _escMap[m]; });
+  }
+
+  _tip(ctrl) {
+    if (ctrl && ctrl.description) {
+      return '<div class="settings-hint">' + this._esc(ctrl.description) + "</div>";
+    }
+    return "";
   }
 
   _cssEsc(s) {

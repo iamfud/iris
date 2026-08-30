@@ -1,6 +1,6 @@
 """Iris — Constants and design tokens."""
 
-APP_VERSION = "3.1"
+APP_VERSION = "0.31"
 APP_NAME = "IRIS"
 TRAY_ICON_SIZE = 64
 DEFAULT_BRIGHTNESS = 3
@@ -52,18 +52,19 @@ DEFAULT_CONFIG = {
         {"id": "brightness", "enabled": True},
     ],
     "panel_layout": [
-        {"id": "gauges", "enabled": True},
-        {"id": "button_box", "enabled": True},
-        {"id": "sliders", "enabled": True},
-        {"id": "utility", "enabled": True},
+        {"id": "gauges", "enabled": True, "local": True, "remote": True},
+        {"id": "button_box", "enabled": True, "local": True, "remote": True},
+        {"id": "sliders", "enabled": True, "local": True, "remote": True},
+        {"id": "utility", "enabled": True, "local": True, "remote": True},
     ],
     "panel_gauges": {"source": "pc_stats", "enabled": True},
     "user_name": "",
+    "screensaver_timeout": 2,
     "run_at_startup": False,
     "theme": {
         "mode": "iris",
         "accent": "#B23AF6",
-        "neon": "#79E8FC"
+        "neon": "#48B2E9"
     },
     "plugins": {},
 }
@@ -89,12 +90,12 @@ DEVICE_DEFAULTS = {
     "user_name": "",
 }
 
-BG = "#202020"
-BG_CARD = "#2b2b2b"
+BG = "#0C0D0F"
+BG_CARD = "#181A20"
 NEON = "#48B2E9"
 NEON_DIM = "#555555"
-BUTTON_HOVER = "#3c3c3c"
-BORDER = "#2a2a2a"
+BUTTON_HOVER = "#242830"
+BORDER = "#252830"
 FG = "#e0e0e0"
 FG_DIM = "#666666"
 FONT_UI = ("Segoe UI", 10)

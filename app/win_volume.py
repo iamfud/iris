@@ -189,21 +189,22 @@ def get_active_app_state():
         name = _target["name"]
     if pid is None:
         return {"app": None, "volume": None}
-    session = find_session(pid, name)
+
+    # Fast path: check cached sessions snapshot
+    sessions = list_sessions()
+    for s in sessions:
+        if s.get("pid") == pid:
+            return {"app": s.get("name"), "volume": s.get("volume")}
+
+    if name:
+        matches = [s for s in sessions if (s.get("exe") or "").lower() == name.lower()]
+        if len(matches) == 1:
+            return {"app": matches[0].get("name"), "volume": matches[0].get("volume")}
+
     exe_path = _exe_path_for(pid)
-    resolved = win_resolver.resolve(session=session, pid=pid,
+    resolved = win_resolver.resolve(session=None, pid=pid,
                                     exe_path=exe_path, exe_name=name)
-    friendly = resolved["name"]
-    if session is None:
-        return {"app": friendly, "volume": None}
-    try:
-        sav = session.SimpleAudioVolume
-        if sav is None:
-            return {"app": friendly, "volume": None}
-        return {"app": friendly, "volume": round(sav.GetMasterVolume() * 100)}
-    except Exception as e:
-        log.debug("[volume] get volume: %s", e)
-        return {"app": friendly, "volume": None}
+    return {"app": resolved["name"], "volume": None}
 
 
 def set_active_app_volume(value):
@@ -232,7 +233,13 @@ def set_active_app_volume(value):
         return False
 
 
-def list_sessions():
+_SESSIONS_LOCK = threading.Lock()
+_SESSIONS_CACHE = []
+_SESSIONS_CACHE_TS = 0.0
+_EXE_CACHE = {}
+
+
+def list_sessions(ttl: float = 0.8):
     """Return all open render audio sessions (skipping Iris/self + expired).
 
     Each dict: {"pid": int, "name": str, "volume": int 0-100 | None,
@@ -241,6 +248,12 @@ def list_sessions():
     True when the session's State is Active, i.e. the app is audibly playing
     right now.
     """
+    global _SESSIONS_CACHE, _SESSIONS_CACHE_TS
+    now = time.time()
+    with _SESSIONS_LOCK:
+        if _SESSIONS_CACHE and (now - _SESSIONS_CACHE_TS) < ttl:
+            return list(_SESSIONS_CACHE)
+
     sessions = []
     try:
         import comtypes
@@ -288,16 +301,30 @@ def list_sessions():
             })
         except Exception:
             continue
-    return sessions
+
+    with _SESSIONS_LOCK:
+        _SESSIONS_CACHE = sessions
+        _SESSIONS_CACHE_TS = now
+    return list(sessions)
 
 
 def _exe_path_for(pid):
     """Executable path for a pid (best-effort), or None."""
     if not pid:
         return None
+    now = time.time()
+    cached = _EXE_CACHE.get(pid)
+    if cached is not None:
+        p, ts = cached
+        if now - ts < 4.0:
+            return p
     try:
         import psutil
-        return psutil.Process(pid).exe()
+        p = psutil.Process(pid).exe()
+        if len(_EXE_CACHE) > 256:
+            _EXE_CACHE.clear()
+        _EXE_CACHE[pid] = (p, now)
+        return p
     except Exception:
         return None
 
@@ -306,10 +333,8 @@ def _is_self_pid(pid):
     """Return True if *pid* belongs to an Iris-owned process."""
     if not pid:
         return False
-    try:
-        import psutil
-        exe = psutil.Process(pid).exe()
-    except Exception:
+    exe = _exe_path_for(pid)
+    if not exe:
         return False
     return _is_self_exe(exe)
 

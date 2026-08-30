@@ -15,6 +15,7 @@
               "key": "clock_mode",
               "label": "Clock Mode",
               "value_from": "_clock_mode",
+              "description": "Which clock style the companion display shows.",
               "options": [
                 { "value": "small", "label": "Small Clock" },
                 { "value": "large", "label": "Large Clock", "set": { "feature_large_clock": true, "feature_day_clock": false } },
@@ -109,7 +110,9 @@
       "nav_group": "bottom",
       "sections": [
         {
-          "title": "Personalization",
+          "title": "General",
+          "full_width": true,
+          "columns": 2,
           "controls": [
             {
               "type": "text",
@@ -118,36 +121,64 @@
               "placeholder": "Your Name",
               "description": "Used by Iris to personalize welcome greetings and system messages.",
               "save_debounce_ms": 300
-            }
-          ]
-        },
-        {
-          "title": "Screenshots & Library",
-          "controls": [
+            },
+            {
+              "type": "slider",
+              "key": "screensaver_timeout",
+              "label": "Screensaver Timeout",
+              "min": 1,
+              "max": 10,
+              "step": 1,
+              "unit": "min",
+              "description": "Idle duration on companion phone before dimming to OLED black (1 to 10 min)"
+            },
+            {
+              "type": "hotkey",
+              "key": "hotkey_overlay",
+              "label": "Overlay Hotkey",
+              "default": "Ctrl+Alt+I",
+              "description": "Global shortcut to open or toggle the Iris Overlay."
+            },
             {
               "type": "folder_picker",
               "key": "screenshot_dir",
-              "label": "Screenshot folder",
-              "description": "Where captures and notes are saved. Default: Documents\\Iris\\Screenshots. Leave empty to use default."
+              "label": "Library location",
+              "description": "Where captures and notes are saved. Default: Documents\\Iris\\Library. Leave empty to use default."
             },
             {
-              "type": "button",
-              "label": "Open Library",
-              "icon": "photo_library",
-              "action": "navigate",
-              "target": "library"
-            }
-          ]
-        },
-        {
-          "title": "Media Player",
-          "full_width": true,
-          "controls": [
+              "type": "hotkey",
+              "key": "hotkey_toolbar",
+              "label": "Toolbar Hotkey",
+              "default": "Ctrl+Alt+T",
+              "description": "Global shortcut to open or toggle the screen capture and actions toolbar."
+            },
             {
               "type": "media_player_picker",
               "key": "media_player_path",
-              "label": "Player Application (Eject)",
+              "label": "Media Player",
               "description": "Application launched when pressing the Player / Eject button."
+            },
+            {
+              "type": "toggle",
+              "key": "run_at_startup",
+              "label": "Run at startup",
+              "description": "Automatically start Iris when you sign in to Windows."
+            },
+            {
+              "type": "buttons",
+              "buttons": [
+                {
+                  "label": "Open Library",
+                  "icon": "photo_library",
+                  "action": "navigate",
+                  "target": "library"
+                },
+                {
+                  "label": "Open Plugins",
+                  "icon": "folder_open",
+                  "action": "open_plugins_folder"
+                }
+              ]
             }
           ]
         },
@@ -158,7 +189,8 @@
             {
               "type": "theme",
               "key": "theme",
-              "label": "Theme Engine"
+              "label": "Theme Engine",
+              "description": "Colours used across Iris — pick a preset or set your own accent and neon colours."
             }
           ]
         },
@@ -168,10 +200,18 @@
           "full_width": true,
           "qr_top_right": true,
           "instructions": [
-            "The panel binds to localhost by default, so no login is needed on this PC.",
-            "To reach it from your phone, turn on Allow LAN access, then scan the QR code at the top right. Scanning opens the pairing page on your phone over HTTPS (a secure connection needed to keep the phone's screen awake on the live panel).",
-            "The first time you open the HTTPS address, your phone shows a self-signed certificate warning — tap through it once, then re-add the home-screen icon from the HTTPS address if you had one.",
-            "Set a panel password below, then enter it on your phone to pair it. A paired phone stays connected until you revoke it in the list below."
+            "Pairing Iris with your phone",
+            "1. Turn on Allow LAN access.",
+            "2. Make sure your phone and PC are connected to the same Wi-Fi network.",
+            "3. Scan the QR code at the top right with your phone.",
+            "4. The QR code opens the Iris pairing page on your phone.",
+            "5. Set a Panel password below, then enter it on your phone to pair the device.",
+            "iPhone / iPad: Open the pairing page in Safari. For quick access, tap Share → Add to Home Screen to install Iris as a PWA.",
+            "Android: You can use Iris in Chrome and add it to your Home Screen as a PWA, or use the Iris Android app (APK) if provided.",
+            "Your phone will remain paired until you revoke it under Manage devices.",
+            "Connection lost? Your router may have assigned the PC a new IP address through DHCP. For the most reliable connection, reserve the Iris PC's current IP address as a static/DHCP-reserved address in your router. You don't need to change anything in Iris.",
+            "If the connection drops or the address changes, simply scan the QR code again to reconnect using the current address.",
+            "Security notice: The local Iris connection uses HTTP rather than HTTPS. Your phone may therefore display a \"connection isn't secure\" warning. This is expected when connecting to Iris directly over your local network."
           ],
           "controls": [
             {
@@ -235,6 +275,10 @@
     "button": {
       "description": "Action button",
       "fields": ["label", "icon", "action", "target"]
+    },
+    "buttons": {
+      "description": "Row of action buttons side by side",
+      "fields": ["label", "buttons"]
     },
     "info": {
       "description": "Read-only info display",

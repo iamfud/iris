@@ -4,15 +4,11 @@ import json
 import os
 import sys
 from constants import DEFAULT_CONFIG
+import paths
 
 
 def config_path():
-    if getattr(sys, "frozen", False):
-        base = os.path.join(os.environ["APPDATA"], "Iris")
-        os.makedirs(base, exist_ok=True)
-    else:
-        base = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(base, "iris_config.json")
+    return paths.get_config_path()
 
 
 def load_config():
@@ -54,6 +50,11 @@ def save_config(cfg):
         with open(tmp, "w") as f:
             json.dump(merged, f, indent=2)
         os.replace(tmp, path)
+        try:
+            import plugin_manager
+            plugin_manager.invalidate_plugin_discovery()
+        except Exception:
+            pass
     except Exception:
         try:
             os.unlink(tmp)

@@ -159,11 +159,11 @@ class _MahmReader:
             e = src_base + i * src_sz
             name = ctypes.string_at(e + self._S_NAME, 260).split(b"\x00")[0].decode("utf-8", errors="ignore").lower()
             val = struct.unpack("<f", ctypes.string_at(e + self._S_DATA, 4))[0]
-            if not math.isfinite(val):
+            if not math.isfinite(val) or val <= 0:
                 continue
-            if "cpu" in name and "temp" in name:
+            if "cpu" in name and ("temp" in name or "tctl" in name or "package" in name or "core" in name):
                 result.setdefault("cpu_temp", val)
-            elif "gpu" in name and "temp" in name:
+            elif ("gpu" in name or "graphics" in name or "vga" in name) and "temp" in name:
                 result.setdefault("gpu_temp", val)
         return result or None
 
@@ -268,11 +268,16 @@ class Plugin:
             self._serial.send_stats(cpu, cpu_temp, gpu_temp, fps)
 
     def _loop(self):
+        import psutil
+        from win_platform import get_monitor_refresh_rate
+
         temp_interval = 2.0
-        fps_interval = 0.5
         push_interval = 0.5
+        refresh_interval = 60.0
         last_temp_poll = 0.0
         last_push = 0.0
+        last_refresh_poll = 0.0
+        refresh_rate = 60
         overlay_active = False
         temp_alert_active = False
         _temp_cooldown_s = 10.0
@@ -302,20 +307,21 @@ class Plugin:
                 except Exception:
                     pass
                 if mahm:
-                    cpu_temp = mahm.get("cpu_temp")
-                    gpu_temp = mahm.get("gpu_temp")
+                    if mahm.get("cpu_temp") is not None:
+                        cpu_temp = mahm.get("cpu_temp")
+                    if mahm.get("gpu_temp") is not None:
+                        gpu_temp = mahm.get("gpu_temp")
+
+            if now - last_refresh_poll >= refresh_interval:
+                last_refresh_poll = now
+                try:
+                    refresh_rate = get_monitor_refresh_rate()
+                except Exception:
+                    pass
 
             cpu_pct = 0.0
             try:
-                import psutil
                 cpu_pct = psutil.cpu_percent(interval=None)
-            except Exception:
-                pass
-
-            refresh_rate = 60
-            try:
-                from win_platform import get_monitor_refresh_rate
-                refresh_rate = get_monitor_refresh_rate()
             except Exception:
                 pass
 

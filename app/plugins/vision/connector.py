@@ -24,19 +24,12 @@ _TICK_S = 0.5
 
 def _is_exe_running(exe_name):
     if not exe_name:
-        return False
-    exe_lower = exe_name.lower().strip()
+        return True
     try:
-        import psutil
-        for proc in psutil.process_iter(["name"]):
-            try:
-                if proc.info["name"] and proc.info["name"].lower() == exe_lower:
-                    return True
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                continue
+        from win_platform import is_process_running
+        return is_process_running(exe_name, ttl=1.0)
     except Exception:
-        return False
-    return False
+        return True
 
 
 def _is_exe_foreground(exe_name):
@@ -63,9 +56,10 @@ def _is_exe_foreground(exe_name):
 
 class VisionSensorManager:
 
-    def __init__(self, cfg, serial_sender=None):
+    def __init__(self, cfg, serial_sender=None, overlays=None):
         self._cfg = cfg
         self._serial = serial_sender
+        self._overlays = overlays
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._threads = {}   # sensor_id -> thread
@@ -89,6 +83,7 @@ class VisionSensorManager:
             self._threads.clear()
         for t in threads:
             t.join(timeout=2)
+        self._clear_hardware_alerts(None)
 
     # ── Config access ────────────────────────────────────────────
 
@@ -104,12 +99,15 @@ class VisionSensorManager:
         for raw in raw_sensors:
             sensor = vision.sanitize_sensor(raw)
             sensor_id = sensor.get("id")
-            # A missing or duplicate ID cannot be safely tracked by the
-            # per-sensor worker map.  API-created sensors always have one;
-            # this protects manually edited legacy config at runtime.
             if not sensor_id or sensor_id in seen:
                 continue
             seen.add(sensor_id)
+            anchor = sensor.get("anchor")
+            region = sensor.get("region")
+            if anchor and region:
+                sensor["_bbox"] = vision.region_to_bbox(anchor, region)
+            sensor["_target_rgb"] = vision._hex_to_rgb(sensor.get("color"))
+            sensor["_sanitized"] = True
             sensors.append(sensor)
         return sensors
 
@@ -120,13 +118,9 @@ class VisionSensorManager:
         pcfg = self._plugin_cfg()
         if not pcfg.get("enabled", True):
             return False
-        current = next((s for s in self._sensors()
-                        if s.get("id") == sensor.get("id")), None)
-        if current is None:
+        if not sensor or not sensor.get("enabled", True):
             return False
-        if not current.get("enabled", True):
-            return False
-        return _is_exe_running(current.get("exe", ""))
+        return _is_exe_running(sensor.get("exe", ""))
 
     # ── Tick loop (hot-apply config) ─────────────────────────────
 
@@ -139,18 +133,31 @@ class VisionSensorManager:
             self._stop.wait(_TICK_S)
 
     def _sync(self):
+        pcfg = self._plugin_cfg()
+        plugin_enabled = pcfg.get("enabled", True)
+        hw_output_enabled = pcfg.get("outputs", {}).get("display", True)
+
+        if not plugin_enabled or not hw_output_enabled:
+            self._clear_hardware_alerts(None)
+
         sensors = self._sensors()
+        with self._lock:
+            self._sensors_map = {s.get("id"): s for s in sensors}
+            thread_ids = set(self._threads.keys())
+
         active_ids = {s.get("id") for s in sensors if s.get("enabled", True)
                       and _is_exe_running(s.get("exe", ""))}
-
-        with self._lock:
-            thread_ids = set(self._threads.keys())
 
         for sid in thread_ids - active_ids:
             self._stop_sensor(sid)
 
+        for s in sensors:
+            sid = s.get("id")
+            if sid and (not s.get("enabled", True) or not s.get("output_display", True)):
+                self._clear_hardware_alerts(sid)
+
         for sid in active_ids - thread_ids:
-            sensor = next((s for s in sensors if s.get("id") == sid), None)
+            sensor = self._sensors_map.get(sid)
             if sensor is not None:
                 self._start_sensor(sensor)
 
@@ -160,7 +167,7 @@ class VisionSensorManager:
                 t = self._threads.get(sid)
             if t and not t.is_alive():
                 self._stop_sensor(sid)
-                sensor = next((s for s in sensors if s.get("id") == sid), None)
+                sensor = self._sensors_map.get(sid)
                 if sensor is not None:
                     self._start_sensor(sensor)
 
@@ -173,7 +180,7 @@ class VisionSensorManager:
                 "value": 0.0, "active": False, "last_triggered": 0.0, "last_run": 0.0,
             })
             t = threading.Thread(
-                target=self._sensor_loop, args=(sensor,),
+                target=self._sensor_loop, args=(sid,),
                 daemon=True, name=f"vision-{sid}")
             self._threads[sid] = t
         t.start()
@@ -181,18 +188,17 @@ class VisionSensorManager:
     def _stop_sensor(self, sensor_id):
         with self._lock:
             self._threads.pop(sensor_id, None)
+        self._clear_hardware_alerts(sensor_id)
 
     # ── Per-sensor capture loop ──────────────────────────────────
 
-    def _sensor_loop(self, sensor):
-        sid = sensor.get("id")
+    def _sensor_loop(self, sid):
         try:
             while not self._stop.is_set():
-                current = next((s for s in self._sensors()
-                                if s.get("id") == sid), None)
-                if current is None or not current.get("enabled", True):
+                with self._lock:
+                    sensor = getattr(self, "_sensors_map", {}).get(sid)
+                if sensor is None or not sensor.get("enabled", True):
                     break
-                sensor = current
                 if not self._should_run(sensor):
                     break
                 try:
@@ -221,6 +227,15 @@ class VisionSensorManager:
                     prev_active = rt["active"]
                     rt["value"] = value
                     rt["last_run"] = now
+
+                try:
+                    import automations
+                    automations.get_engine().dispatch_state(
+                        "vision", sid,
+                        {"value": value, "active": active, "name": sensor.get("name", ""), "mode": sensor.get("mode", "")}
+                    )
+                except Exception:
+                    pass
 
                 if active and not prev_active:
                     cooldown = float(sensor.get("cooldown_s", 10.0))
@@ -254,49 +269,130 @@ class VisionSensorManager:
         return f"vision.{sid}.{kind}"
 
     def _fire(self, sensor, value):
-        if not sensor.get("output_display", False):
-            return
-        outputs = self._outputs()
-        if outputs.get("display", True) is False:
-            return
-        if self._serial is None:
-            return
-        title = sensor.get("event_name") or sensor.get("name") or "Vision"
-        message = sensor.get("event_message") or ""
-        key = self._display_key(sensor, "notify")
-        try:
-            if hasattr(self._serial, "notify"):
-                self._serial.notify(key, title, message, style="emphasis")
+        title = sensor.get("event_name") or sensor.get("name") or "Vision Alert"
+        raw_msg = sensor.get("event_message")
+        if raw_msg:
+            try:
+                message = raw_msg.replace("{value}", str(value)).replace("{text}", str(value))
+            except Exception:
+                message = raw_msg
+        else:
+            if isinstance(value, (int, float)):
+                message = f"Sensor triggered (value: {value:.1f})"
+            elif isinstance(value, str) and value:
+                message = f"Sensor triggered: {value}"
             else:
-                self._serial.send_notification(title, message, key=key)
-            log.info("[vision] event: %s (value=%.2f)", title, value)
-        except Exception:
-            log.warning("vision notification failed", exc_info=True)
+                message = "Sensor triggered"
+        key = self._display_key(sensor, "alert")
+
+        # 1. Play sound if enabled on sensor
+        if sensor.get("play_sound", False):
+            try:
+                import alarm_sound
+                alarm_sound.play_one_shot(sensor.get("sound_name", "remind"))
+            except Exception:
+                pass
+
+        # 2. Desktop Overlay Dispatch
+        if self._overlays is not None:
+            try:
+                self._overlays.hero(
+                    title=title,
+                    subtitle=message,
+                    fields=[("Sensor", (sensor.get("name") or "Vision").strip()), ("Status", "ALERT")],
+                    duration=5,
+                )
+            except Exception as e:
+                log.debug("[vision] overlay alert error: %s", e)
+
+        # 3. Native Iris Serial Alert Dispatch
+        if self._serial is not None:
+            try:
+                if hasattr(self._serial, "send_alert"):
+                    self._serial.send_alert(title, message, key=key)
+                elif hasattr(self._serial, "event_bad"):
+                    self._serial.event_bad(key, title, message)
+                log.info("[vision] send_alert dispatched: %s - %s", title, message)
+            except Exception:
+                log.warning("vision send_alert failed", exc_info=True)
+        else:
+            try:
+                import ws_bridge
+                import panel_runtime
+                toast_data = {
+                    "app": (sensor.get("name") or "Vision").strip(),
+                    "title": title,
+                    "body": message,
+                    "theme": "alert",
+                    "status": "bad",
+                    "timestamp": int(time.time()),
+                }
+                ws_bridge.broadcast({
+                    "type": "event",
+                    **toast_data,
+                })
+            except Exception:
+                pass
 
     def _flash(self, sensor, on):
-        if not sensor.get("output_display", False):
-            return
-        outputs = self._outputs()
-        if outputs.get("display", True) is False:
-            return
+        if on:
+            title = sensor.get("event_name") or sensor.get("name") or "Vision Alert"
+            message = sensor.get("event_message") or f"{title} active"
+            key = self._display_key(sensor, "alert")
+
+            # 1. Play sound if enabled on sensor
+            if sensor.get("play_sound", False):
+                try:
+                    import alarm_sound
+                    alarm_sound.play_one_shot(sensor.get("sound_name", "remind"))
+                except Exception:
+                    pass
+
+            # 2. Native Iris Alert Dispatch (WebPortal + priority)
+            if self._serial is not None:
+                try:
+                    if hasattr(self._serial, "send_alert"):
+                        self._serial.send_alert(title, message, key=key)
+                    elif hasattr(self._serial, "event_bad"):
+                        self._serial.event_bad(key, title, message)
+                except Exception:
+                    log.warning("vision send_alert failed", exc_info=True)
+
+            # 3. Hardware Display 4-character blink (5 flashes)
+            if sensor.get("output_display", True):
+                outputs = self._outputs()
+                if outputs.get("display", True) is not False and self._serial is not None:
+                    name = sensor.get("name") or sensor.get("event_name") or "Vision"
+                    letters = "".join(c for c in name if c.isalnum())[:4].upper()
+                    if not letters:
+                        letters = "!!!!"
+                    try:
+                        if hasattr(self._serial, "alert"):
+                            self._serial.alert(key, letters, mode="blink", lifetime="timed", timed_s=2.5)
+                        log.info("[vision] alert on (5 flashes): %s", letters)
+                    except Exception:
+                        log.warning("vision flash failed", exc_info=True)
+        else:
+            sid = sensor.get("id") or sensor.get("name")
+            self._clear_hardware_alerts(sid)
+            log.info("[vision] alert off")
+
+    def _clear_hardware_alerts(self, sid=None):
         if self._serial is None:
             return
-        key = self._display_key(sensor, "alert")
         try:
-            if on:
-                name = sensor.get("name") or sensor.get("event_name") or "Vision"
-                letters = "".join(c for c in name if c.isalnum())[:4].upper()
-                if not letters:
-                    letters = "!!!!"
-                if hasattr(self._serial, "alert"):
-                    self._serial.alert(key, letters, mode="blink", lifetime="hold")
-                log.info("[vision] alert on: %s", letters)
+            if sid:
+                for kind in ("alert", "notify"):
+                    key = self._display_key({"id": sid}, kind)
+                    for m in ("clear", "clear_display"):
+                        if hasattr(self._serial, m):
+                            getattr(self._serial, m)(key)
             else:
-                if hasattr(self._serial, "clear_display"):
-                    self._serial.clear_display(key)
-                log.info("[vision] alert off")
-        except Exception:
-            log.warning("vision flash failed", exc_info=True)
+                for m in ("clear_prefix", "clear_display_prefix"):
+                    if hasattr(self._serial, m):
+                        getattr(self._serial, m)("vision.")
+        except Exception as ex:
+            log.debug("[vision] clear hardware alert failed: %s", ex)
 
     # ── State for UI ─────────────────────────────────────────────
 

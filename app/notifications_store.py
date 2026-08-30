@@ -12,6 +12,7 @@ log = logging.getLogger("iris.notifications")
 
 _LOCK = threading.RLock()
 _STORE_CACHE = None
+_STORE_MTIME = 0.0
 
 
 def _store_path():
@@ -24,23 +25,33 @@ def _store_path():
 
 
 def _load_store():
-    global _STORE_CACHE
+    global _STORE_CACHE, _STORE_MTIME
     path = _store_path()
     if not os.path.isfile(path):
+        _STORE_CACHE = []
+        _STORE_MTIME = 0.0
         return []
     try:
+        mtime = os.path.getmtime(path)
+        if _STORE_CACHE is not None and mtime == _STORE_MTIME:
+            return list(_STORE_CACHE)
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
             if isinstance(data, list):
-                return data
+                _STORE_CACHE = data
             elif isinstance(data, dict) and "notifications" in data:
-                return data["notifications"]
+                _STORE_CACHE = data["notifications"]
+            else:
+                _STORE_CACHE = []
+            _STORE_MTIME = mtime
+            return list(_STORE_CACHE)
     except Exception as ex:
         log.warning("[notif_store] failed to load notifications: %s", ex)
-    return []
+    return list(_STORE_CACHE if _STORE_CACHE is not None else [])
 
 
 def _save_store(items):
+    global _STORE_CACHE, _STORE_MTIME
     path = _store_path()
     tmp_path = path + ".tmp"
     try:
@@ -50,6 +61,11 @@ def _save_store(items):
             os.replace(tmp_path, path)
         else:
             os.rename(tmp_path, path)
+        _STORE_CACHE = list(items)
+        try:
+            _STORE_MTIME = os.path.getmtime(path)
+        except Exception:
+            _STORE_MTIME = time.time()
     except Exception as ex:
         log.warning("[notif_store] failed to save notifications: %s", ex)
         try:
@@ -145,7 +161,8 @@ def add_notification(app, title, body, theme="purple", timestamp=None):
         log.debug("[notif_store] dropped notification from muted source %s", app_name)
         return {"ok": False, "muted": True}
 
-    if rule == "demote_to_events":
+    is_alert = (str(theme).lower() in ("alert", "red"))
+    if rule == "demote_to_events" or is_alert:
         log.debug("[notif_store] demoting notification from %s to event", app_name)
         return {
             "ok": True,
@@ -154,7 +171,7 @@ def add_notification(app, title, body, theme="purple", timestamp=None):
                 "app": app_name,
                 "title": str(title or "").strip(),
                 "body": str(body or "").strip(),
-                "status": "info",
+                "status": "bad" if is_alert else "info",
                 "timestamp": timestamp or time.time(),
             }
         }
@@ -188,6 +205,8 @@ def get_notifications(include_archived=True):
     """Return all notifications partitioned into active and archived lists."""
     with _LOCK:
         items = _load_store()
+        # Filter out any transient alert/red notifications from library
+        items = [n for n in items if str(n.get("theme", "")).lower() not in ("alert", "red")]
         # Sort newest first
         items.sort(key=lambda x: x.get("timestamp", 0), reverse=True)
         active = [n for n in items if not n.get("archived")]
@@ -217,13 +236,14 @@ def get_last_notification():
     """Return the most recent active persistent notification (or None)."""
     with _LOCK:
         items = _load_store()
-        active = [n for n in items if not n.get("archived")]
+        active = [n for n in items if not n.get("archived") and str(n.get("theme", "")).lower() not in ("alert", "red")]
         if active:
             active.sort(key=lambda x: x.get("timestamp", 0), reverse=True)
             return active[0]
-        if items:
-            items.sort(key=lambda x: x.get("timestamp", 0), reverse=True)
-            return items[0]
+        regular = [n for n in items if str(n.get("theme", "")).lower() not in ("alert", "red")]
+        if regular:
+            regular.sort(key=lambda x: x.get("timestamp", 0), reverse=True)
+            return regular[0]
     return None
 
 
