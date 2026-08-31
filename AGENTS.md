@@ -29,6 +29,24 @@ DERIVED from the rotation, not tuned by eye.
   (touch-action is the intersection along the ancestor chain — a `pan-x`-only ancestor
   vetoes the box's screen-Y paging).
 
+# Session Memory — 2026-08-31
+
+## Web Portal 3-Widget Layout & Dual-Axis Navigation Architecture
+- **3-Widget Layout Architecture**:
+  - **Left Widget (Column 1)**: Notification Toast Drawer (`#pv-notif`). Isolated from button track. Slides in from screen-left on swipe RIGHT; slides out to left on swipe LEFT.
+  - **Center Widget (Column 2)**: Button Box (`.pv-box`), containing vertical stack of button pages (Page 1 top, Page 2/3/addon pages stacked vertically below).
+  - **Right Widget (Column 3)**: Sliders (`.pv-side` / `.pv-sliders`), scrolled/panned independently.
+- **Strict Axis & Gesture Decoupling**:
+  - Vertical screen swipes ($\updownarrow$, `Math.abs(dy) > Math.abs(dx)`): Exclusively navigate button pages (`activeBoxPage + 1`, `activeBoxPage - 1`). Stops firmly at Page 1 and never triggers toast.
+  - Horizontal screen swipes ($\leftrightarrow$, `Math.abs(dx) > Math.abs(dy)`): Exclusively open/close the Left Toast Drawer.
+  - Non-passive touchmove locks (`e.preventDefault()`) on `.pv-box` and `#pv-notif` in landscape completely prevent accidental drag over to sliders.
+- **Sliders & Touch Controls**:
+  - Thumb-proximity detection (`isNearThumb`): Adjusting volume/brightness is strictly restricted to dragging the thumb, preventing sudden audio burst jumps.
+  - Enlarged 28px thumb hit target in `style.css`.
+  - Swiping anywhere else on the slider card smoothly scrolls the sliders list.
+- **Orientation Flip Page Anchoring**:
+  - Preserves exact `activeBoxPage` across portrait $\leftrightarrow$ landscape orientation changes without jumping pages.
+
 # Session Memory — 2026-08-16
 
 ## Dedicated Media Player Button Settings & Live Album Art

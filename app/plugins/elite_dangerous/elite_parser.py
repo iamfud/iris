@@ -96,6 +96,65 @@ def _pop_set(s, e):
         s["population"] = _fmt_population(pop)
 
 
+def _update_navroute(s, curr_system=None, curr_addr=None):
+    """Calculate jumps remaining, route destination, and next waypoint from active route."""
+    try:
+        route = s.get("_active_route")
+        if not route or not isinstance(route, list):
+            return
+        sys_name = (curr_system or s.get("system", "")).strip().lower()
+        sys_addr = str(curr_addr or s.get("system_addr", "")).strip()
+
+        # Find current system index in route
+        idx = -1
+        for i, hop in enumerate(route):
+            h_name = str(hop.get("StarSystem", "")).strip().lower()
+            h_addr = str(hop.get("SystemAddress", "")).strip()
+            if (sys_addr and sys_addr == h_addr) or (sys_name and sys_name == h_name):
+                idx = i
+                break
+
+        dest_hop = route[-1] if route else {}
+        dest_name = dest_hop.get("StarSystem", "")
+        s["route_destination"] = dest_name
+        s["route_total_jumps"] = len(route) - 1
+
+        if idx >= 0:
+            remaining = (len(route) - 1) - idx
+            s["jumps_remaining"] = max(0, remaining)
+            if idx + 1 < len(route):
+                nxt = route[idx + 1]
+                s["next_system"] = nxt.get("StarSystem", "")
+                s["next_star_class"] = nxt.get("StarClass", "")
+            else:
+                s["next_system"] = "Destination Reached"
+                s["next_star_class"] = dest_hop.get("StarClass", "")
+        else:
+            # If not in the middle of the route, default to total hops from start
+            s["jumps_remaining"] = max(0, len(route) - 1)
+            if len(route) > 1:
+                nxt = route[1]
+                s["next_system"] = nxt.get("StarSystem", "")
+                s["next_star_class"] = nxt.get("StarClass", "")
+    except Exception:
+        pass
+
+
+def _handle_navroute(s, st, e):
+    route = e.get("Route")
+    if isinstance(route, list) and route:
+        s["_active_route"] = route
+        _update_navroute(s)
+
+
+def _handle_navrouteclear(s, st, e):
+    s.pop("_active_route", None)
+    s["jumps_remaining"] = 0
+    s["route_destination"] = "No Route"
+    s["next_system"] = "None"
+    s["next_star_class"] = ""
+
+
 def _handle_location(s, st, e):
     s["system"] = e.get("StarSystem", "")
     s["system_addr"] = str(e.get("SystemAddress", ""))
@@ -111,6 +170,7 @@ def _handle_location(s, st, e):
     s["body_type"] = e.get("BodyType", "")
     # Clear stale jump type
     s.pop("jump_type", None)
+    _update_navroute(s, s["system"], s["system_addr"])
 
 
 def _handle_fsdjump(s, st, e):
@@ -125,6 +185,7 @@ def _handle_fsdjump(s, st, e):
     s["body"] = ""
     s["body_type"] = ""
     s.pop("jump_type", None)
+    _update_navroute(s, s["system"], s["system_addr"])
 
 
 def _handle_startjump(s, st, e):
@@ -317,6 +378,8 @@ _HANDLERS = {
     "MissionCompleted": _handle_missioncompleted,
     "MissionFailed": _handle_missionfailed,
     "Cargo": _handle_cargo,
+    "NavRoute": _handle_navroute,
+    "NavRouteClear": _handle_navrouteclear,
     "Statistics": _handle_statistics,
     "Powerplay": _handle_powerplay,
     "CarrierStats": _handle_carrierstats,

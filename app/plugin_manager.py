@@ -703,11 +703,12 @@ def _parse_button_state_value(val, labels):
       - Fallback keywords for legacy string values
     """
     labels = labels or {}
+    has_custom_labels = bool(labels.get("on") or labels.get("off"))
     lbl_on = str(labels.get("on", "ON"))
     lbl_off = str(labels.get("off", "OFF"))
 
     if val is None:
-        return False, lbl_off, None
+        return False, lbl_off if has_custom_labels else "0", None
 
     # 1. Dict payload
     if isinstance(val, dict):
@@ -748,7 +749,10 @@ def _parse_button_state_value(val, labels):
     # 4. Numeric (int / float)
     if isinstance(val, (int, float)):
         is_on = bool(val > 0)
-        lbl = lbl_on if is_on else lbl_off
+        if has_custom_labels:
+            lbl = lbl_on if is_on else lbl_off
+        else:
+            lbl = f"{int(val)} JUMPS" if (isinstance(val, int) or val.is_integer()) else f"{val:.1f}"
         return is_on, lbl, val
 
     # 5. String value

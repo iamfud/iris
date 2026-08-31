@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Comprehensive step-by-step setup guide for Iris — PC Companion Overlay: hardware, firmware, desktop app, panel, Android, Home Assistant, and plugins.">
+  <meta name="theme-color" content="#0a0a0f">
+  <meta property="og:title" content="Iris Setup Guide">
+  <meta property="og:description" content="Step-by-step instructions for the full Iris system — hardware, firmware, apps, and plugins.">
+  <title>Iris — Setup Guide</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="icon" href="https://github.com/iamfud/iris/raw/master/Iris.ico">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a href="index.html" class="logo" aria-label="Iris home">
+        <span class="accent-dot" aria-hidden="true"></span>
+        <span>Iris</span>
+      </a>
+      <nav aria-label="Main navigation">
+        <ul class="nav-links" id="nav-links">
+          <li><a href="index.html">Home</a></li>
+          <li><a href="setup.html" class="active" aria-current="page">Setup Guide</a></li>
+          <li><a href="https://github.com/iamfud/iris" target="_blank" rel="noopener">GitHub</a></li>
+        </ul>
+      </nav>
+      <button class="mobile-menu-btn" aria-label="Open menu" aria-expanded="false">☰</button>
+    </div>
+  </header>
+
+  <main id="main">
+    <div class="hero">
+      <span class="hero-badge">Setup Guide</span>
+      <h1>Complete <span class="highlight">Setup Guide</span></h1>
+      <p>Every component, every step, and what each item does — from bare hardware to a fully working companion display.</p>
+    </div>
+
+    <div class="setup-layout">
+      <!-- Table of Contents -->
+      <aside class="toc" aria-label="Table of contents">
+        <h3>On this page</h3>
+        <ul>
+          <li><a href="#overview">1. Overview</a></li>
+          <li><a href="#prerequisites">2. Prerequisites</a></li>
+          <li><a href="#hardware">3. Hardware &amp; Wiring</a></li>
+          <li><a href="#firmware">4. Flashing the Firmware</a></li>
+          <li><a href="#app">5. Desktop App</a></li>
+          <li><a href="#panel">6. Phone Panel / PWA</a></li>
+          <li><a href="#android">7. Android App</a></li>
+          <li><a href="#home-assistant">8. Home Assistant</a></li>
+          <li><a href="#plugins">9. Plugins</a></li>
+          <li><a href="#themes">10. Themes &amp; Appearance</a></li>
+          <li><a href="#build">11. Build &amp; Package</a></li>
+          <li><a href="#config">12. Configuration Reference</a></li>
+          <li><a href="#structure">13. Project Structure</a></li>
+          <li><a href="#troubleshooting">14. Troubleshooting</a></li>
+        </ul>
+      </aside>
+
+      <!-- Content -->
+      <div class="setup-content">
+
+        <!-- 1. Overview -->
+        <section class="content-block" id="overview">
+          <h3>1. Overview</h3>
+          <p>
+            Iris is a <strong>Windows desktop companion</strong> that takes data from your PC and pushes it to a
+            physical <strong>MAX7219 LED matrix display</strong> driven by an ESP8266/ESP32 microcontroller over USB serial.
+            It also runs a <strong>floating overlay</strong> and a <strong>phone/PWA panel</strong> for control.
+          </p>
+          <p>The system has five main parts:</p>
+          <ul>
+            <li><strong>Python desktop app</strong> (<code>app/</code>) — gathers stats, services, and drives everything.</li>
+            <li><strong>ESP firmware</strong> (<code>firmware/</code>) — receives commands from the PC and lights the display.</li>
+            <li><strong>MAX7219 display</strong> — the physical 8×8 LED matrix modules.</li>
+            <li><strong>HTML panel / PWA</strong> (<code>HTML/</code>) — a web panel for pairing and phone control.</li>
+            <li><strong>Android app</strong> (<code>android/</code>) — a native companion-device app.</li>
+          </ul>
+          <div class="note">
+            <span class="note-icon">💡</span>
+            <span class="note-text">You can use Iris with just the desktop app and overlay (no hardware) — the display parts are optional.</span>
+          </div>
+        </section>
+
+        <!-- 2. Prerequisites -->
+        <section class="content-block" id="prerequisites">
+          <h3>2. Prerequisites</h3>
+          <div class="table-wrapper">
+            <table>
+              <thead>
+                <tr><th>Item</th><th>Requirement</th><th>Why</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>Operating System</td><td>Windows 10 or 11</td><td>Iris uses Windows APIs for stats, notifications, and the tray.</td></tr>
+                <tr><td>Python</td><td>3.10 or newer</td><td>Runtime for the desktop app. Install from <a href="https://python.org" target="_blank" rel="noopener">python.org</a>.</td></tr>
+                <tr><td>Git</td><td>Any recent version</td><td>To clone the repository and track changes.</td></tr>
+                <tr><td>Arduino IDE</td><td>1.8+ or 2.x</td><td>To compile and flash the ESP firmware.</td></tr>
+                <tr><td>Hardware</td><td>ESP8266/ESP32 + MAX7219</td><td>The display hardware (see section 3).</td></tr>
+                <tr><td>(Optional) Android Studio</td><td>Arctic Fox or newer</td><td>To build the native Android companion app.</td></tr>
+                <tr><td>(Optional) GitHub account</td><td>Free account</td><td>Needed if you fork/host the project or open issues.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- 3. Hardware -->
+        <section class="content-block" id="hardware">
+          <h3>3. Hardware &amp; Wiring</h3>
+          <h4>What each part does</h4>
+          <ul>
+            <li><strong>ESP8266 (Wemos D1 Mini) / ESP32</strong> — the brain of the display. It listens on USB serial for commands from the PC and drives the LED matrix over SPI.</li>
+            <li><strong>MAX7219 LED matrix</strong> — 8×8 dot-matrix modules. Iris uses 4 daisy-chained modules (<code>FC16_HW</code>). Each MAX7219 chip drives one 8×8 panel.</li>
+            <li><strong>USB cable</strong> — powers the ESP and carries serial data between the PC and the micro.</li>
+          </ul>
+
+          <h4>Wiring table (MAX7219 → D1 Mini)</h4>
+          <div class="table-wrapper">
+            <table>
+              <thead>
+                <tr><th>MAX7219 Pin</th><th>D1 Mini Pin</th><th>Notes</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>VCC</td><td>5V</td><td>Power (also feeds the LED matrix).</td></tr>
+                <tr><td>GND</td><td>GND</td><td>Common ground.</td></tr>
+                <tr><td>DIN</td><td>D7 (GPIO13)</td><td>SPI data in.</td></tr>
+                <tr><td>CLK</td><td>D5 (GPIO14)</td><td>SPI clock.</td></tr>
+                <tr><td>CS</td><td>D2 (GPIO4)</td><td>SPI chip select.</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="note warning">
+            <span class="note-icon">⚠️</span>
+            <span class="note-text">The MAX7219 has a built-in <strong>failsafe</strong>: if the PC app crashes or disconnects for 60 seconds, the display forces itself off to prevent a runaway all-LEDs-on state (which can draw ~5A and melt the case). Any serial command re-activates it.</span>
+          </div>
+
+          <h4>SPI wiring diagram</h4>
+          <div class="hardware-diagram">
+<span class="label">MAX7219</span>        <span class="wire">|</span>        <span class="label">D1 Mini</span>
+<span class="pin">VCC</span>      ─────────── <span class="pin">5V</span>
+<span class="pin">GND</span>      ─────────── <span class="pin">GND</span>
+<span class="pin">DIN</span>      ─────────── <span class="pin">D7 (GPIO13)</span>
+<span class="pin">CLK</span>      ─────────── <span class="pin">D5 (GPIO14)</span>
+<span class="pin">CS</span>       ─────────── <span class="pin">D2 (GPIO4)</span>
+          </div>
+        </section>
+
+        <!-- 4. Firmware -->
+        <section class="content-block" id="firmware">
+          <h3>4. Flashing the Firmware</h3>
+          <p>The firmware lives in <code>firmware/d1mini/main/</code>. Follow these steps:</p>
+          <div class="steps">
+            <div class="step">
+              <div class="step-number">1</div>
+              <div class="step-content">
+                <h4>Open the sketch</h4>
+                <p>Open <code>firmware/d1mini/main/main.ino</code> in the Arduino IDE.</p>
+              </div>
+            </div>
+            <div class="step">
+              <div class="step-number">2</div>
+              <div class="step-content">
+                <h4>Install board support</h4>
+                <p>In <strong>File → Preferences</strong>, add the ESP8266 boards URL to "Additional Boards Manager URLs":</p>
+                <pre><code>http://arduino.esp8266.com/stable/package_esp8266com_index.json</code></pre>
+                <p>Then <strong>Tools → Board → Boards Manager</strong>, search "ESP8266", and install.</p>
+              </div>
+            </div>
+            <div class="step">
+              <div class="step-number">3</div>
+              <div class="step-content">
+                <h4>Select your board</h4>
+                <p>Under <strong>Tools → Board</strong>, select your board (e.g. "LOLIN(WEMOS) D1 mini"). Set the correct <strong>Port</strong> for your USB device.</p>
+              </div>
+            </div>
+            <div class="step">
+              <div class="step-number">4</div>
+              <div class="step-content">
+                <h4>Upload</h4>
+                <p>Click the <strong>Upload</strong> button (→). The IDE compiles and flashes the firmware.</p>
+              </div>
+            </div>
+            <div class="step">
+              <div class="step-number">5</div>
+              <div class="step-content">
+                <h4>Boot self-test</h4>
+                <p>On power-up you'll see a <strong>250 ms all-LEDs flash</strong>. That's the intentional boot self-test (<code>TEST=ON</code>), not a fault.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 5. Desktop App -->
+        <section class="content-block" id="app">
+          <h3>5. Desktop App</h3>
+          <p>The Python app in <code>app/</code> is the core of Iris. Here's how to run it.</p>
+          <div class="steps">
+            <div class="step">
+              <div class="step-number">1</div>
+              <div class="step-content">
+                <h4>Clone the repo</h4>
+<pre><code>git clone https://github.com/iamfud/iris.git
+cd iris</code></pre>
+              </div>
+            </div>
+            <div class="step">
+              <div class="step-number">2</div>
+              <div class="step-content">
+                <h4>Install Python dependencies</h4>
+<pre><code>pip install -r requirements.txt</code></pre>
+                <p>This installs pressing libraries: <code>pystray</code> (tray icon), <code>Pillow</code> (rendering), <code>pyserial</code> (USB), <code>requests</code> (HTTP/HA), <code>psutil</code> (system stats), <code>pywebview</code> (HTML panel), and more.</p>
+              </div>
+            </div>
+            <div class="step">
+              <div class="step-number">3</div>
+              <div class="step-content">
+                <h4>Run the app</h4>
+<pre><code>python app/main.py</code></pre>
+                <p>The app starts in your <strong>system tray</strong>. Click the tray icon or press the global hotkey <strong>Ctrl+Alt+I</strong> to toggle the floating overlay.</p>
+              </div>
+            </div>
+          </div>
+
+          <h4>Key modules — what each file does</h4>
+          <div class="table-wrapper">
+            <table>
+              <thead>
+                <tr><th>File</th><th>Purpose</th></tr>
+              </thead>
+              <tbody>
+                <tr><td><code>app/main.py</code></td><td>Entry point — wires providers, serial, tray, and window together.</td></tr>
+                <tr><td><code>app/main_window.py</code></td><td>iPhone-shaped floating overlay window with gauges, tiles, and HA shortcuts.</td></tr>
+                <tr><td><code>app/serial_comm.py</code></td><td>USB serial bridge that sends stats/commands to the ESP.</td></tr>
+                <tr><td><code>app/win_platform.py</code></td><td>Windows-specific helpers (process checks, hotkeys, file dialogs, icon extraction).</td></tr>
+                <tr><td><code>app/config.py</code></td><td>JSON configuration load/save.</td></tr>
+                <tr><td><code>app/constants.py</code></td><td>Design tokens and default settings.</td></tr>
+                <tr><td><code>app/automations.py</code></td><td>Trigger engine — fires actions (hotkey, HA, sound, notification) on conditions.</td></tr>
+                <tr><td><code>app/providers/</code></td><td>Data providers: Stats, HA, Media (SMTC), OpenRGB, etc.</td></tr>
+                <tr><td><code>app/ws_bridge.py</code></td><td>HTTP/WebSocket bridge that serves the HTML panel API.</td></tr>
+                <tr><td><code>app/panel_window.py</code></td><td>Hosts the HTML panel via pywebview.</td></tr>
+                <tr><td><code>app/plugin_manager.py</code></td><td>Discovers, loads, and coordinates plugins.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- 6. Phone Panel / PWA -->
+        <section class="content-block" id="panel">
+          <h3>6. Phone Panel / PWA</h3>
+          <p>The <code>HTML/</code> folder is a web panel served by the app (<code>panel_window.py</code> + <code>ws_bridge.py</code>). It can also run as a <strong>PWA</strong> on your phone.</p>
+          <h4>How pairing works</h4>
+          <ol>
+            <li>Turn on <strong>Allow LAN access</strong> in Settings → Network.</li>
+            <li>Scan the QR code on the Settings Network tab with your phone.</li>
+            <li>Set a <strong>panel password</strong> and enter it on your phone to pair.</li>
+            <li>Your phone stays paired until you revoke it under "Manage devices".</li>
+          </ol>
+          <div class="note warning">
+            <span class="note-icon">⚠️</span>
+            <span class="note-text">For a reliable connection, reserve the Iris PC's IP as a static/DHCP-reserved address in your router. If the address changes, just re-scan the QR code.</span>
+          </div>
+          <div class="note">
+            <span class="note-icon">🔒</span>
+            <span class="note-text">The local connection uses HTTP (not HTTPS), so your phone may show a "connection isn't secure" warning. This is expected on a local network.</span>
+          </div>
+          <h4>What the files do</h4>
+          <ul>
+            <li><code>index.html</code> / <code>script.js</code> — the main panel UI and logic.</li>
+            <li><code>settings_renderer.js</code> — renders the Settings page and plugin config from JSON.</li>
+            <li><code>style.css</code> — design tokens and layout for the whole panel.</li>
+            <li><code>manifest.json</code> + <code>sw.js</code> — PWA support (offline, installable).</li>
+            <li><code>login.html</code> / <code>login.js</code> — pairing / password login.</li>
+          </ul>
+        </section>
+
+        <!-- 7. Android -->
+        <section class="content-block" id="android">
+          <h3>7. Android App</h3>
+          <p>A native Android companion lives in <code>android/</code>. It pairs with the panel and can serve as a companion device.</p>
+          <div class="steps">
+            <div class="step">
+              <div class="step-number">1</div>
+              <div class="step-content">
+                <h4>Open in Android Studio</h4>
+                <p>Open the <code>android/</code> folder in Android Studio and let Gradle sync.</p>
+              </div>
+            </div>
+            <div class="step">
+              <div class="step-number">2</div>
+              <div class="step-content">
+                <h4>Build the APK</h4>
+                <p>Use <strong>Build → Build APK(s)</strong>, or the bundled <code>Iris.apk</code> if provided with the release.</p>
+              </div>
+            </div>
+            <div class="step">
+              <div class="step-number">3</div>
+              <div class="step-content">
+                <h4>Install and pair</h4>
+                <p>Install the APK on your phone and pair it with the panel as described in section 6.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 8. Home Assistant -->
+        <section class="content-block" id="home-assistant">
+          <h3>8. Home Assistant</h3>
+          <p>Iris can control Home Assistant entities (lights, scenes, switches) and show sensor states.</p>
+          <h4>Configuration</h4>
+          <p>Set these in <code>iris_config.json</code> (or via settings):</p>
+          <div class="table-wrapper">
+            <table>
+              <thead>
+                <tr><th>Key</th><th>Description</th></tr>
+              </thead>
+              <tbody>
+                <tr><td><code>ha_url</code></td><td>Root URL of your Home Assistant instance, e.g. <code>http://192.168.1.50:8123</code>.</td></tr>
+                <tr><td><code>ha_token</code></td><td>A long-lived access token from HA → your profile → Security → Long-Lived Access Tokens.</td></tr>
+                <tr><td><code>ha_shortcuts</code></td><td>A JSON array of entity shortcuts shown in the tray/panel.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <pre><code>{
+  "ha_url": "http://192.168.1.50:8123",
+  "ha_token": "YOUR_LONG_LIVED_TOKEN",
+  "ha_shortcuts": [
+    { "name": "Desk Lamp", "entity_id": "light.desk_lamp", "icon": "💡" }
+  ]
+}</code></pre>
+          <div class="note">
+            <span class="note-icon">💡</span>
+            <span class="note-text">Iris sends REST calls to <code>/api/services/&lt;domain&gt;/&lt;service&gt;</code> with <code>Authorization: Bearer &lt;token&gt;</code>. The service depends on the entity type: lights/switches toggle, scenes/scripts turn on.</span>
+          </div>
+        </section>
+
+        <!-- 9. Plugins -->
+        <section class="content-block" id="plugins">
+          <h3>9. Plugins</h3>
+          <p>Iris has an <strong>extensible plugin system</strong> (<code>app/plugin_manager.py</code> + <code>app/plugins/</code>). Each plugin declares settings, status, buttons, outputs, and live data.</p>
+          <h4>What a plugin exposes</h4>
+          <ul>
+            <li><strong>Status</strong> — connection/lifecycle state.</li>
+            <li><strong>Configuration</strong> — plugin settings shown on the Plugins tab.</li>
+            <li><strong>Buttons</strong> — button-box controls (e.g. Elite Dangerous hotkeys).</li>
+            <li><strong>Outputs</strong> — output routing (overlay / dashboard / hardware display).</li>
+            <li><strong>Live data</strong> — device-specific telemetry.</li>
+          </ul>
+          <h4>Bundled plugins</h4>
+          <div class="table-wrapper">
+            <table>
+              <thead>
+                <tr><th>Plugin</th><th>Folder</th><th>What it does</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>Elite Dangerous</td><td><code>app/plugins/elite_dangerous/</code></td><td>Reads the game journal for ship/status/telemetry and drives button-box controls.</td></tr>
+                <tr><td>OpenRGB</td><td><code>app/plugins/openrgb/</code></td><td>Controls RGB lighting via the OpenRGB SDK server, switching profiles and colors.</td></tr>
+                <tr><td>PC Stats</td><td><code>app/plugins/pc_stats/</code></td><td>Reports CPU/GPU temp, usage, FPS.</td></tr>
+                <tr><td>Vision</td><td><code>app/plugins/vision/</code></td><td>Screen-analysis sensors that watch a screen region and fire events on colour conditions.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="note">
+            <span class="note-icon">🧩</span>
+            <span class="note-text">Plugins are self-contained. A plugin's <code>connector.py</code> is the adapter to its external source; iris never talks to the source except through the connector.</span>
+          </div>
+        </section>
+
+        <!-- 10. Themes -->
+        <section class="content-block" id="themes">
+          <h3>10. Themes &amp; Appearance</h3>
+          <p>Iris has a theme engine. Themes are defined in <code>config.json</code> under <code>"theme"</code>.</p>
+          <div class="table-wrapper">
+            <table>
+              <thead>
+                <tr><th>Setting</th><th>Value</th><th>Effect</th></tr>
+              </thead>
+              <tbody>
+                <tr><td><code>mode</code></td><td><code>iris</code> | <code>monochrome</code> | <code>custom</code></td><td>The theme preset.</td></tr>
+                <tr><td><code>accent</code></td><td>HEX color, e.g. <code>#ff5500</code></td><td>Primary accent colour.</td></tr>
+                <tr><td><code>neon</code></td><td>HEX color, e.g. <code>#ffaa00</code></td><td>Secondary "neon" colour.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>Change these in <strong>Settings → Appearance</strong> — pick a preset or set custom colours. Themes drive the accent line, scrollbars, gauges, sliders, and highlights.</p>
+        </section>
+
+        <!-- 11. Build -->
+        <section class="content-block" id="build">
+          <h3>11. Build &amp; Package</h3>
+          <p>To build a standalone Windows executable and installer:</p>
+          <div class="steps">
+            <div class="step">
+              <div class="step-number">1</div>
+              <div class="step-content">
+                <h4>Run the build script</h4>
+<pre><code>build.bat</code></pre>
+                <p>This uses PyInstaller (<code>Iris.spec</code>) to bundle the app. Output: <code>dist/Iris.exe</code>.</p>
+              </div>
+            </div>
+            <div class="step">
+              <div class="step-number">2</div>
+              <div class="step-content">
+                <h4>Create the installer</h4>
+                <p>The <code>Iris_Setup.iss</code> is an Inno Setup script that packages <code>dist/Iris.exe</code> and dependencies. Build it in Inno Setup to produce <code>Installer/Iris_Setup.exe</code>.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 12. Config Reference -->
+        <section class="content-block" id="config">
+          <h3>12. Configuration Reference</h3>
+          <p>
+            The config file location depends on how you run Iris:
+            <strong>source</strong> → <code>app/iris_config.json</code>;
+            <strong>installed (frozen)</strong> → <code>%APPDATA%/Iris/iris_config.json</code>;
+            <strong>portable</strong> → <code>iris_config.json</code> next to the exe.
+          </p>
+          <h4>Key settings</h4>
+          <div class="table-wrapper">
+            <table>
+              <thead>
+                <tr><th>Key</th><th>Description</th></tr>
+              </thead>
+              <tbody>
+                <tr><td><code>serial_port</code></td><td>COM port for the ESP (<code>"auto"</code> for automatic detection).</td></tr>
+                <tr><td><code>brightness</code></td><td>Display brightness (0–5).</td></tr>
+                <tr><td><code>ha_url</code> / <code>ha_token</code></td><td>Home Assistant connection (see section 8).</td></tr>
+                <tr><td><code>alarms</code></td><td>JSON array of alarm schedules.</td></tr>
+                <tr><td><code>clock_mode</code></td><td>Clock style: small, large, or day+time.</td></tr>
+                <tr><td><code>user_name</code></td><td>Personalised greeting name.</td></tr>
+                <tr><td><code>theme</code></td><td>Theme engine settings (see section 10).</td></tr>
+                <tr><td><code>panel_profiles</code></td><td>Button-box profiles (e.g. the Elite Dangerous board).</td></tr>
+                <tr><td><code>plugins</code></td><td>Per-plugin config under <code>plugins.&lt;name&gt;</code>.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- 13. Structure -->
+        <section class="content-block" id="structure">
+          <h3>13. Project Structure</h3>
+<pre><code>Iris/
+├── app/                    # Python desktop application
+│   ├── main.py             # Entry point
+│   ├── main_window.py      # iPhone-shaped overlay window
+│   ├── serial_comm.py      # USB serial bridge to ESP
+│   ├── win_platform.py     # Windows-specific helpers
+│   ├── providers/          # Data providers (Stats, HA, Media, ...)
+│   ├── plugins/            # Plugin system & bundled plugins
+│   ├── config.py           # JSON config management
+│   └── constants.py        # Design tokens, defaults
+├── android/                # Native Android companion app
+├── firmware/
+│   └── d1mini/main/        # ESP8266/32 Arduino firmware
+├── HTML/                   # Web panel (PWA)
+│   ├── index.html
+│   ├── script.js
+│   ├── settings_renderer.js
+│   ├── style.css
+│   ├── manifest.json
+│   └── sw.js
+├── Installer/              # Inno Setup installers
+├── docs/                   # This documentation site
+├── requirements.txt
+└── build.bat</code></pre>
+        </section>
+
+        <!-- 14. Troubleshooting -->
+        <section class="content-block" id="troubleshooting">
+          <h3>14. Troubleshooting</h3>
+          <div class="content-block">
+            <h4>Display not lighting up</h4>
+            <p>
+              Check the USB connection and that the correct <code>serial_port</code> is set (try <code>"auto"</code>).
+              Confirm the firmware was flashed (you should see the boot self-test flash).
+            </p>
+          </div>
+          <div class="content-block">
+            <h4>OpenRGB not connecting</h4>
+            <p>
+              OpenRGB must have the <strong>SDK server enabled</strong> (OpenRGB → SDK Server tab → start server on port 6742).
+              The plugin tries the configured port, then 6742 and 6749.
+            </p>
+          </div>
+          <div class="content-block">
+            <h4>Home Assistant not responding</h4>
+            <p>
+              Verify <code>ha_url</code> is reachable from the PC and the <code>ha_token</code> is a valid long-lived token with the needed scopes.
+            </p>
+          </div>
+          <div class="content-block">
+            <h4>Phone can't connect to the panel</h4>
+            <p>
+              Ensure <strong>LAN access</strong> is enabled, the phone and PC are on the same network, and the PC's IP is stable.
+              Re-scan the QR code if the address changed.
+            </p>
+          </div>
+          <div class="content-block">
+            <h4>All LEDs suddenly light up</h4>
+            <p>
+              The MAX7219 failsafe should shut the display off after 60 s of no serial traffic. Ensure <code>serial_comm.py</code> keeps communicating and the PC app stays alive.
+            </p>
+          </div>
+        </section>
+
+      </div>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <a href="index.html" class="logo">
+          <span class="accent-dot" aria-hidden="true"></span>
+          <span>Iris</span>
+        </a>
+        <p>Windows PC companion overlay and MAX7219 display driver.</p>
+      </div>
+      <div class="footer-links">
+        <div class="footer-column">
+          <h4>Getting Started</h4>
+          <ul>
+            <li><a href="setup.html">Setup Guide</a></li>
+            <li><a href="setup.html#hardware">Hardware &amp; Wiring</a></li>
+            <li><a href="setup.html#firmware">Firmware</a></li>
+            <li><a href="setup.html#app">Desktop App</a></li>
+          </ul>
+        </div>
+        <div class="footer-column">
+          <h4>Resources</h4>
+          <ul>
+            <li><a href="https://github.com/iamfud/iris" target="_blank" rel="noopener">GitHub Repository</a></li>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="https://github.com/iamfud/iris/issues" target="_blank" rel="noopener">Report an Issue</a></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      © 2026 Iris — PC Companion. Released under the MIT License.
+    </div>
+  </footer>
+
+  <script src="js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Iris — PC Companion Overlay. A Windows desktop companion that drives an ESP8266/ESP32 MAX7219 display, floating overlay, and companion panel.">
+  <meta name="theme-color" content="#0a0a0f">
+  <meta property="og:title" content="Iris — PC Companion Overlay">
+  <meta property="og:description" content="Windows desktop companion for MAX7219 displays, floating overlays, and your phone panel.">
+  <meta property="og:type" content="website">
+  <title>Iris — PC Companion Overlay</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="icon" href="https://github.com/iamfud/iris/raw/master/Iris.ico">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a href="index.html" class="logo" aria-label="Iris home">
+        <span class="accent-dot" aria-hidden="true"></span>
+        <span>Iris</span>
+      </a>
+      <nav aria-label="Main navigation">
+        <ul class="nav-links" id="nav-links">
+          <li><a href="index.html" class="active" aria-current="page">Home</a></li>
+          <li><a href="setup.html">Setup Guide</a></li>
+          <li><a href="https://github.com/iamfud/iris" target="_blank" rel="noopener">GitHub</a></li>
+        </ul>
+      </nav>
+      <button class="mobile-menu-btn" aria-label="Open menu" aria-expanded="false">☰</button>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero">
+      <span class="hero-badge">PC Companion Overlay</span>
+      <h1>Your PC, <span class="highlight">on a physical display.</span></h1>
+      <p>
+        Iris is a Windows desktop companion that streams PC stats, notifications, media info,
+        and Home Assistant entities to an ESP8266/ESP32-driven MAX7219 LED matrix — plus a
+        floating overlay and a phone/PWA panel for full control.
+      </p>
+      <div class="hero-actions">
+        <a href="setup.html" class="btn btn-primary">Start Setup Guide</a>
+        <a href="https://github.com/iamfud/iris" target="_blank" rel="noopener" class="btn btn-github">View on GitHub</a>
+      </div>
+    </section>
+
+    <section class="section" id="features">
+      <div class="section-header">
+        <span class="section-tag">Features</span>
+        <h2>Everything your desk deserves</h2>
+        <p>From hardware telemetry to smart-home control, Iris brings your PC's data to the physical world.</p>
+      </div>
+      <div class="cards-grid">
+        <div class="card">
+          <div class="card-icon orange">📊</div>
+          <h3>Live PC Stats</h3>
+          <p>CPU/GPU temperature, usage, and FPS streamed in real time to the matrix display.</p>
+        </div>
+        <div class="card">
+          <div class="card-icon blue">🕐</div>
+          <h3>Clock &amp; Date</h3>
+          <p>Large clock with date, minute bar, and an ambient animated "eyes" doodle.</p>
+        </div>
+        <div class="card">
+          <div class="card-icon red">🔔</div>
+          <h3>Notifications</h3>
+          <p>Windows notifications mirrored onto the secondary display and your phone panel.</p>
+        </div>
+        <div class="card">
+          <div class="card-icon green">🏠</div>
+          <h3>Home Assistant</h3>
+          <p>View sensor states and trigger shortcuts for lights, scenes, and switches.</p>
+        </div>
+        <div class="card">
+          <div class="card-icon orange">⏰</div>
+          <h3>Alarm Clock</h3>
+          <p>Set alarms from your PC; dismiss or snooze right from the panel.</p>
+        </div>
+        <div class="card">
+          <div class="card-icon blue">🎵</div>
+          <h3>Media Controls</h3>
+          <p>Now-playing display via Windows SMTC, with album art and playback status.</p>
+        </div>
+        <div class="card">
+          <div class="card-icon red">🎨</div>
+          <h3>OpenRGB</h3>
+          <p>Sync RGB lighting profiles over the OpenRGB SDK server.</p>
+        </div>
+        <div class="card">
+          <div class="card-icon green">🎮</div>
+          <h3>Vision &amp; Plugins</h3>
+          <p>Screen-analysis vision sensors and a plugin system for Elite Dangerous, OpenRGB, and more.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="hardware">
+      <div class="section-header">
+        <span class="section-tag">Hardware</span>
+        <h2>What you'll need</h2>
+        <p>Iris runs on an ESP8266/ESP32 plus a MAX7219 LED matrix, connected over USB serial.</p>
+      </div>
+      <div class="cards-grid">
+        <div class="card">
+          <div class="card-icon blue">📟</div>
+          <h3>Display</h3>
+          <p>MAX7219 LED matrix, FC16_HW type — 4 daisy-chained 8×8 modules.</p>
+        </div>
+        <div class="card">
+          <div class="card-icon orange">🔌</div>
+          <h3>Microcontroller</h3>
+          <p>ESP8266 (Wemos D1 Mini) or ESP32, flashed with the bundled firmware.</p>
+        </div>
+        <div class="card">
+          <div class="card-icon green">🖥️</div>
+          <h3>PC</h3>
+          <p>Windows 10/11 with Python 3.10+ running the Iris desktop app.</p>
+        </div>
+      </div>
+      <div style="text-align:center;margin-top:24px;">
+        <a href="setup.html#hardware" class="btn btn-secondary">See Full Wiring Diagram →</a>
+      </div>
+    </section>
+
+    <section class="section" id="components">
+      <div class="section-header">
+        <span class="section-tag">Components</span>
+        <h2>An integrated system</h2>
+        <p>Iris is more than a display — it's a full companion stack.</p>
+      </div>
+      <div class="cards-grid">
+        <div class="card">
+          <div class="card-icon blue">🗔</div>
+          <h3>Desktop App</h3>
+          <p>Python app with a system tray, floating overlay, and all the data plumbing.</p>
+        </div>
+        <div class="card">
+          <div class="card-icon orange">📱</div>
+          <h3>Phone Panel / PWA</h3>
+          <p>A web panel (installable as a PWA) for pairing and controlling Iris from your phone.</p>
+        </div>
+        <div class="card">
+          <div class="card-icon green">🤖</div>
+          <h3>Android App</h3>
+          <p>A native Android companion in <code>android/</code> for companion-device use.</p>
+        </div>
+        <div class="card">
+          <div class="card-icon red">🧩</div>
+          <h3>Plugin System</h3>
+          <p>Extensible plugins for Elite Dangerous, OpenRGB, PC stats, and vision sensors.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="cta">
+      <div class="content-block" style="text-align:center;padding:48px;">
+        <h3 style="display:block;text-align:center;font-size:1.6rem;">Ready to build yours?</h3>
+        <p style="max-width:560px;margin:16px auto 24px;">
+          Follow the step-by-step setup guide covering hardware, firmware, the Python app, and every component.
+        </p>
+        <a href="setup.html" class="btn btn-primary">Open the Setup Guide</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <a href="index.html" class="logo">
+          <span class="accent-dot" aria-hidden="true"></span>
+          <span>Iris</span>
+        </a>
+        <p>Windows PC companion overlay and MAX7219 display driver. Built with Python, ESP firmware, and a touch of neon.</p>
+      </div>
+      <div class="footer-links">
+        <div class="footer-column">
+          <h4>Getting Started</h4>
+          <ul>
+            <li><a href="setup.html">Setup Guide</a></li>
+            <li><a href="setup.html#hardware">Hardware &amp; Wiring</a></li>
+            <li><a href="setup.html#firmware">Firmware</a></li>
+            <li><a href="setup.html#app">Desktop App</a></li>
+          </ul>
+        </div>
+        <div class="footer-column">
+          <h4>Resources</h4>
+          <ul>
+            <li><a href="https://github.com/iamfud/iris" target="_blank" rel="noopener">GitHub Repository</a></li>
+            <li><a href="https://github.com/iamfud/iris/issues" target="_blank" rel="noopener">Report an Issue</a></li>
+            <li><a href="setup.html#plugins">Plugins</a></li>
+            <li><a href="setup.html#troubleshooting">Troubleshooting</a></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      © 2026 Iris — PC Companion. Released under the MIT License.
+    </div>
+  </footer>
+
+  <script src="js/main.js"></script>
+</body>
+</html>

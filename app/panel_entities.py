@@ -20,6 +20,9 @@ def get_core_entities() -> List[Dict[str, Any]]:
         {
             "id": "system.display",
             "domain": "System",
+            "plugin": "system",
+            "button_id": "display",
+            "state_key": "display",
             "name": "Companion Display",
             "type": "status",
             "icon": "desktop-tower-monitor",
@@ -32,18 +35,39 @@ def get_core_entities() -> List[Dict[str, Any]]:
         {
             "id": "system.overlay",
             "domain": "System",
-            "name": "HUD Overlay",
+            "plugin": "system",
+            "button_id": "overlay",
+            "state_key": "overlay",
+            "name": "PC Stats Overlay",
             "type": "status",
             "icon": "picture-in-picture-bottom-right",
             "color": "#48B2E9",
             "labels": {"on": "ACTIVE", "off": "HIDDEN"},
             "writable": True,
             "default_action": "toggle_overlay",
-            "description": "Toggle desktop HUD overlay window",
+            "description": "Toggle desktop PC gauges/stats overlay window",
+        },
+        {
+            "id": "system.toolbar",
+            "domain": "System",
+            "plugin": "system",
+            "button_id": "toolbar",
+            "state_key": "toolbar",
+            "name": "Toolbar",
+            "type": "status",
+            "icon": "dock-top",
+            "color": "#48B2E9",
+            "labels": {"on": "OPEN", "off": "CLOSED"},
+            "writable": True,
+            "default_action": "toggle_toolbar",
+            "description": "Toggle desktop capture & actions top toolbar",
         },
         {
             "id": "system.mic_mute",
             "domain": "System",
+            "plugin": "system",
+            "button_id": "mic_mute",
+            "state_key": "mic_mute",
             "name": "Microphone Mute",
             "type": "status",
             "icon": "microphone",
@@ -57,6 +81,9 @@ def get_core_entities() -> List[Dict[str, Any]]:
         {
             "id": "system.settings",
             "domain": "System",
+            "plugin": "system",
+            "button_id": "settings",
+            "state_key": "settings",
             "name": "Open Settings",
             "type": "action",
             "icon": "cog",
@@ -68,6 +95,9 @@ def get_core_entities() -> List[Dict[str, Any]]:
         {
             "id": "system.colour_picker",
             "domain": "System",
+            "plugin": "system",
+            "button_id": "colour_picker",
+            "state_key": "colour_picker",
             "name": "Colour Picker",
             "type": "action",
             "icon": "eyedropper",
@@ -79,6 +109,9 @@ def get_core_entities() -> List[Dict[str, Any]]:
         {
             "id": "system.screenshot",
             "domain": "System",
+            "plugin": "system",
+            "button_id": "screenshot",
+            "state_key": "screenshot",
             "name": "Screenshot",
             "type": "action",
             "icon": "camera",
@@ -92,6 +125,9 @@ def get_core_entities() -> List[Dict[str, Any]]:
         {
             "id": "media.play_pause",
             "domain": "Media",
+            "plugin": "media",
+            "button_id": "play_pause",
+            "state_key": "play_pause",
             "name": "Play / Pause",
             "type": "action",
             "icon": "play-pause",
@@ -103,6 +139,9 @@ def get_core_entities() -> List[Dict[str, Any]]:
         {
             "id": "media.next",
             "domain": "Media",
+            "plugin": "media",
+            "button_id": "next",
+            "state_key": "next",
             "name": "Next Track",
             "type": "action",
             "icon": "skip-next",
@@ -114,6 +153,9 @@ def get_core_entities() -> List[Dict[str, Any]]:
         {
             "id": "media.prev",
             "domain": "Media",
+            "plugin": "media",
+            "button_id": "prev",
+            "state_key": "prev",
             "name": "Previous Track",
             "type": "action",
             "icon": "skip-previous",
@@ -125,6 +167,9 @@ def get_core_entities() -> List[Dict[str, Any]]:
         {
             "id": "media.player",
             "domain": "Media",
+            "plugin": "media",
+            "button_id": "player",
+            "state_key": "player",
             "name": "Media Player",
             "type": "action",
             "icon": "eject",
@@ -426,6 +471,15 @@ def get_live_entity_states(plugin_button_states=None) -> Dict[str, Dict[str, Any
                 "active": bool(getattr(_app, "_overlay_shown", False)),
                 "label": "ACTIVE" if getattr(_app, "_overlay_shown", False) else "HIDDEN",
                 "value": bool(getattr(_app, "_overlay_shown", False)),
+            }
+            # Toolbar state
+            mw = getattr(_app, "_main_win", None)
+            tb = getattr(mw, "_capture_toolbar", None) if mw else None
+            is_tb_open = bool(tb and getattr(tb, "_visible", False))
+            states["system.toolbar"] = {
+                "active": is_tb_open,
+                "label": "OPEN" if is_tb_open else "CLOSED",
+                "value": is_tb_open,
             }
             # Microphone Mute
             from win_platform import get_mic_mute_state

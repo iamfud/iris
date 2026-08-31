@@ -305,7 +305,17 @@ def execute_slot(slot):
                     return {"ok": True}
             elif bid == "overlay" or ent == "system.overlay":
                 if app and hasattr(app, "_toggle_overlay"):
-                    app._toggle_overlay()
+                    if hasattr(app, "_root"):
+                        app._root.after(0, app._toggle_overlay)
+                    else:
+                        app._toggle_overlay()
+                    return {"ok": True}
+            elif bid == "toolbar" or ent == "system.toolbar":
+                if app and hasattr(app, "_toggle_capture_toolbar"):
+                    if hasattr(app, "_root"):
+                        app._root.after(0, app._toggle_capture_toolbar)
+                    else:
+                        app._toggle_capture_toolbar()
                     return {"ok": True}
             elif bid == "mic_mute" or ent == "system.mic_mute":
                 from win_platform import toggle_mic_mute

@@ -1,6 +1,12 @@
 """Iris 3.0 — Automations Engine
 
-Central condition evaluation, rate-limiting, and action dispatch pipeline.
+Central state-condition evaluation, per-action conditional execution, auto-release, and rate-limiting.
+
+Key Design:
+- Rules contain an inline action pipeline (`actions`).
+- When a state matches an action (e.g. Shields == DOWN), that action/alert is activated.
+- When the state is NO LONGER matching (e.g. Shields becomes ONLINE), any active continuous alert
+  is automatically released/popped back to the profile baseline without needing a manual return rule.
 """
 
 from __future__ import annotations
@@ -32,6 +38,8 @@ class AutomationsEngine:
         self._state_cache: Dict[str, Dict[str, Any]] = {}
         self._prev_state_cache: Dict[str, Dict[str, Any]] = {}
         self._cooldown_tracker: Dict[str, float] = {}
+        self._last_matched_states: Dict[str, Any] = {}
+        self._active_alert_rules: set[str] = set()
         self._lock = threading.Lock()
         self._disclaimer_acknowledged = False
 
@@ -94,7 +102,6 @@ class AutomationsEngine:
         # Resolve entity state key dynamically from registry if available
         val_key = trigger_key
         if val_key not in curr_state:
-            # Check if trigger_key is an entity ID like "elite_dangerous.shields" -> state_key "shields_up"
             try:
                 import panel_entities
                 ent = panel_entities.get_entity(trigger_key)
@@ -113,27 +120,66 @@ class AutomationsEngine:
 
         curr_val = curr_state.get(val_key)
         prev_val = prev_state.get(val_key)
+        rule_id = rule.get("id", "rule")
+        now = time.time()
+        cooldown_s = float(rule.get("cooldown_s", 2.0))
 
-        op = rule.get("operator", "==")
-        target_val = rule.get("target_value")
+        # Check foreground requirement
+        exe = rule.get("exe", "")
+        req_fg = rule.get("require_foreground", True)
+        if req_fg and exe:
+            try:
+                from plugin_manager import is_exe_foreground
+                if not is_exe_foreground(exe):
+                    return
+            except Exception:
+                pass
 
-        curr_match = self._compare(curr_val, op, target_val)
-        prev_match = self._compare(prev_val, op, target_val) if prev_val is not None else False
+        # Evaluate inline action pipeline
+        actions = rule.get("actions", [])
+        matched_actions = []
 
-        is_edge = curr_match and not prev_match
+        for a_idx, act in enumerate(actions):
+            cond = act.get("condition") or {}
+            op = cond.get("operator") or act.get("operator") or rule.get("operator", "==")
+            tgt = cond.get("target_value") if "target_value" in cond else (act.get("target_value") if "target_value" in act else rule.get("target_value"))
 
-        if curr_match:
-            now = time.time()
-            rule_id = rule.get("id", "rule")
-            cooldown_s = float(rule.get("cooldown_s", 5.0))
+            if tgt is None:
+                matched_actions.append(act)
+                continue
 
+            curr_match = self._compare(curr_val, op, tgt)
+            if curr_match:
+                matched_actions.append(act)
+
+        # ── AUTOMATIC RELEASE & RESET ──────────────────────────
+        # If this rule was previously actively holding an alert state, but the state has now stopped matching:
+        if not matched_actions:
             with self._lock:
-                last_fired = self._cooldown_tracker.get(rule_id, 0.0)
+                had_active_alert = rule_id in self._active_alert_rules
+                if had_active_alert:
+                    self._active_alert_rules.remove(rule_id)
+                    self._last_matched_states[rule_id] = curr_val
 
-            if is_edge or (now - last_fired >= cooldown_s):
-                with self._lock:
-                    self._cooldown_tracker[rule_id] = now
-                self._execute_actions(rule, curr_val)
+            if had_active_alert:
+                log.info("[automations] rule '%s' condition no longer active (val=%s) -> auto-releasing to baseline", rule.get("name"), curr_val)
+                try:
+                    from lighting_service import get_lighting_service
+                    get_lighting_service().pop_alert()
+                except Exception as ex:
+                    log.warning("[automations] auto pop_alert failed: %s", ex)
+            return
+
+        with self._lock:
+            last_state = self._last_matched_states.get(rule_id)
+            last_fired = self._cooldown_tracker.get(rule_id, 0.0)
+
+        is_state_flip = (last_state != curr_val)
+        if is_state_flip or (now - last_fired >= cooldown_s):
+            with self._lock:
+                self._last_matched_states[rule_id] = curr_val
+                self._cooldown_tracker[rule_id] = now
+            self._dispatch_matched_actions(rule, matched_actions, curr_val)
 
     @staticmethod
     def _compare(val: Any, op: str, target: Any) -> bool:
@@ -165,56 +211,64 @@ class AutomationsEngine:
             pass
         return False
 
-    def _execute_actions(self, rule: Dict[str, Any], trigger_value: Any):
+    def _dispatch_matched_actions(self, rule: Dict[str, Any], actions: List[Dict[str, Any]], trigger_value: Any):
         rule_name = rule.get("name", "Automation")
-        exe = rule.get("exe", "")
-        req_fg = rule.get("require_foreground", True)
+        rule_id = rule.get("id", "rule")
+        log.info("[automations] firing '%s' (%d actions, val=%s)", rule_name, len(actions), trigger_value)
 
-        if req_fg and exe:
+        # Parse lighting actions into provider map
+        lighting_actions = {}
+        has_inherit = False
+        max_duration = 0.0
+
+        for act in actions:
+            dur = float(act.get("duration_s", 0) or 0)
+            if dur > max_duration:
+                max_duration = dur
+
+            if act.get("type") == "openrgb":
+                prof = act.get("profile", "")
+                if prof == "inherit":
+                    has_inherit = True
+                elif prof:
+                    lighting_actions["openrgb"] = prof
+            elif act.get("type") in ("home_assistant", "ha"):
+                script = act.get("entity", "") or act.get("script", "")
+                if script == "inherit":
+                    has_inherit = True
+                elif script:
+                    lighting_actions["ha"] = script.replace("ha.", "") if script.startswith("ha.") else script
+            elif act.get("type") == "slot" and act.get("slot"):
+                s = act.get("slot", {})
+                if s.get("plugin") == "ha" or str(s.get("entity", "")).startswith("ha."):
+                    script = s.get("button_id") or s.get("entity_id") or s.get("entity", "").replace("ha.", "")
+                    if script:
+                        lighting_actions["ha"] = script.replace("ha.", "") if script.startswith("ha.") else script
+                elif s.get("plugin") == "openrgb" or str(s.get("entity", "")).startswith("openrgb."):
+                    prof = s.get("openrgb_profile") or s.get("button_id")
+                    if prof:
+                        lighting_actions["openrgb"] = prof
+
+        if has_inherit and not lighting_actions:
+            # Explicit reversion
+            with self._lock:
+                self._active_alert_rules.discard(rule_id)
             try:
-                from plugin_manager import is_exe_foreground
-                if not is_exe_foreground(exe):
-                    log.debug("[automations] rule '%s' suppressed: %s not in foreground", rule_name, exe)
-                    return
-            except Exception:
-                pass
-
-        actions = rule.get("actions", [])
-        duration_s = float(rule.get("duration_s", 0) or 0)
-        log.info("[automations] firing rule '%s' (actions=%d, val=%s, duration=%.1fs)", rule_name, len(actions), trigger_value, duration_s)
-
-        # Snapshot active state before applying actions for revert
-        prev_openrgb_profile = None
-        has_ha_actions = any(
-            act.get("type") in ("home_assistant", "ha") or
-            (act.get("type") == "slot" and ((act.get("slot") or {}).get("plugin") == "ha" or str((act.get("slot") or {}).get("entity", "")).startswith("ha.")))
-            for act in actions
-        )
-        ha_scene_id = None
-        try:
-            import plugin_manager
-            rgb_inst = plugin_manager.get("openrgb")
-            if rgb_inst and hasattr(rgb_inst, "poll"):
-                prev_openrgb_profile = rgb_inst.poll().get("active_profile")
-        except Exception:
-            pass
-
-        if duration_s > 0 and has_ha_actions:
-            try:
-                import plugin_manager
-                ha_inst = plugin_manager.get("ha")
-                if ha_inst and hasattr(ha_inst, "_connector"):
-                    ents = ha_inst.get_entities() or []
-                    light_ids = [e["entity_id"] for e in ents if e.get("domain") == "light"]
-                    if light_ids:
-                        ha_scene_id = f"iris_snap_{rule.get('id', 'rule').replace('-', '_')}"
-                        ha_inst._connector.call_service("scene", "create", {
-                            "scene_id": ha_scene_id,
-                            "snapshot_entities": light_ids
-                        })
-                        log.info("[automations] created HA scene snapshot '%s' for %d lights", ha_scene_id, len(light_ids))
+                from lighting_service import get_lighting_service
+                get_lighting_service().pop_alert()
             except Exception as ex:
-                log.warning("[automations] failed to create HA scene snapshot: %s", ex)
+                log.warning("[automations] pop_alert failed: %s", ex)
+        elif lighting_actions:
+            with self._lock:
+                if max_duration == 0:
+                    self._active_alert_rules.add(rule_id)
+                else:
+                    self._active_alert_rules.discard(rule_id)
+            try:
+                from lighting_service import get_lighting_service
+                get_lighting_service().push_alert(lighting_actions, max_duration)
+            except Exception as ex:
+                log.warning("[automations] failed to push lighting actions: %s", ex)
 
         for act in actions:
             act_type = act.get("type")
@@ -234,35 +288,6 @@ class AutomationsEngine:
             except Exception as ex:
                 log.warning("[automations] failed to execute action %s: %s", act_type, ex)
 
-        # If a revert duration is specified (> 0), schedule return to previous state
-        if duration_s > 0:
-            def _revert():
-                time.sleep(duration_s)
-                log.info("[automations] reverting rule '%s' after %.1fs", rule_name, duration_s)
-                if prev_openrgb_profile:
-                    try:
-                        import plugin_manager
-                        rgb_inst = plugin_manager.get("openrgb")
-                        if rgb_inst and hasattr(rgb_inst, "_apply_profile"):
-                            rgb_inst._apply_profile(prev_openrgb_profile)
-                        else:
-                            from plugins.openrgb.connector import OpenRGBConnector
-                            conn = OpenRGBConnector()
-                            conn._apply_profile(prev_openrgb_profile)
-                    except Exception as ex:
-                        log.warning("[automations] failed to revert OpenRGB profile: %s", ex)
-
-                if ha_scene_id:
-                    try:
-                        import plugin_manager
-                        ha_inst = plugin_manager.get("ha")
-                        if ha_inst and hasattr(ha_inst, "_connector"):
-                            ha_inst._connector.call_service("scene", "turn_on", entity_id=f"scene.{ha_scene_id}")
-                            log.info("[automations] restored HA scene snapshot '%s'", ha_scene_id)
-                    except Exception as ex:
-                        log.warning("[automations] failed to restore HA scene snapshot: %s", ex)
-            threading.Thread(target=_revert, daemon=True, name=f"iris-auto-revert-{rule.get('id', 'rule')}").start()
-
     def _act_slot(self, slot: Dict[str, Any]):
         def _exec():
             try:
@@ -274,84 +299,64 @@ class AutomationsEngine:
 
     def _act_openrgb(self, act: Dict[str, Any]):
         profile = act.get("profile", "")
-        if not profile:
+        if not profile or profile == "inherit":
             return
         def _set_rgb():
             try:
                 import plugin_manager
                 inst = plugin_manager.get("openrgb")
-                if inst and hasattr(inst, "_apply_profile"):
-                    inst._apply_profile(profile)
-                else:
-                    from plugins.openrgb.connector import OpenRGBConnector
-                    conn = OpenRGBConnector()
-                    conn._apply_profile(profile)
+                if inst and hasattr(inst, "apply_lighting_preset"):
+                    inst.apply_lighting_preset(profile)
             except Exception as ex:
-                log.warning("[automations] OpenRGB profile dispatch failed: %s", ex)
+                log.warning("[automations] OpenRGB profile switch failed: %s", ex)
         threading.Thread(target=_set_rgb, daemon=True, name="iris-auto-openrgb").start()
 
-    def _act_hotkey(self, act: Dict[str, Any], rule_name: str):
-        if not self._disclaimer_acknowledged:
-            log.warning("[automations] hotkey execution blocked: disclaimer not acknowledged")
-            return
-        key = act.get("hotkey")
-        if not key:
-            return
-        hold = float(act.get("hold_duration", 0.05))
-
-        def _send():
-            try:
-                import keyboard_service
-                keyboard_service.send_sequence(key, hold_duration=hold)
-            except Exception as ex:
-                log.warning("[automations] keystroke injection failed: %s", ex)
-
-        threading.Thread(target=_send, daemon=True, name="iris-auto-hotkey").start()
-
     def _act_home_assistant(self, act: Dict[str, Any]):
-        entity_id = act.get("entity_id", "")
-        service = act.get("service", "toggle")
-        domain = act.get("domain") or (entity_id.split(".")[0] if "." in entity_id else "homeassistant")
-        service_data = act.get("data", {})
-
+        entity_id = act.get("entity", "") or act.get("script", "")
+        if not entity_id or entity_id == "inherit":
+            return
         def _call_ha():
             try:
                 import plugin_manager
                 inst = plugin_manager.get("ha")
-                if inst and hasattr(inst, "_connector"):
-                    inst._connector.call_service(domain, service, service_data, entity_id)
-                else:
-                    from plugins.ha.connector import HASSConnector
-                    from config import load_config
-                    conn = HASSConnector(load_config())
-                    conn.call_service(domain, service, service_data, entity_id)
+                if inst and hasattr(inst, "apply_lighting_preset"):
+                    inst.apply_lighting_preset(entity_id)
             except Exception as ex:
-                log.warning("[automations] HA dispatch failed: %s", ex)
-
+                log.warning("[automations] HA script execution failed: %s", ex)
         threading.Thread(target=_call_ha, daemon=True, name="iris-auto-ha").start()
 
-    def _act_sound(self, act: Dict[str, Any]):
-        sound_name = act.get("sound", "remind")
-        try:
-            import alarm_sound
-            alarm_sound.play_one_shot(sound_name)
-        except Exception as ex:
-            log.warning("[automations] audio alert failed: %s", ex)
+    def _act_hotkey(self, act: Dict[str, Any], rule_name: str):
+        hotkey = act.get("hotkey", "")
+        if not hotkey:
+            return
+        def _send():
+            try:
+                from keyboard_service import keyboard_service
+                keyboard_service.send_hotkey(hotkey)
+                log.info("[automations] '%s' dispatched hotkey '%s'", rule_name, hotkey)
+            except Exception as ex:
+                log.warning("[automations] failed to send hotkey '%s': %s", hotkey, ex)
+        threading.Thread(target=_send, daemon=True, name="iris-auto-hotkey").start()
 
-    def _act_notification(self, act: Dict[str, Any], trigger_value: Any):
-        title = act.get("title", "Iris Automation")
-        msg = act.get("message", f"Triggered: {trigger_value}")
-        try:
-            import ws_bridge
-            ws_bridge.broadcast({
-                "type": "notification",
-                "notification": {
-                    "app": "Automations",
-                    "title": title,
-                    "body": msg,
-                    "theme": "alert",
-                    "timestamp": int(time.time()),
-                }
-            })
-        except Exception:
-            pass
+    def _act_sound(self, act: Dict[str, Any]):
+        sound_name = act.get("sound", "")
+        if not sound_name:
+            return
+        def _play():
+            try:
+                import alarm_sound
+                alarm_sound.play_alarm(sound_name)
+            except Exception as ex:
+                log.warning("[automations] failed to play sound '%s': %s", sound_name, ex)
+        threading.Thread(target=_play, daemon=True, name="iris-auto-sound").start()
+
+    def _act_notification(self, act: Dict[str, Any], trigger_val: Any):
+        msg = act.get("message", "Automation Triggered")
+        msg = msg.replace("{val}", str(trigger_val))
+        def _notify():
+            try:
+                from serial_comm import serial_sender
+                serial_sender.send_notification("Iris Alert", msg)
+            except Exception:
+                pass
+        threading.Thread(target=_notify, daemon=True, name="iris-auto-notif").start()

@@ -203,6 +203,24 @@
       "labels": { "on": "SCOOPING", "off": "IDLE" },
       "colors": { "on": "#ffee00", "off": "#555555" },
       "description": "Stellar corona fuel scoop active"
+    },
+    {
+      "id": "jumps_remaining",
+      "name": "Jumps Remaining",
+      "widget_type": "display",
+      "icon": "map-marker-path",
+      "color": "#48b2e9",
+      "state_key": "jumps_remaining",
+      "description": "Remaining jumps to target from NavRoute.json"
+    },
+    {
+      "id": "route_destination",
+      "name": "Route Destination",
+      "widget_type": "display",
+      "icon": "flag-checkered",
+      "color": "#48b2e9",
+      "state_key": "route_destination",
+      "description": "Final destination star system from NavRoute.json"
     }
   ],
 
@@ -301,7 +319,11 @@
           { "key": "scooping_fuel", "label": "Corona Fuel Scooping", "type": "boolean", "source": "status", "display": "yes_no" },
           { "key": "last_scan", "label": "Last Scanned Body", "type": "string", "source": "state" },
           { "key": "scan_distance", "label": "Scan Distance", "type": "string", "source": "state" },
-          { "key": "system_scan_pct", "label": "System Scan Progress", "type": "percentage", "source": "state" }
+          { "key": "system_scan_pct", "label": "System Scan Progress", "type": "percentage", "source": "state" },
+          { "key": "jumps_remaining", "label": "Jumps to Target", "type": "number", "source": "state" },
+          { "key": "route_destination", "label": "Route Destination", "type": "string", "source": "state" },
+          { "key": "next_system", "label": "Next Waypoint System", "type": "string", "source": "state" },
+          { "key": "next_star_class", "label": "Next Star Class", "type": "string", "source": "state" }
         ]
       },
       {

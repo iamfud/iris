@@ -57,29 +57,4 @@ echo.
 echo ============================================================
 echo PyInstaller build complete: dist\Iris.exe
 echo ============================================================
-
-REM Check for Inno Setup Compiler (ISCC.exe)
-set "ISCC_PATH="
-where iscc.exe >nul 2>&1 && set "ISCC_PATH=iscc.exe"
-if "%ISCC_PATH%"=="" if exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" set "ISCC_PATH=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
-if "%ISCC_PATH%"=="" if exist "%ProgramFiles%\Inno Setup 6\ISCC.exe" set "ISCC_PATH=%ProgramFiles%\Inno Setup 6\ISCC.exe"
-if "%ISCC_PATH%"=="" if exist "%LocalAppData%\Programs\Inno Setup 6\ISCC.exe" set "ISCC_PATH=%LocalAppData%\Programs\Inno Setup 6\ISCC.exe"
-
-if not "%ISCC_PATH%"=="" (
-    echo Compiling Installer with Inno Setup...
-    "%ISCC_PATH%" "Iris_Setup.iss"
-    if errorlevel 1 (
-        echo [WARNING] Inno Setup compilation failed.
-    ) else (
-        echo.
-        echo ============================================================
-        echo SUCCESS: Installer generated at Installer\Iris_Setup.exe
-        echo ============================================================
-    )
-) else (
-    echo.
-    echo [INFO] Inno Setup compiler (ISCC.exe) not found on PATH.
-    echo Open 'Iris_Setup.iss' in Inno Setup to compile 'Installer\Iris_Setup.exe'.
-)
-
 echo.

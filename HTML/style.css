@@ -3689,27 +3689,27 @@ html.is-landscape {
     flex-shrink:0;
     display:flex;
     justify-content:flex-start;
-    overflow-x:auto;
-    overflow-y:hidden;
+    overflow-x:hidden;
+    overflow-y:auto;
     -webkit-overflow-scrolling:touch;
-    scroll-snap-type:x mandatory;
+    scroll-snap-type:y mandatory;
     scroll-behavior:smooth;
-    touch-action:pan-x pan-y;
-    overscroll-behavior-x:contain;
+    touch-action:pan-y;
+    overscroll-behavior-y:contain;
 }
 .panel-view-overlay .pv-box::-webkit-scrollbar{ display:none; }
 .panel-view-overlay .pv-track{
     display:flex;
-    flex-direction:row;
+    flex-direction:column;
     align-items:stretch;
     gap:8px;
     padding:0;
     margin:0;
-    height:100%;
-    width:max-content;
+    width:100%;
+    height:max-content;
 }
 .panel-view-overlay .pv-box .pdev-grid{
-    flex:0 0 var(--pv-grid-w, 100%);
+    flex:0 0 var(--pv-box-h, 100%);
     width:var(--pv-grid-w, 100%);
     height:var(--pv-box-h, 100%);
     box-sizing:border-box;
@@ -3720,28 +3720,14 @@ html.is-landscape {
     scroll-snap-align:start;
     scroll-snap-stop:always;
 }
-.panel-view-overlay .pv-box .pv-notif-page{
-    flex:0 0 var(--pv-grid-w, 100%);
-    width:var(--pv-grid-w, 100%);
-    height:var(--pv-box-h, 100%);
-    box-sizing:border-box;
-    display:flex;
-    grid-template-columns:none;
-    align-items:stretch;
-    justify-content:stretch;
-    scroll-snap-align:start;
-    scroll-snap-stop:always;
-    padding:0;
-    margin:0;
-}
 .panel-view-overlay .pv-notif-card{
-    position:relative;
+    position:absolute;
+    top:0;
+    left:0;
     width:100%;
-    height:100%;
+    height:var(--pv-box-h, 100%);
     max-width:100%;
     max-height:100%;
-    grid-column:1 / -1;
-    grid-row:1 / -1;
     box-sizing:border-box;
     display:flex;
     align-items:center;
@@ -3756,6 +3742,16 @@ html.is-landscape {
     font-size:12px;
     text-align:left;
     overflow:hidden;
+    z-index:10;
+    transform:translateX(-105%);
+    transition:transform 0.35s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s ease;
+    opacity:0;
+    pointer-events:none;
+}
+.panel-view-overlay .pv-notif-card.pv-notif-open{
+    transform:translateX(0);
+    opacity:1;
+    pointer-events:auto;
 }
 .panel-view-overlay .pv-notif-card::before{
     content:"";
@@ -3989,23 +3985,23 @@ html.is-landscape {
 .panel-view-overlay .pv-sliders .pdev-range::-webkit-slider-thumb{
     -webkit-appearance:none;
     appearance:none;
-    width:22px;
-    height:22px;
+    width:28px;
+    height:28px;
     border-radius:50%;
-    background:#333333;
-    border:2px solid var(--theme-color-1, #48B2E9);
-    box-shadow:none;
+    background:#22252c;
+    border:2.5px solid var(--theme-color-1, #48B2E9);
+    box-shadow:0 0 10px var(--theme-glow, rgba(72,178,233,0.4));
     cursor:pointer;
     transition:border-color 0.2s, background 0.2s;
 }
 
 .panel-view-overlay .pv-sliders .pdev-range::-moz-range-thumb{
-    width:22px;
-    height:22px;
+    width:28px;
+    height:28px;
     border-radius:50%;
-    background:#333333;
-    border:2px solid var(--theme-color-1, #48B2E9);
-    box-shadow:none;
+    background:#22252c;
+    border:2.5px solid var(--theme-color-1, #48B2E9);
+    box-shadow:0 0 10px var(--theme-glow, rgba(72,178,233,0.4));
     cursor:pointer;
     transition:border-color 0.2s, background 0.2s;
 }
@@ -4091,10 +4087,6 @@ html.is-landscape.is-android{
    scroll containers inside a transformed ancestor (the box lives inside the
    rotated .pv-screen), so it's disabled in landscape in favour of the modern
    native inertial scroll. */
-html.is-landscape .panel-view-overlay .pv-box{
-    touch-action:pan-x pan-y;
-    -webkit-overflow-scrolling:touch;
-}
 html.is-landscape .panel-view-overlay .pv-scroll{
     flex:1 1 auto;
     min-height:0;
@@ -4113,22 +4105,41 @@ html.is-landscape .panel-view-overlay .pv-core{
     flex-shrink:0;
     position:relative;
 }
+html.is-landscape .panel-view-overlay .pv-frame{
+    touch-action:pan-x;
+    overscroll-behavior:contain;
+}
 /* The -90deg rotation maps the track's CSS-right to screen-UP, which would
    stack page 1 at the bottom and overflow ABOVE. Mirror the track horizontally
    (and un-mirror each grid so button content stays readable) so page 1 sits at
    the top and overflow pages stack BELOW — swipe up reveals them. */
+html.is-landscape .panel-view-overlay .pv-box{
+    overflow-x:auto;
+    overflow-y:hidden;
+    scroll-snap-type:x mandatory;
+    touch-action:pan-x;
+    overscroll-behavior:contain;
+    -webkit-overflow-scrolling:touch;
+}
 html.is-landscape .panel-view-overlay .pv-box .pv-track{
+    flex-direction:row;
+    width:max-content;
+    height:100%;
     -webkit-transform:scaleX(-1);
     transform:scaleX(-1);
 }
 html.is-landscape .panel-view-overlay .pv-box .pv-track .pdev-grid{
+    flex:0 0 var(--pv-grid-w, 100%);
+    width:var(--pv-grid-w, 100%);
+    height:var(--pv-box-h, 100%);
     -webkit-transform:scaleX(-1);
     transform:scaleX(-1);
 }
-/* Landscape sliders: match modular grid gap and allow smooth multi-axis touch carousel */
+/* Landscape sliders: touch-action: pan-y allows swiping over the sliders directly without displacement from button box */
+html.is-landscape .panel-view-overlay .pv-side,
 html.is-landscape .panel-view-overlay .pv-sliders{
     gap:var(--pv-gap, 8px);
-    touch-action:pan-x pan-y;
+    touch-action:pan-y;
 }
 
 /* Component contents: rotate 180deg inside the -90deg screen = net +90deg
@@ -4203,11 +4214,12 @@ html.is-landscape .panel-view-overlay .pdev-tile.has-group-bar.has-name-bar .md{
     margin:0;
 }
 
-/* Landscape Notification Card inside track carousel: rotated 90deg to sit upright on screen */
-html.is-landscape .panel-view-overlay .pv-box .pv-notif-page{
-    display:flex;
-    align-items:stretch;
-    justify-content:stretch;
+/* Landscape Notification Card: slides in from screen-left (portrait -Y) to screen-right */
+html.is-landscape .panel-view-overlay .pv-notif-card{
+    transform:translateY(-105%);
+}
+html.is-landscape .panel-view-overlay .pv-notif-card.pv-notif-open{
+    transform:translateY(0);
 }
 html.is-landscape .panel-view-overlay .pv-notif-card .pv-notif-inner,
 html.is-landscape .panel-view-overlay .pv-notif-card .pv-notif-empty{

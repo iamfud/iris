@@ -58,6 +58,11 @@ if __name__ == "__main__":
                 automations.get_engine().load_config(self.cfg)
             except Exception as ex:
                 log.warning("[automations] init error: %s", ex)
+            try:
+                from lighting_service import get_lighting_service
+                get_lighting_service().initialize(self.cfg)
+            except Exception as ex:
+                log.warning("[lighting] init error: %s", ex)
             self.icon = None
             self._online = False
             self._port = None
@@ -136,7 +141,9 @@ if __name__ == "__main__":
             serial_sender.set_live("pc_disp", PC_DISP_STATS if enabled else "0")
             log.info("PC stats pin %s", "ON" if enabled else "OFF")
 
-        def _toggle_overlay(self, enabled: bool):
+        def _toggle_overlay(self, enabled: bool = None):
+            if enabled is None:
+                enabled = (self._overlay is None)
             if enabled:
                 if self._overlay is None:
                     from overlay_window import OverlayWindow
@@ -145,6 +152,7 @@ if __name__ == "__main__":
                         on_close=self._on_overlay_close, style="numline",
                     )
                     log.info("Overlay ON")
+                    self._sync_overlay_tile(True)
             else:
                 if self._overlay is not None:
                     ov = self._overlay

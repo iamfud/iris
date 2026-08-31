@@ -13,8 +13,10 @@
     "outputs": true,
     "live_data": true,
     "actions": true,
-    "diagnostics": false
+    "diagnostics": false,
+    "lighting_provider": true
   },
+  "supports_day_off": true,
   "labels": {
     "status": "CONNECTION",
     "configuration": "HOME ASSISTANT SETTINGS",

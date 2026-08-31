@@ -123,15 +123,22 @@ KEY_MAP = {
     ".": (0x34, False, False), "/": (0x35, False, False),
 
     # Numpad (NumLock ON — same scan codes as navigation, non-extended)
-    "numpad0": (0x52, False, False), "numpad1": (0x4F, False, False),
-    "numpad2": (0x50, False, False), "numpad3": (0x51, False, False),
-    "numpad4": (0x4B, False, False), "numpad5": (0x4C, False, False),
-    "numpad6": (0x4D, False, False), "numpad7": (0x47, False, False),
-    "numpad8": (0x48, False, False), "numpad9": (0x49, False, False),
-    "numpadenter": (0x1C, True, False),
-    "numpadadd": (0x79, False, False), "numpadminus": (0x7B, False, False),
-    "numpadmultiply": (0x37, False, False), "numpaddivide": (0x35, True, False),
-    "numpaddecimal": (0x53, False, False),
+    "numpad0": (0x52, False, False), "num0": (0x52, False, False),
+    "numpad1": (0x4F, False, False), "num1": (0x4F, False, False),
+    "numpad2": (0x50, False, False), "num2": (0x50, False, False),
+    "numpad3": (0x51, False, False), "num3": (0x51, False, False),
+    "numpad4": (0x4B, False, False), "num4": (0x4B, False, False),
+    "numpad5": (0x4C, False, False), "num5": (0x4C, False, False),
+    "numpad6": (0x4D, False, False), "num6": (0x4D, False, False),
+    "numpad7": (0x47, False, False), "num7": (0x47, False, False),
+    "numpad8": (0x48, False, False), "num8": (0x48, False, False),
+    "numpad9": (0x49, False, False), "num9": (0x49, False, False),
+    "numpadenter": (0x1C, True, False), "numenter": (0x1C, True, False),
+    "numpadadd": (0x4E, False, False), "num+": (0x4E, False, False), "numadd": (0x4E, False, False),
+    "numpadminus": (0x4A, False, False), "num-": (0x4A, False, False), "numsubtract": (0x4A, False, False),
+    "numpadmultiply": (0x37, False, False), "num*": (0x37, False, False), "nummult": (0x37, False, False),
+    "numpaddivide": (0x35, True, False), "num/": (0x35, True, False), "numdiv": (0x35, True, False),
+    "numpaddecimal": (0x53, False, False), "num.": (0x53, False, False), "numdec": (0x53, False, False),
 
     # Escape (ONLY when explicitly asked)
     "esc": (0x01, False, False), "escape": (0x01, False, False),
@@ -355,6 +362,24 @@ class KeyboardService:
         modifiers = [s for s in strokes if s[2]]
         primary_keys = [s for s in strokes if not s[2]]
 
+        # Check if any primary key is a numpad digit / decimal that requires NumLock
+        numpad_scancodes = {0x52, 0x4F, 0x50, 0x51, 0x4B, 0x4C, 0x4D, 0x47, 0x48, 0x49, 0x53}
+        needs_numlock = any(sc in numpad_scancodes and not ext for sc, ext, _ in primary_keys)
+        toggled_numlock = False
+
+        if needs_numlock:
+            try:
+                # VK_NUMLOCK = 0x90. Low-order bit indicates toggle state (1 = ON, 0 = OFF)
+                numlock_state = ctypes.windll.user32.GetKeyState(0x90) & 1
+                if not numlock_state:
+                    # Temporarily turn NumLock ON so game receives true numpad number
+                    send_fn(0x45, press=True, is_extended=False, device=device)
+                    send_fn(0x45, press=False, is_extended=False, device=device)
+                    toggled_numlock = True
+                    time.sleep(0.010)
+            except Exception:
+                pass
+
         # Order to press: modifiers first, then primary keys
         press_sequence = modifiers + primary_keys
         pressed_scancodes = []
@@ -382,6 +407,14 @@ class KeyboardService:
                     log.error("[keyboard_service] key release failed for scancode 0x%02X: %s", sc, ex)
                 if len(pressed_scancodes) > 1:
                     time.sleep(0.005)
+
+            if toggled_numlock:
+                try:
+                    # Restore previous NumLock state
+                    send_fn(0x45, press=True, is_extended=False, device=device)
+                    send_fn(0x45, press=False, is_extended=False, device=device)
+                except Exception:
+                    pass
 
     def _send_unicode_char(self, char: str, device: Optional[int] = None):
         """Send one character via SendInput KEYEVENTF_UNICODE (goes to the focused window).

@@ -21,6 +21,30 @@ class Plugin:
     def stop(self):
         self._connector.disconnect()
 
+    def is_connected(self) -> bool:
+        return bool(self._connector and self._connector.available)
+
+    def get_lighting_presets(self) -> list:
+        """Return available HA scripts and scenes as standardized lighting presets."""
+        ents = self.get_entities() or []
+        presets = []
+        for e in ents:
+            dom = e.get("domain", "")
+            if dom in ("script", "scene"):
+                presets.append({
+                    "id": e["entity_id"],
+                    "name": e.get("name") or e["entity_id"]
+                })
+        return presets
+
+    def apply_lighting_preset(self, preset_id: str):
+        """Execute HA script or scene."""
+        if not preset_id:
+            return
+        clean_id = preset_id.replace("ha.", "") if preset_id.startswith("ha.") else preset_id
+        dom = clean_id.split(".")[0] if "." in clean_id else "script"
+        self._connector.call_service(dom, "turn_on", entity_id=clean_id)
+
     def get_entities(self) -> list:
         return self._connector.get_entities()
 

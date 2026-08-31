@@ -563,6 +563,8 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             self._handle_media_players()
         elif self.path.startswith("/api/media/art"):
             self._handle_media_art()
+        elif self.path == "/api/lighting/status":
+            self._handle_lighting_status()
         elif self.path.startswith("/api/dialog/browse"):
             self._handle_dialog_browse()
         elif self.path.startswith("/api/notepad/open"):
@@ -1150,6 +1152,11 @@ class _RequestHandler(SimpleHTTPRequestHandler):
                     except Exception as e:
                         log.warning("[http] failed to reregister hotkeys: %s", e)
             self._push_config_to_device(body)
+            try:
+                from lighting_service import get_lighting_service
+                get_lighting_service().update_config(_app.cfg)
+            except Exception as e:
+                log.warning("[http] lighting config update failed: %s", e)
             broadcast({"type": "config", "config": body})
             if "theme" in body:
                 broadcast({"type": "theme", "theme": body["theme"], "reload": True})
@@ -2437,6 +2444,19 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         _RESOLVE_CACHE["board"] = None
 
         self._send_json({"ok": True, "target_profile": target_name, "profile_id": profile_id, "count": len(slots)})
+
+    def _handle_lighting_status(self):
+        try:
+            from lighting_service import get_lighting_service
+            ls = get_lighting_service()
+            self._send_json({
+                "ok": True,
+                "is_daytime": ls.is_daytime(),
+                "providers": ls.get_providers()
+            })
+        except Exception as e:
+            log.warning("[http] lighting status failed: %s", e)
+            self._send_json({"ok": False, "providers": []})
 
     def _handle_panel_entities(self):
         try:

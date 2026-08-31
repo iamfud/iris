@@ -887,7 +887,19 @@ class MainWindow:
         """Return the list of buttons to render at the current nav level."""
         if not self._btn_nav:
             return self.app.cfg.get("panel_board") or []
-        return (self._btn_nav[-1].get("children") or [])
+        top = self._btn_nav[-1]
+        # 1. Inline children (if present)
+        kids = top.get("children")
+        if kids:
+            return kids
+        # 2. Target profile board lookup (by profile_id or target_profile name/id)
+        prof_id = top.get("profile_id") or top.get("target_profile")
+        if prof_id:
+            profiles = self.app.cfg.get("panel_profiles") or []
+            for p in profiles:
+                if isinstance(p, dict) and (p.get("id") == prof_id or p.get("name") == prof_id):
+                    return p.get("board") or []
+        return []
 
     def _render_buttons(self):
         for w in self._btn_inner.winfo_children():

@@ -21,6 +21,23 @@ class Plugin:
     def stop(self):
         self._connector.disconnect()
 
+    def is_connected(self) -> bool:
+        return bool(self._connector and self._connector.available)
+
+    def get_lighting_presets(self) -> list:
+        """Return available OpenRGB profiles as standardized lighting presets."""
+        profs = self._connector.get_options("openrgb_profiles") or []
+        return [{"id": p, "name": p} for p in profs]
+
+    def apply_lighting_preset(self, preset_id: str):
+        """Apply OpenRGB profile or color."""
+        if not preset_id:
+            return
+        if preset_id.startswith("#"):
+            self._connector._set_color(preset_id)
+        else:
+            self._connector._apply_profile(preset_id)
+
     def on_tap(self, control_id, value=None):
         self._connector.handle(control_id, value)
         return True

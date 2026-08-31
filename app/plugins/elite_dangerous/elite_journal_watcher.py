@@ -18,6 +18,7 @@ JOURNALS_DIR = os.path.join(
     "Saved Games", "Frontier Developments", "Elite Dangerous")
 
 STATUS_PATH = os.path.join(JOURNALS_DIR, "Status.json")
+NAVROUTE_PATH = os.path.join(JOURNALS_DIR, "NavRoute.json")
 
 _STATUS_FLAGS = {
     0x00000001: "docked",
@@ -213,6 +214,18 @@ class EliteJournalWatcher:
         return _latest_journal()
 
     @staticmethod
+    def read_navroute():
+        """Read and parse NavRoute.json. Returns list of route dicts or None."""
+        if not os.path.isfile(NAVROUTE_PATH):
+            return None
+        try:
+            with open(NAVROUTE_PATH, "r", encoding="utf-8", errors="replace") as f:
+                data = json.load(f)
+            return data.get("Route") if isinstance(data, dict) else None
+        except Exception:
+            return None
+
+    @staticmethod
     def read_status():
         """Read and parse Status.json.  Returns flag/telemetry dict or None."""
         if not os.path.isfile(STATUS_PATH):
@@ -253,6 +266,17 @@ class EliteJournalWatcher:
             self.on_status = on_status
         if self._running:
             return
+        
+        # Fast-forward to end of current journal so startup does not replay historical events
+        newest = _latest_journal()
+        if newest and os.path.isfile(newest):
+            with self._lock:
+                self._current_file = newest
+                try:
+                    self._current_offset = os.path.getsize(newest)
+                except Exception:
+                    self._current_offset = 0
+
         self._running = True
         self._journal_thread = threading.Thread(
             target=self._journal_loop, daemon=True, name="ed-journal")
@@ -275,6 +299,7 @@ class EliteJournalWatcher:
             time.sleep(1.0)
 
     def _status_loop(self):
+        last_navroute_mtime = 0.0
         while self._running:
             try:
                 if os.path.isfile(STATUS_PATH):
@@ -283,6 +308,18 @@ class EliteJournalWatcher:
                     flags = _parse_status_flags(data)
                     if self.on_status:
                         self.on_status(flags)
+            except Exception:
+                pass
+
+            try:
+                if os.path.isfile(NAVROUTE_PATH):
+                    mtime = os.path.getmtime(NAVROUTE_PATH)
+                    if mtime != last_navroute_mtime:
+                        last_navroute_mtime = mtime
+                        with open(NAVROUTE_PATH, "r", encoding="utf-8", errors="replace") as f:
+                            route_data = json.load(f)
+                        if isinstance(route_data, dict) and self.on_event:
+                            self.on_event(route_data)
             except Exception:
                 pass
             time.sleep(0.5)

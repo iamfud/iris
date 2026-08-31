@@ -1201,10 +1201,36 @@ class SettingsRenderer {
     html += '</div>';
     html += '</div>';
 
+    // Ambient Lighting Environment Card
+    var lightingCfg = config.ambient_lighting || { sync_theme: true, follow_daylight: true };
+    var syncTheme = lightingCfg.sync_theme !== false;
+    var followDaylight = lightingCfg.follow_daylight !== false;
+
+    html += '<div class="theme-preview-box" id="ambient-lighting-box" style="margin-top:16px;">';
+    html += '<div class="theme-preview-header" style="display:flex;align-items:center;justify-content:space-between;">';
+    html += '<span class="theme-preview-title" style="display:flex;align-items:center;gap:6px;"><span class="material-icons-outlined" style="font-size:18px;color:var(--neon-text);">lightbulb</span> Ambient Lighting & Environment</span>';
+    html += '<div id="ambient-provider-badges" style="display:flex;gap:6px;"></div>';
+    html += '</div>';
+
+    html += '<div id="ambient-lighting-content" style="padding-top:8px;">';
+    html += '<div class="settings-toggle-row" style="margin-bottom:8px;">';
+    html += '<span class="settings-toggle-label">Sync Lights to Theme Color</span>';
+    html += '<div class="settings-toggle' + (syncTheme ? ' on' : '') + '" id="ambient-sync-theme-tog"><div class="settings-toggle-thumb"></div></div>';
+    html += '</div>';
+    html += '<span class="settings-hint" style="margin-top:-4px;margin-bottom:10px;display:block;">Automatically derives the highest luminance colour from your active theme for PC LEDs and room lighting.</span>';
+
+    html += '<div class="settings-toggle-row" style="margin-bottom:8px;">';
+    html += '<span class="settings-toggle-label">Observe Daylight Cycle</span>';
+    html += '<div class="settings-toggle' + (followDaylight ? ' on' : '') + '" id="ambient-daylight-tog"><div class="settings-toggle-thumb"></div></div>';
+    html += '</div>';
+    html += '<span class="settings-hint" style="margin-top:-4px;display:block;">During daylight hours (07:30–19:30), ceiling and room lights turn OFF while OpenRGB PC lights remain illuminated in theme colour.</span>';
+    html += '</div>';
+    html += '</div>';
+
     // Apply Button
-    html += '<div style="display:flex; justify-content:flex-end; gap:8px; margin-top:6px;">';
+    html += '<div style="display:flex; justify-content:flex-end; gap:8px; margin-top:12px;">';
     html += '<button type="button" class="settings-btn primary" id="theme-apply-btn" style="min-width:140px; padding:10px 20px;">';
-    html += '<span class="material-icons-outlined" style="font-size:18px;">palette</span> Apply Theme';
+    html += '<span class="material-icons-outlined" style="font-size:18px;">palette</span> Apply Theme & Lighting';
     html += '</button>';
     html += '</div>';
 
@@ -2444,6 +2470,59 @@ class SettingsRenderer {
       });
     }
 
+    // Ambient Lighting Toggles & Badges
+    var ambientBadges = container.querySelector("#ambient-provider-badges");
+    var ambientContent = container.querySelector("#ambient-lighting-content");
+    var syncTog = container.querySelector("#ambient-sync-theme-tog");
+    var dayTog = container.querySelector("#ambient-daylight-tog");
+
+    var lightingConfig = config.ambient_lighting || { sync_theme: true, follow_daylight: true };
+
+    if (syncTog) {
+      syncTog.addEventListener("click", function () {
+        var on = this.classList.toggle("on");
+        lightingConfig.sync_theme = on;
+        config.ambient_lighting = lightingConfig;
+        saveCallback({ ambient_lighting: lightingConfig });
+      });
+    }
+
+    if (dayTog) {
+      dayTog.addEventListener("click", function () {
+        var on = this.classList.toggle("on");
+        lightingConfig.follow_daylight = on;
+        config.ambient_lighting = lightingConfig;
+        saveCallback({ ambient_lighting: lightingConfig });
+      });
+    }
+
+    // Dynamic Progressive Disclosure: query /api/lighting/status
+    apiFetch((self._apiBase || "") + "/api/lighting/status")
+      .then(function (res) { return res.ok ? res.json() : { providers: [] }; })
+      .then(function (data) {
+        var providers = data.providers || [];
+        var connected = providers.filter(function (p) { return p.connected; });
+
+        if (ambientBadges) {
+          if (connected.length > 0) {
+            ambientBadges.innerHTML = connected.map(function (p) {
+              return '<span class="auto-badge auto-badge-trigger" style="background:rgba(46,204,113,0.15);color:var(--neon-grn);border:1px solid rgba(46,204,113,0.3);font-size:10px;">● ' + self._esc(p.name) + '</span>';
+            }).join("");
+          } else if (providers.length > 0) {
+            ambientBadges.innerHTML = '<span class="auto-badge" style="background:rgba(255,200,0,0.1);color:#ffcc00;font-size:10px;">Waiting for connection</span>';
+          } else {
+            ambientBadges.innerHTML = '<span class="auto-badge" style="font-size:10px;">No lighting plugins</span>';
+          }
+        }
+
+        if (ambientContent && providers.length === 0) {
+          ambientContent.innerHTML = '<div style="padding:8px 0;font-size:12px;color:var(--fg-dim);">' +
+            'No lighting plugins installed. Install <strong>OpenRGB</strong> for PC LEDs or <strong>Home Assistant</strong> for smart ceiling/room lights in <a href="#" onclick="if(window.navigateToPage)window.navigateToPage(\'plugins\');return false;" style="color:var(--neon-text);text-decoration:underline;">Plugins</a>.' +
+            '</div>';
+        }
+      })
+      .catch(function () {});
+
     var applyBtn = container.querySelector("#theme-apply-btn");
     if (applyBtn) {
       applyBtn.addEventListener("click", function () {
@@ -2453,12 +2532,13 @@ class SettingsRenderer {
           neon: currentNeon
         };
         config.theme = themeObj;
+        config.ambient_lighting = lightingConfig;
         if (typeof window.applyTheme === "function") {
           window.applyTheme(themeObj);
         }
         var saveTimer = self._saveTimers["theme"];
         if (saveTimer) clearTimeout(saveTimer);
-        saveCallback({ theme: themeObj });
+        saveCallback({ theme: themeObj, ambient_lighting: lightingConfig });
         apiFetch(self._apiBase + "/api/portal/reload", { method: "POST" }).catch(function () {});
         var origHtml = applyBtn.innerHTML;
         applyBtn.innerHTML = '<span class="material-icons-outlined" style="font-size:18px;">check</span> Applied & Synced!';

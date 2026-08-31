@@ -144,6 +144,11 @@ class EDConnector:
         events = EliteJournalWatcher.read_tail(journal, _INIT_TAIL_BYTES)
         EliteParser.apply_many(events, new_state, new_status)
 
+        # Load initial NavRoute from disk if present
+        route_now = EliteJournalWatcher.read_navroute()
+        if route_now:
+            EliteParser.apply({"event": "NavRoute", "Route": route_now}, new_state, new_status)
+
         status_now = EliteJournalWatcher.read_status()
         if status_now is not None:
             new_status.update(status_now)

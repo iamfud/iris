@@ -93,6 +93,10 @@ LAYOUT = [
         {"key": "last_scan", "label": "Last Scanned Body", "type": "string", "source": "state"},
         {"key": "scan_distance", "label": "Scan Distance", "type": "string", "source": "state"},
         {"key": "system_scan_pct", "label": "System Scan Progress", "type": "percentage", "source": "state"},
+        {"key": "jumps_remaining", "label": "Jumps to Target", "type": "number", "source": "state"},
+        {"key": "route_destination", "label": "Route Destination", "type": "string", "source": "state"},
+        {"key": "next_system", "label": "Next Waypoint System", "type": "string", "source": "state"},
+        {"key": "next_star_class", "label": "Next Star Class", "type": "string", "source": "state"},
     ]},
     {"title": "Operations, Powerplay & Carrier", "fields": [
         {"key": "mission", "label": "Active Mission", "type": "string", "source": "state"},
@@ -468,35 +472,47 @@ class Plugin:
 
     def _show_system_hero(self, state):
         """Render a hero overlay and send the system to the hardware display."""
-        if not self.overlays:
+        if not self.overlays and not self._serial:
             return
         system = state.get("system", "")
         if not system:
             return
 
         population = state.get("population", "Unknown")
+        jumps = state.get("jumps_remaining")
+        dest = state.get("route_destination")
+
         fields = [
             ("Economy", state.get("economy", "Unknown")),
-            ("Government", state.get("government", "Unknown")),
             ("Security", state.get("security", "Unknown")),
             ("Allegiance", state.get("allegiance", "Unknown")),
         ]
 
-        self.overlays.hero(
-            title=system,
-            subtitle=f"Population: {population}",
-            fields=fields,
-            duration=6,
-        )
+        if jumps is not None and jumps > 0 and dest:
+            fields.insert(0, ("Route", f"{jumps} jumps to {dest}"))
+            sub = f"{jumps} jumps to {dest}"
+        elif jumps == 0 and dest:
+            fields.insert(0, ("Route", "Destination Reached"))
+            sub = f"Destination Reached"
+        else:
+            sub = f"Population: {population}"
+
+        if self.overlays:
+            self.overlays.hero(
+                title=system,
+                subtitle=sub,
+                fields=fields,
+                duration=6,
+            )
 
         if self._serial:
             self._serial.notify(
                 "ed.system",
                 system,
-                f"Population: {population}",
+                sub,
             )
 
-        log.info("[ed] system arrival: %s", system)
+        log.info("[ed] system arrival: %s (%s)", system, sub)
 
     def _watch_ship_state(self):
         """Push gear/hardpoints/cargo-hatch transitions and the fuel

@@ -403,56 +403,10 @@
       // The grid button order is baked in at render time, so a landscape flip
       // must rebuild the panel (boardPagesHtml reads is-landscape live).
       if (isLand !== prevLand) {
-        // Remember which page number is on screen, then scroll back to that
-        // same page after the rebuild. IMPORTANT: the track mirror in
-        // landscape REVERSES the scroll<->page mapping — a page's snap offset
-        // is x in portrait but W-x-width in landscape — so both the selection
-        // and the target must use the orientation that matches the DOM being
-        // measured (old DOM -> prevLand, new DOM -> isLand). All computed
-        // targets land exactly on a real scroll-snap point, so snap won't
-        // fight them.
-        const box = ov ? ov.querySelector(".pv-box") : null;
-        if (box) {
-          const track = box.querySelector(".pv-track");
-          const W = track ? track.offsetWidth : 0;
-          const oldLand = prevLand;
-          let curPage = 0;
-          let best = Infinity;
-          box.querySelectorAll(".pdev-grid").forEach((g) => {
-            // offsetParent differs by orientation: the track transform in
-            // landscape makes it the grids' offsetParent, so grid.offsetLeft is
-            // already track-relative there; in portrait it is offsetParent-
-            // relative and needs the track's own offset subtracted.
-            const x = track ? (oldLand ? g.offsetLeft : (g.offsetLeft - track.offsetLeft)) : 0;
-            const expected = oldLand ? (W - x - g.offsetWidth) : x;
-            const d = Math.abs(expected - box.scrollLeft);
-            if (d < best) {
-              best = d;
-              curPage = parseInt(g.getAttribute("data-page") || "0", 10) || 0;
-            }
-          });
-          pendingPanelPage = curPage;
-        }
+        const pageToRestore = activeBoxPage || 1;
+        pendingPanelPage = pageToRestore;
         renderPanelView();
-        // Apply the target page NOW, synchronously, to BOTH the DOM scroll and
-        // the remembered boxScrollLeft so no later restore can clobber it.
-        if (pendingPanelPage !== null) {
-          const pbox = ov ? ov.querySelector(".pv-box") : null;
-          if (pbox) {
-            const g = pbox.querySelector('.pdev-grid[data-page="' + pendingPanelPage + '"]');
-            if (g) {
-              const track = pbox.querySelector(".pv-track");
-              const W = track ? track.offsetWidth : 0;
-              const x = track ? (isLand ? g.offsetLeft : (g.offsetLeft - track.offsetLeft)) : 0;
-              const pb = pbox.style.scrollBehavior;
-              pbox.style.scrollBehavior = "auto";
-              boxScrollLeft = isLand ? (W - x - g.offsetWidth) : x;
-              pbox.scrollLeft = boxScrollLeft;
-              pbox.style.scrollBehavior = pb;
-            }
-          }
-          pendingPanelPage = null;
-        }
+        restoreBoxScroll(pageToRestore);
       }
     }
   }
@@ -619,6 +573,7 @@
     let sx = 0, sy = 0, tracking = false, gesture = null;
 
     document.addEventListener("touchstart", (e) => {
+      if (panelViewMode) { tracking = false; return; }
       const t = e.touches[0];
       sx = t.clientX;
       sy = t.clientY;
@@ -824,44 +779,49 @@
   // ── Page rendering ──────────────────────────────────────────
 
   function renderPage() {
-    if ((IS_MOBILE && !IS_APP) && (currentPage === "vision" || (currentPage === "panel" && !panelViewMode))) {
-      portalAutoPanel = true;
-      fetchPanel();
-      openPanelView();
-      return;
-    }
-    const sc = main.querySelector('.settings-content') || main.querySelector('.content') || main;
-    const prevScroll = sc ? sc.scrollTop : 0;
-    if (currentPage === "dashboard") {
-      renderDashboard();
-    } else if (currentPage === "alarms") {
-      alarms = featureConfig.alarms || [];
-      renderAlarms();
-    } else if (currentPage === "notifications") {
-      renderNotifications();
-    } else if (currentPage === "library") {
-      renderLibrary();
-    } else if (currentPage === "plugins") {
-      if (selectedPlugin) {
-        renderPluginSettings(selectedPlugin);
-      } else {
-        renderPlugins();
+    try {
+      if ((IS_MOBILE && !IS_APP) && (currentPage === "vision" || (currentPage === "panel" && !panelViewMode))) {
+        portalAutoPanel = true;
+        fetchPanel();
+        openPanelView();
+        return;
       }
-    } else if (settingsRenderer && settingsRenderer.getPage(currentPage)) {
-      renderDeclarativePage(currentPage);
-    } else if (currentPage === "features") {
-      renderFeatures();
-    } else if (currentPage === "vision") {
-      renderVision();
-    } else if (currentPage === "automations") {
-      renderAutomations();
-    } else if (currentPage === "panel") {
-      renderPanel();
-    } else {
-      renderPlaceholder();
+      const sc = main.querySelector('.settings-content') || main.querySelector('.content') || main;
+      const prevScroll = sc ? sc.scrollTop : 0;
+      if (currentPage === "dashboard") {
+        renderDashboard();
+      } else if (currentPage === "alarms") {
+        alarms = featureConfig.alarms || [];
+        renderAlarms();
+      } else if (currentPage === "notifications") {
+        renderNotifications();
+      } else if (currentPage === "library") {
+        renderLibrary();
+      } else if (currentPage === "plugins") {
+        if (selectedPlugin) {
+          renderPluginSettings(selectedPlugin);
+        } else {
+          renderPlugins();
+        }
+      } else if (settingsRenderer && settingsRenderer.getPage(currentPage)) {
+        renderDeclarativePage(currentPage);
+      } else if (currentPage === "features") {
+        renderFeatures();
+      } else if (currentPage === "vision") {
+        renderVision();
+      } else if (currentPage === "automations") {
+        renderAutomations();
+      } else if (currentPage === "panel") {
+        renderPanel();
+      } else {
+        renderPlaceholder();
+      }
+      const newSc = main.querySelector('.settings-content') || main.querySelector('.content') || main;
+      if (newSc && prevScroll) newSc.scrollTop = prevScroll;
+    } catch (err) {
+      console.error("[Iris] renderPage error:", err);
+      try { renderPlaceholder(); } catch (_) {}
     }
-    const newSc = main.querySelector('.settings-content') || main.querySelector('.content') || main;
-    if (newSc && prevScroll) newSc.scrollTop = prevScroll;
   }
 
   // ── Declarative page rendering ────────────────────────────────
@@ -939,6 +899,7 @@
           window.applyTheme(featureConfig.theme);
         }
         if (currentPage === "features" || currentPage === "alarms" || currentPage === "settings" || (currentPage === "plugins" && selectedPlugin)) renderPage();
+        setTimeout(checkLightingWizard, 1200);
       }
     } catch (_) {}
     _fetchConfigBusy = false;
@@ -1829,21 +1790,21 @@
     backdrop.className = "panel-modal-backdrop";
     backdrop.id = "auto-modal-backdrop";
     backdrop.innerHTML = `
-      <div class="panel-modal panel-modal-wide" id="auto-modal">
+      <div class="panel-modal panel-modal-wide" id="auto-modal" style="max-width:920px">
         <div class="panel-modal-header">
           <h3>${existing ? "Edit Automation" : "New Automation"}</h3>
-          <span class="panel-modal-subtitle">Configure trigger condition, target application, duration, and multi-action pipeline</span>
+          <span class="panel-modal-subtitle">Configure trigger entity, linked process, and conditional inline action pipeline</span>
         </div>
 
         <div class="panel-modal-body-grid">
           <div class="panel-modal-col">
             <div class="settings-control">
               <label class="settings-label">Automation Name</label>
-              <input type="text" class="settings-input" id="m-name" value="${esc(draft.name || "")}" placeholder="e.g. Critical Alert / Auto Trigger">
+              <input type="text" class="settings-input" id="m-name" value="${esc(draft.name || "")}" placeholder="e.g. Shields State Monitor">
             </div>
 
             <div class="settings-control">
-              <label class="settings-label">Trigger Entity / State</label>
+              <label class="settings-label">Trigger Entity / State Source</label>
               <div class="settings-picker-row" style="gap:6px;margin-bottom:6px">
                 <select class="settings-select" id="m-trig-plugin" style="width:140px;flex:0 0 auto">
                   ${autoPluginOptionsHtml}
@@ -1851,24 +1812,6 @@
                 <input type="text" class="settings-input" id="m-trig-search" placeholder="Search trigger entities..." style="flex:1">
               </div>
               <select class="settings-select" id="m-key" style="width:100%"></select>
-            </div>
-
-            <div class="settings-picker-row" style="gap:8px">
-              <div class="settings-control" style="flex:1">
-                <label class="settings-label">Condition</label>
-                <select class="settings-select" id="m-op" style="width:100%">
-                  <option value="==" ${draft.operator === "==" ? "selected" : ""}>Equals (==)</option>
-                  <option value="!=" ${draft.operator === "!=" ? "selected" : ""}>Not Equals (!=)</option>
-                  <option value="<" ${draft.operator === "<" ? "selected" : ""}>Less Than (<)</option>
-                  <option value="<=" ${draft.operator === "<=" ? "selected" : ""}>Less or Equal (<=)</option>
-                  <option value=">" ${draft.operator === ">" ? "selected" : ""}>Greater Than (>)</option>
-                  <option value=">=" ${draft.operator === ">=" ? "selected" : ""}>Greater or Equal (>=)</option>
-                </select>
-              </div>
-              <div class="settings-control" style="flex:1">
-                <label class="settings-label">Target Value</label>
-                <input type="text" class="settings-input" id="m-val" value="${esc(String(draft.target_value !== undefined ? draft.target_value : ""))}" placeholder="e.g. true, 30">
-              </div>
             </div>
           </div>
 
@@ -1892,27 +1835,33 @@
               </div>
             </div>
 
-            <div class="settings-picker-row" style="gap:8px">
-              <div class="settings-control" style="flex:1">
-                <label class="settings-label">Cooldown (s)</label>
-                <input type="number" class="settings-input" id="m-cooldown" value="${draft.cooldown_s || 10}" min="1" max="3600">
-              </div>
-              <div class="settings-control" style="flex:1">
-                <label class="settings-label">Duration (s, 0=Stay)</label>
-                <input type="number" class="settings-input" id="m-duration" value="${draft.duration_s !== undefined ? draft.duration_s : 5}" min="0" max="3600" title="Revert to previous lighting/state after this duration (0 = stay changed)">
-              </div>
+            <div class="settings-control">
+              <label class="settings-label">Cooldown between state changes (s)</label>
+              <input type="number" class="settings-input" id="m-cooldown" value="${draft.cooldown_s || 2}" min="1" max="3600">
             </div>
           </div>
         </div>
 
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;border-top:1px solid rgba(255,255,255,0.06);padding-top:10px">
-          <span class="settings-label" style="color:var(--neon-text)">Action Pipeline</span>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;border-top:1px solid rgba(255,255,255,0.06);padding-top:12px">
+          <div>
+            <span class="settings-label" style="color:var(--neon-text);font-size:13px;font-weight:600">Action Pipeline</span>
+            <span style="font-size:11px;color:var(--fg-dim);display:block">Define conditions, actions, and optional pulse durations per row</span>
+          </div>
           <button type="button" class="settings-btn" id="m-add-action-btn">
             <span class="material-icons-outlined" style="font-size:16px">add</span> Add Action
           </button>
         </div>
 
-        <div id="m-actions-list" style="display:flex;flex-direction:column;gap:8px">
+        <!-- Table Header Row -->
+        <div style="display:grid;grid-template-columns: 220px 170px 200px 70px 32px;gap:8px;padding:6px 10px;font-size:11px;font-weight:600;color:var(--fg-dim);text-transform:uppercase;letter-spacing:0.5px;margin-top:8px">
+          <div>When State is</div>
+          <div>Action Type</div>
+          <div>Target / Value</div>
+          <div style="text-align:center">Duration</div>
+          <div></div>
+        </div>
+
+        <div id="m-actions-table" style="display:flex;flex-direction:column;gap:6px">
         </div>
 
         <div class="panel-modal-actions">
@@ -1924,14 +1873,38 @@
 
     document.body.appendChild(backdrop);
 
-    const actionsListEl = backdrop.querySelector("#m-actions-list");
-    let currentActions = JSON.parse(JSON.stringify(draft.actions || []));
+    // Flatten actions from draft or default
+    let currentActions = [];
+    if (draft.actions && Array.isArray(draft.actions) && draft.actions.length > 0) {
+      currentActions = JSON.parse(JSON.stringify(draft.actions));
+    } else if (draft.branches && Array.isArray(draft.branches) && draft.branches.length > 0) {
+      draft.branches.forEach(b => {
+        const cond = b.condition || {};
+        (b.actions || []).forEach(a => {
+          const actCopy = JSON.parse(JSON.stringify(a));
+          actCopy.operator = cond.operator || "==";
+          actCopy.target_value = cond.target_value;
+          actCopy.duration_s = b.duration_s || 0;
+          currentActions.push(actCopy);
+        });
+      });
+    } else {
+      currentActions = [
+        { operator: "==", target_value: false, duration_s: 0, type: "openrgb", profile: "Red" }
+      ];
+    }
+
+    const actionsTable = backdrop.querySelector("#m-actions-table");
+    const trigPluginSel = backdrop.querySelector("#m-trig-plugin");
+    const trigSearchInput = backdrop.querySelector("#m-trig-search");
+    const triggerKeySel = backdrop.querySelector("#m-key");
 
     function getSourceForAction(act) {
       if (act.type === "hotkey") return "core_hotkey";
       if (act.type === "sound") return "core_sound";
       if (act.type === "notification") return "core_notif";
       if (act.type === "openrgb" || (act.slot && (act.slot.plugin === "openrgb" || act.slot.openrgb_profile))) return "plugin_openrgb";
+      if (act.type === "home_assistant" || act.type === "ha" || (act.slot && act.slot.plugin === "ha")) return "plugin_ha";
       if (act.slot) {
         if (act.slot.plugin) return `plugin_${act.slot.plugin}`;
         if (act.slot.entity && act.slot.entity.startsWith("media.")) return "core_media";
@@ -1940,188 +1913,220 @@
       return "core_hotkey";
     }
 
-    function renderActionsList() {
+    function renderActionsTable() {
+      const trigKey = triggerKeySel.value || draft.trigger_key;
+      const ent = (panelEntities || []).find(e => (e.id === trigKey || e.state_key === trigKey));
+      const hasLabels = ent && ent.labels && (ent.labels.on || ent.labels.off);
+      const onLabel = hasLabels ? (ent.labels.on || "ON") : "Active / True";
+      const offLabel = hasLabels ? (ent.labels.off || "OFF") : "Inactive / False";
+
       if (currentActions.length === 0) {
-        actionsListEl.innerHTML = `<div style="font-size:12px;color:var(--fg-dim);padding:8px 0;text-align:center">No actions configured yet. Click "+ Add Action".</div>`;
+        actionsTable.innerHTML = `<div style="font-size:12px;color:var(--fg-dim);padding:14px;text-align:center;background:var(--bg-card);border:1px dashed var(--border);border-radius:var(--radius-small)">No actions in pipeline. Click "+ Add Action" above.</div>`;
         return;
       }
 
-      actionsListEl.innerHTML = currentActions.map((act, idx) => {
+      actionsTable.innerHTML = currentActions.map((act, aIdx) => {
+        const curOp = act.operator || (act.condition && act.condition.operator) || "==";
+        const curVal = (act.target_value !== undefined) ? act.target_value : (act.condition ? act.condition.target_value : false);
+        const dur = act.duration_s || 0;
         const currentSrc = getSourceForAction(act);
-        let detailHtml = "";
 
-        if (currentSrc === "core_hotkey") {
-          detailHtml = `
-            <input type="text" class="settings-input act-hotkey-val" data-idx="${idx}" value="${esc(act.hotkey || "")}" placeholder="Key / Keystroke (e.g. 7, F13, Ctrl+Alt+1)" style="flex:1">
+        // 1. Condition controls
+        let valInputHtml = "";
+        if (hasLabels || ent?.type === "status" || typeof curVal === "boolean") {
+          const isOff = (curVal === false || String(curVal).toLowerCase() === "false" || String(curVal).toUpperCase() === offLabel.toUpperCase());
+          valInputHtml = `
+            <select class="settings-select row-val-sel" data-aidx="${aIdx}" style="flex:1;min-width:0">
+              <option value="false" ${isOff ? "selected" : ""}>${esc(offLabel)} (Down)</option>
+              <option value="true" ${!isOff ? "selected" : ""}>${esc(onLabel)} (Online)</option>
+            </select>
           `;
+        } else {
+          valInputHtml = `
+            <input type="text" class="settings-input row-val-input" data-aidx="${aIdx}" value="${esc(String(curVal !== undefined ? curVal : ""))}" placeholder="Target value" style="flex:1;min-width:0">
+          `;
+        }
+
+        // 2. Action value controls (Fixed 200px width with ellipsis)
+        let detailHtml = "";
+        if (currentSrc === "core_hotkey") {
+          detailHtml = `<input type="text" class="settings-input row-act-val" data-aidx="${aIdx}" value="${esc(act.hotkey || "")}" placeholder="Key (e.g. 7, F13)" style="width:200px">`;
         } else if (currentSrc === "core_sound") {
           detailHtml = `
-            <select class="settings-select act-sound-val" data-idx="${idx}" style="flex:1">
+            <select class="settings-select row-act-val" data-aidx="${aIdx}" style="width:200px">
               <option value="chime" ${act.sound === "chime" ? "selected" : ""}>Chime</option>
               <option value="alarm_fast" ${act.sound === "alarm_fast" ? "selected" : ""}>Fast Alarm</option>
               <option value="remind" ${act.sound === "remind" ? "selected" : ""}>Remind</option>
             </select>
           `;
         } else if (currentSrc === "core_notif") {
+          detailHtml = `<input type="text" class="settings-input row-act-val" data-aidx="${aIdx}" value="${esc(act.message || "")}" placeholder="Toast message on screen" style="width:200px">`;
+        } else if (currentSrc === "plugin_openrgb") {
+          const openrgbEntities = (panelEntities || []).filter(e => e.plugin === "openrgb" || (e.id && e.id.startsWith("openrgb.")));
+          const curProf = act.profile || (act.slot && act.slot.openrgb_profile) || "inherit";
           detailHtml = `
-            <input type="text" class="settings-input act-notif-val" data-idx="${idx}" value="${esc(act.message || "")}" placeholder="Toast message on screen" style="flex:1">
-          `;
-        } else if (currentSrc === "core_media") {
-          const mediaEntities = (panelEntities || []).filter(e => e.id && e.id.startsWith("media."));
-          const curEnt = (act.slot && act.slot.entity) || (mediaEntities[0] ? mediaEntities[0].id : "media.play_pause");
-          detailHtml = `
-            <select class="settings-select act-entity-val" data-idx="${idx}" style="flex:1">
-              ${mediaEntities.map(e => `<option value="${esc(e.id)}" ${curEnt === e.id ? "selected" : ""}>${esc(e.name || e.id)}</option>`).join("")}
+            <select class="settings-select row-act-val" data-aidx="${aIdx}" style="width:200px" title="${esc(curProf)}">
+              <option value="inherit" ${curProf === "inherit" ? "selected" : ""}>⟲ Revert to Profile</option>
+              ${openrgbEntities.filter(e => e.openrgb_profile || e.name).map(e => {
+                const pName = e.openrgb_profile || e.name;
+                return `<option value="${esc(pName)}" title="${esc(pName)}" ${curProf === pName ? "selected" : ""}>Profile: ${esc(pName)}</option>`;
+              }).join("")}
             </select>
           `;
-        } else if (currentSrc === "core_system") {
-          const sysEntities = (panelEntities || []).filter(e => e.id && e.id.startsWith("system."));
-          const curEnt = (act.slot && act.slot.entity) || (sysEntities[0] ? sysEntities[0].id : "system.screenshot");
+        } else if (currentSrc === "plugin_ha") {
+          const haEntities = (panelEntities || []).filter(e => e.plugin === "ha" || (e.id && e.id.startsWith("ha.")));
+          const curScript = act.entity || act.script || (act.slot && (act.slot.entity || act.slot.button_id)) || "inherit";
           detailHtml = `
-            <select class="settings-select act-entity-val" data-idx="${idx}" style="flex:1">
-              ${sysEntities.map(e => `<option value="${esc(e.id)}" ${curEnt === e.id ? "selected" : ""}>${esc(e.name || e.id)}</option>`).join("")}
+            <select class="settings-select row-act-val" data-aidx="${aIdx}" style="width:200px" title="${esc(curScript)}">
+              <option value="inherit" ${curScript === "inherit" ? "selected" : ""}>⟲ Revert to Profile</option>
+              ${haEntities.map(e => {
+                const label = e.name || e.id;
+                return `<option value="${esc(e.id)}" title="${esc(label)} (${esc(e.id)})" ${curScript === e.id ? "selected" : ""}>${esc(label)}</option>`;
+              }).join("")}
             </select>
           `;
-        } else if (currentSrc.startsWith("plugin_")) {
+        } else {
           const pName = currentSrc.replace("plugin_", "");
           const pEntities = (panelEntities || []).filter(e => e.plugin === pName || (e.id && e.id.startsWith(pName + ".")));
-
-          if (pName === "openrgb") {
-            const curProf = act.profile || (act.slot && act.slot.openrgb_profile) || "";
-            detailHtml = `
-              <select class="settings-select act-openrgb-val" data-idx="${idx}" style="flex:1">
-                ${pEntities.filter(e => e.openrgb_profile || e.name).map(e => {
-                  const pName = e.openrgb_profile || e.name;
-                  return `<option value="${esc(pName)}" ${curProf === pName ? "selected" : ""}>Profile: ${esc(pName)}</option>`;
-                }).join("")}
-                ${pEntities.length === 0 ? `<option value="Default">Default Profile</option>` : ""}
-              </select>
-            `;
-          } else {
-            const curEnt = (act.slot && (act.slot.entity || act.slot.button_id)) || (pEntities[0] ? pEntities[0].id : "");
-            detailHtml = `
-              <select class="settings-select act-entity-val" data-idx="${idx}" style="flex:1">
-                ${pEntities.map(e => `<option value="${esc(e.id)}" ${curEnt === e.id ? "selected" : ""}>${esc(e.name || e.id)}</option>`).join("")}
-                ${pEntities.length === 0 ? `<option value="">(No triggerable actions)</option>` : ""}
-              </select>
-            `;
-          }
+          const curEnt = (act.slot && (act.slot.entity || act.slot.button_id)) || (pEntities[0] ? pEntities[0].id : "");
+          detailHtml = `
+            <select class="settings-select row-act-val" data-aidx="${aIdx}" style="width:200px" title="${esc(curEnt)}">
+              ${pEntities.map(e => {
+                const label = e.name || e.id;
+                return `<option value="${esc(e.id)}" title="${esc(label)} (${esc(e.id)})" ${curEnt === e.id ? "selected" : ""}>${esc(label)}</option>`;
+              }).join("")}
+            </select>
+          `;
         }
 
         return `
-          <div class="settings-picker-row" style="gap:8px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-small);padding:6px 10px">
-            <select class="settings-select act-src-sel" data-idx="${idx}" style="width:190px;flex:0 0 auto">
-              ${actionCategories.map(c => `<option value="${esc(c.id)}" ${currentSrc === c.id ? "selected" : ""}>${esc(c.label)}</option>`).join("")}
-            </select>
-            ${detailHtml}
-            <button type="button" class="settings-btn settings-btn-danger settings-btn-mini auto-action-del-btn" data-idx="${idx}" title="Remove action">✕</button>
+          <div style="display:grid;grid-template-columns: 220px 170px 200px 70px 32px;gap:8px;align-items:center;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-small);padding:6px 10px">
+            <!-- 1. Condition Column -->
+            <div style="display:flex;align-items:center;gap:6px;min-width:0">
+              <select class="settings-select row-op-sel" data-aidx="${aIdx}" style="width:65px;flex:0 0 auto">
+                <option value="==" ${curOp === "==" ? "selected" : ""}>==</option>
+                <option value="!=" ${curOp === "!=" ? "selected" : ""}>!=</option>
+                <option value="<" ${curOp === "<" ? "selected" : ""}>&lt;</option>
+                <option value=">" ${curOp === ">" ? "selected" : ""}>&gt;</option>
+              </select>
+              ${valInputHtml}
+            </div>
+
+            <!-- 2. Action Category Column -->
+            <div style="min-width:0">
+              <select class="settings-select row-src-sel" data-aidx="${aIdx}" style="width:100%">
+                ${actionCategories.map(c => `<option value="${esc(c.id)}" ${currentSrc === c.id ? "selected" : ""}>${esc(c.label)}</option>`).join("")}
+              </select>
+            </div>
+
+            <!-- 3. Target / Value Column -->
+            <div style="display:flex;align-items:center;width:200px;overflow:hidden">
+              ${detailHtml}
+            </div>
+
+            <!-- 4. Duration Column -->
+            <div style="display:flex;align-items:center;justify-content:center" title="Duration in seconds (0 = Stay until state changes)">
+              <input type="number" class="settings-input row-dur-input" data-aidx="${aIdx}" value="${dur}" min="0" max="3600" style="width:100%;padding:4px 6px;text-align:center" placeholder="0">
+            </div>
+
+            <!-- 5. Delete Column -->
+            <div style="display:flex;justify-content:center">
+              <button type="button" class="settings-btn settings-btn-danger settings-btn-mini row-del-btn" data-aidx="${aIdx}" title="Remove action" style="padding:4px 8px">✕</button>
+            </div>
           </div>
         `;
       }).join("");
 
-      // Wire source selector changes
-      actionsListEl.querySelectorAll(".act-src-sel").forEach(sel => {
+      // Wire row inputs
+      actionsTable.querySelectorAll(".row-op-sel").forEach(sel => {
         sel.onchange = (e) => {
-          const idx = parseInt(e.target.getAttribute("data-idx"), 10);
+          const aIdx = parseInt(e.target.getAttribute("data-aidx"), 10);
+          currentActions[aIdx].operator = e.target.value;
+        };
+      });
+
+      actionsTable.querySelectorAll(".row-val-sel, .row-val-input").forEach(inp => {
+        inp.onchange = (e) => {
+          const aIdx = parseInt(e.target.getAttribute("data-aidx"), 10);
+          const v = e.target.value;
+          currentActions[aIdx].target_value = (v === "true") ? true : (v === "false" ? false : (!isNaN(Number(v)) && v !== "" ? Number(v) : v));
+        };
+      });
+
+      actionsTable.querySelectorAll(".row-dur-input").forEach(inp => {
+        inp.oninput = (e) => {
+          const aIdx = parseInt(e.target.getAttribute("data-aidx"), 10);
+          currentActions[aIdx].duration_s = Number(e.target.value) || 0;
+        };
+      });
+
+      actionsTable.querySelectorAll(".row-del-btn").forEach(btn => {
+        btn.onclick = () => {
+          const aIdx = parseInt(btn.getAttribute("data-aidx"), 10);
+          currentActions.splice(aIdx, 1);
+          renderActionsTable();
+        };
+      });
+
+      actionsTable.querySelectorAll(".row-src-sel").forEach(sel => {
+        sel.onchange = (e) => {
+          const aIdx = parseInt(e.target.getAttribute("data-aidx"), 10);
           const src = e.target.value;
-          if (src === "core_hotkey") {
-            currentActions[idx] = { type: "hotkey", hotkey: "7" };
-          } else if (src === "core_sound") {
-            currentActions[idx] = { type: "sound", sound: "chime" };
-          } else if (src === "core_notif") {
-            currentActions[idx] = { type: "notification", message: "Triggered" };
-          } else if (src === "core_media") {
-            currentActions[idx] = { type: "slot", slot: { type: "action", entity: "media.play_pause", plugin: "media", button_id: "play_pause" } };
-          } else if (src === "core_system") {
-            currentActions[idx] = { type: "slot", slot: { type: "action", entity: "system.screenshot", plugin: "system", button_id: "screenshot" } };
-          } else if (src === "plugin_openrgb") {
-            currentActions[idx] = { type: "openrgb", profile: "Default" };
-          } else if (src.startsWith("plugin_")) {
+          const oldOp = currentActions[aIdx].operator || "==";
+          const oldVal = currentActions[aIdx].target_value;
+          const oldDur = currentActions[aIdx].duration_s || 0;
+
+          if (src === "core_hotkey") currentActions[aIdx] = { operator: oldOp, target_value: oldVal, duration_s: oldDur, type: "hotkey", hotkey: "7" };
+          else if (src === "core_sound") currentActions[aIdx] = { operator: oldOp, target_value: oldVal, duration_s: oldDur, type: "sound", sound: "alarm_fast" };
+          else if (src === "core_notif") currentActions[aIdx] = { operator: oldOp, target_value: oldVal, duration_s: oldDur, type: "notification", message: "Triggered" };
+          else if (src === "plugin_openrgb") currentActions[aIdx] = { operator: oldOp, target_value: oldVal, duration_s: oldDur, type: "openrgb", profile: "inherit" };
+          else if (src === "plugin_ha") currentActions[aIdx] = { operator: oldOp, target_value: oldVal, duration_s: oldDur, type: "home_assistant", entity: "inherit" };
+          else if (src.startsWith("plugin_")) {
             const pName = src.replace("plugin_", "");
-            const pEntities = (panelEntities || []).filter(e => e.plugin === pName || (e.id && e.id.startsWith(pName + ".")));
+            const pEntities = (panelEntities || []).filter(x => x.plugin === pName || (x.id && x.id.startsWith(pName + ".")));
             const firstEnt = pEntities[0];
-            currentActions[idx] = {
+            currentActions[aIdx] = {
+              operator: oldOp, target_value: oldVal, duration_s: oldDur,
               type: "slot",
-              slot: {
-                type: "action",
-                entity: firstEnt ? firstEnt.id : pName,
-                plugin: pName,
-                button_id: firstEnt ? (firstEnt.button_id || firstEnt.id.split(".")[1] || "") : ""
-              }
+              slot: { type: "action", entity: firstEnt ? firstEnt.id : pName, plugin: pName, button_id: firstEnt ? (firstEnt.button_id || firstEnt.id.split(".")[1] || "") : "" }
             };
           }
-          renderActionsList();
+          renderActionsTable();
         };
       });
 
-      // Wire input updates
-      actionsListEl.querySelectorAll(".act-hotkey-val").forEach(inp => {
-        inp.oninput = (e) => {
-          const idx = parseInt(e.target.getAttribute("data-idx"), 10);
-          currentActions[idx].hotkey = e.target.value;
-        };
-      });
-
-      actionsListEl.querySelectorAll(".act-sound-val").forEach(sel => {
-        sel.onchange = (e) => {
-          const idx = parseInt(e.target.getAttribute("data-idx"), 10);
-          currentActions[idx].sound = e.target.value;
-        };
-      });
-
-      actionsListEl.querySelectorAll(".act-notif-val").forEach(inp => {
-        inp.oninput = (e) => {
-          const idx = parseInt(e.target.getAttribute("data-idx"), 10);
-          currentActions[idx].message = e.target.value;
-        };
-      });
-
-      actionsListEl.querySelectorAll(".act-openrgb-val").forEach(sel => {
-        sel.onchange = (e) => {
-          const idx = parseInt(e.target.getAttribute("data-idx"), 10);
-          currentActions[idx].profile = e.target.value;
-        };
-      });
-
-      actionsListEl.querySelectorAll(".act-entity-val").forEach(sel => {
-        sel.onchange = (e) => {
-          const idx = parseInt(e.target.getAttribute("data-idx"), 10);
-          const entId = e.target.value;
-          const entObj = (panelEntities || []).find(x => x.id === entId);
-          currentActions[idx] = {
-            type: "slot",
-            slot: {
-              type: entObj ? (entObj.type || "action") : "action",
-              entity: entId,
-              plugin: entObj ? entObj.plugin : (entId.split(".")[0] || ""),
-              button_id: entObj ? (entObj.button_id || entId.split(".")[1] || "") : (entId.split(".")[1] || "")
-            }
-          };
-        };
-      });
-
-      actionsListEl.querySelectorAll(".auto-action-del-btn").forEach(btn => {
-        btn.onclick = (e) => {
-          const idx = parseInt(btn.getAttribute("data-idx"), 10);
-          currentActions.splice(idx, 1);
-          renderActionsList();
+      actionsTable.querySelectorAll(".row-act-val").forEach(inp => {
+        inp.onchange = (e) => {
+          const aIdx = parseInt(inp.getAttribute("data-aidx"), 10);
+          const act = currentActions[aIdx];
+          const val = inp.value;
+          if (act.type === "hotkey") act.hotkey = val;
+          else if (act.type === "sound") act.sound = val;
+          else if (act.type === "notification") act.message = val;
+          else if (act.type === "openrgb") act.profile = val;
+          else if (act.type === "home_assistant" || act.type === "ha") act.entity = val;
+          else if (act.type === "slot" || act.slot) {
+            const entObj = (panelEntities || []).find(x => x.id === val);
+            currentActions[aIdx] = {
+              operator: act.operator, target_value: act.target_value, duration_s: act.duration_s,
+              type: "slot",
+              slot: { type: entObj ? (entObj.type || "action") : "action", entity: val, plugin: entObj ? entObj.plugin : (val.split(".")[0] || ""), button_id: entObj ? (entObj.button_id || val.split(".")[1] || "") : "" }
+            };
+          }
         };
       });
     }
 
-    renderActionsList();
-
     backdrop.querySelector("#m-add-action-btn").onclick = () => {
-      currentActions.push({ type: "hotkey", hotkey: "" });
-      renderActionsList();
+      currentActions.push({
+        operator: "==",
+        target_value: false,
+        duration_s: 0,
+        type: "openrgb",
+        profile: "Red"
+      });
+      renderActionsTable();
     };
-
-    // ── 2-Stage Filterable & Searchable Trigger Entity Picker ──
-    const trigPluginSel = backdrop.querySelector("#m-trig-plugin");
-    const trigSearchInput = backdrop.querySelector("#m-trig-search");
-    const triggerKeySel = backdrop.querySelector("#m-key");
-    const opSel = backdrop.querySelector("#m-op");
-    const valContainer = backdrop.querySelector("#m-val").parentElement;
 
     function renderTriggerEntityOptions(targetKey) {
       const curPlg = trigPluginSel.value || "all";
@@ -2143,19 +2148,18 @@
       filtered.forEach(ent => {
         const val = ent.id || ent.state_key || "";
         const sel = (targetKey && (targetKey === val || targetKey === ent.id)) ? "selected" : "";
-        const dType = ent.data_type || (ent.type === "data" ? "number" : (ent.type === "status" ? "boolean" : "string"));
         const rawDType = ent.raw_data_type || ent.type || "state";
-        h += `<option value="${esc(val)}" data-type="${esc(dType)}" data-raw="${esc(rawDType)}" ${sel}>${esc(ent.name || val)} (${esc(rawDType)})</option>`;
+        h += `<option value="${esc(val)}" ${sel}>${esc(ent.name || val)} (${esc(rawDType)})</option>`;
       });
 
       triggerKeySel.innerHTML = h;
-      updateValueControl();
+      renderActionsTable();
     }
 
     trigPluginSel.onchange = () => renderTriggerEntityOptions();
     trigSearchInput.oninput = () => renderTriggerEntityOptions();
+    triggerKeySel.onchange = () => renderActionsTable();
 
-    // Auto-select initial plugin if trigger_key exists
     if (draft.trigger_key) {
       const matchEnt = (panelEntities || []).find(e => (e.id === draft.trigger_key || e.state_key === draft.trigger_key));
       if (matchEnt && matchEnt.plugin) {
@@ -2164,82 +2168,6 @@
     }
     renderTriggerEntityOptions(draft.trigger_key);
 
-    function updateValueControl(initialVal) {
-      const selectedOpt = triggerKeySel.options[triggerKeySel.selectedIndex];
-      const trigKey = triggerKeySel.value;
-      const dType = selectedOpt ? (selectedOpt.getAttribute("data-type") || "string") : "string";
-      const curOp = opSel.value || "==";
-      const ent = (panelEntities || []).find(e => (e.id === trigKey || e.state_key === trigKey));
-
-      let valToSet = (initialVal !== undefined) ? initialVal : "";
-
-      if (ent && ent.labels && (ent.labels.on || ent.labels.off)) {
-        // Render discrete dropdown of declared states (e.g. ONLINE / DOWN, DEPLOYED / RETRACTED)
-        const onLabel = ent.labels.on || "ON";
-        const offLabel = ent.labels.off || "OFF";
-        
-        let onSel = (valToSet === true || String(valToSet).toUpperCase() === onLabel.toUpperCase()) ? "selected" : "";
-        let offSel = (valToSet === false || String(valToSet).toUpperCase() === offLabel.toUpperCase()) ? "selected" : "";
-        if (!onSel && !offSel) offSel = "selected"; // default to off/alert state
-
-        opSel.innerHTML = `
-          <option value="==" ${curOp === "==" ? "selected" : ""}>Is (==)</option>
-          <option value="!=" ${curOp === "!=" ? "selected" : ""}>Is Not (!=)</option>
-        `;
-
-        valContainer.innerHTML = `
-          <label class="settings-label">Target State</label>
-          <select class="settings-select" id="m-val" style="width:100%">
-            <option value="false" ${offSel}>${esc(offLabel)} (Off / Inactive)</option>
-            <option value="true" ${onSel}>${esc(onLabel)} (On / Active)</option>
-          </select>
-        `;
-      } else if (dType === "boolean") {
-        let onSel = (valToSet === true || String(valToSet).toLowerCase() === "true") ? "selected" : "";
-        let offSel = (valToSet === false || String(valToSet).toLowerCase() === "false") ? "selected" : "";
-        if (!onSel && !offSel) onSel = "selected";
-
-        opSel.innerHTML = `
-          <option value="==" ${curOp === "==" ? "selected" : ""}>Is (==)</option>
-          <option value="!=" ${curOp === "!=" ? "selected" : ""}>Is Not (!=)</option>
-        `;
-
-        valContainer.innerHTML = `
-          <label class="settings-label">Target State</label>
-          <select class="settings-select" id="m-val" style="width:100%">
-            <option value="true" ${onSel}>True / Active</option>
-            <option value="false" ${offSel}>False / Inactive</option>
-          </select>
-        `;
-      } else if (dType === "number") {
-        opSel.innerHTML = `
-          <option value="==" ${curOp === "==" ? "selected" : ""}>Equals (==)</option>
-          <option value="!=" ${curOp === "!=" ? "selected" : ""}>Not Equals (!=)</option>
-          <option value="<" ${curOp === "<" ? "selected" : ""}>Less Than (<)</option>
-          <option value="<=" ${curOp === "<=" ? "selected" : ""}>Less or Equal (<=)</option>
-          <option value=">" ${curOp === ">" ? "selected" : ""}>Greater Than (>)</option>
-          <option value=">=" ${curOp === ">=" ? "selected" : ""}>Greater or Equal (>=)</option>
-        `;
-        valContainer.innerHTML = `
-          <label class="settings-label">Target Value ${ent && ent.unit ? '(' + esc(ent.unit) + ')' : ''}</label>
-          <input type="number" step="any" class="settings-input" id="m-val" value="${esc(String(valToSet))}" placeholder="e.g. 30, 90">
-        `;
-      } else {
-        opSel.innerHTML = `
-          <option value="==" ${curOp === "==" ? "selected" : ""}>Equals (==)</option>
-          <option value="!=" ${curOp === "!=" ? "selected" : ""}>Not Equals (!=)</option>
-        `;
-        valContainer.innerHTML = `
-          <label class="settings-label">Target Value</label>
-          <input type="text" class="settings-input" id="m-val" value="${esc(String(valToSet))}" placeholder="e.g. Value or state name">
-        `;
-      }
-    }
-
-    triggerKeySel.onchange = () => updateValueControl();
-    updateValueControl(draft.target_value);
-
-    // Profile change auto-fills EXE
     const profileSel = backdrop.querySelector("#m-profile");
     const exeInput = backdrop.querySelector("#m-exe");
     profileSel.onchange = () => {
@@ -2248,15 +2176,12 @@
       if (pExe) exeInput.value = pExe;
     };
 
-    // Browse EXE dialog
     backdrop.querySelector("#m-browse-exe").onclick = async () => {
       try {
         const res = await apiFetch(`${API_BASE}/api/dialog/browse?type=exe`);
         if (res.ok) {
           const data = await res.json();
-          if (data && data.path) {
-            exeInput.value = data.path;
-          }
+          if (data && data.path) exeInput.value = data.path;
         }
       } catch (_) {}
     };
@@ -2269,16 +2194,8 @@
       const name = backdrop.querySelector("#m-name").value.trim() || "Automation";
       const profId = backdrop.querySelector("#m-profile").value.trim();
       const exe = exeInput.value.trim();
-      const trigKey = backdrop.querySelector("#m-key").value.trim();
-      const op = backdrop.querySelector("#m-op").value;
-      let rawVal = backdrop.querySelector("#m-val").value.trim();
-      let tgtVal = rawVal;
-      if (rawVal === "false") tgtVal = false;
-      else if (rawVal === "true") tgtVal = true;
-      else if (!isNaN(Number(rawVal)) && rawVal !== "") tgtVal = Number(rawVal);
-
-      const cooldown = Number(backdrop.querySelector("#m-cooldown").value) || 10;
-      const duration = Number(backdrop.querySelector("#m-duration").value) || 0;
+      const trigKey = triggerKeySel.value.trim();
+      const cooldown = Number(backdrop.querySelector("#m-cooldown").value) || 2;
 
       const payload = {
         id: draft.id || undefined,
@@ -2287,11 +2204,8 @@
         profile_id: profId,
         exe: exe,
         trigger_key: trigKey,
-        operator: op,
-        target_value: tgtVal,
         require_foreground: !!exe,
         cooldown_s: cooldown,
-        duration_s: duration,
         actions: currentActions,
       };
 
@@ -4725,11 +4639,11 @@
 
   function profileSelectHtml() {
     const list = (panelDraft && panelDraft.panel_profiles) || [];
-    const hasProfile = panelProfileSel !== "__default__" &&
+    const isCustom = panelProfileSel !== "__default__" &&
       !!list.find((x) => x.id === panelProfileSel);
     let h = '<div class="panel-profile-row">' +
       '<select class="settings-select" id="panel-profile-sel">' +
-      '<option value="__default__">Default</option>';
+      '<option value="__default__"' + (panelProfileSel === "__default__" ? " selected" : "") + '>Default Profile</option>';
     list.forEach((p) => {
       h += '<option value="' + esc(p.id) + '"' + (panelProfileSel === p.id ? " selected" : "") + '>' +
         esc(p.name || p.id) + '</option>';
@@ -4737,29 +4651,132 @@
     h += '</select>' +
       '<button type="button" class="settings-btn" id="panel-profile-create" title="Create new profile">+ New</button>' +
       '<button type="button" class="settings-btn" id="panel-profile-clone" title="Duplicate current profile">Clone</button>' +
-      '<button type="button" class="settings-btn" id="panel-profile-edit"' + (hasProfile ? "" : " disabled") + ' title="Profile settings">Settings</button>' +
-      '<button type="button" class="settings-btn settings-btn-danger" id="panel-profile-quick-del"' + (hasProfile ? "" : " disabled") + ' title="Delete profile">Delete</button>' +
+      '<button type="button" class="settings-btn" id="panel-profile-edit" title="Profile & Lighting settings">Settings</button>' +
+      '<button type="button" class="settings-btn settings-btn-danger" id="panel-profile-quick-del"' + (isCustom ? "" : " disabled") + ' title="Delete profile">Delete</button>' +
       '</div>';
     return h;
   }
 
+  let lightingProvidersData = [];
+
+  async function fetchLightingStatus() {
+    try {
+      const res = await apiFetch(`${API_BASE}/api/lighting/status`);
+      if (res.ok) {
+        const data = await res.json();
+        lightingProvidersData = data.providers || [];
+      }
+    } catch (_) {}
+  }
+
   function renderProfileModal() {
-    const p = panelProfileCurrent().profile;
+    const isDef = (panelProfileSel === "__default__");
+    let p = panelProfileCurrent().profile;
+    if (isDef) {
+      const list = (panelDraft && panelDraft.panel_profiles) || [];
+      p = list.find((x) => x.id === "__default__") || { id: "__default__", name: "Default Profile", enabled: true, is_group: true };
+    }
     if (!p) return "";
     const on = p.enabled !== false;
-    const isGrp = p.is_group === true || (!p.exe && p.exe !== undefined);
+    const isGrp = isDef ? true : (p.is_group === true || (!p.exe && p.exe !== undefined));
+    const pLighting = p.lighting || {};
+
+    let lightingRowsHtml = "";
+    if (lightingProvidersData.length > 0) {
+      lightingProvidersData.forEach((prov) => {
+        const pid = prov.id;
+        const pName = prov.name || pid;
+        const conf = pLighting[pid] || {};
+        const presets = prov.presets || [];
+        const isConnected = prov.connected;
+        const statusBadge = isConnected
+          ? '<span style="color:var(--neon-grn);font-size:11px;font-weight:600;">● Active</span>'
+          : '<span style="color:var(--fg-dim);font-size:11px;">(Offline)</span>';
+
+        if (prov.supports_day_off) {
+          // Provider with Day / Night support (e.g. Home Assistant)
+          const followDay = conf.follow_daylight !== false;
+          const curDayPreset = conf.day_preset || "";
+          const curNightPreset = conf.night_preset || conf.preset || "";
+
+          lightingRowsHtml += '<div style="background:rgba(255,255,255,0.02);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:10px;">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">' +
+              '<span class="settings-label" style="margin:0;font-weight:700;">' + esc(pName) + '</span>' +
+              statusBadge +
+            '</div>';
+
+          if (!isDef) {
+            lightingRowsHtml += '<div class="settings-control" style="margin-bottom:6px;">' +
+              '<label class="settings-label" style="font-size:11px;">Active Preset</label>' +
+              '<select class="settings-select prof-light-sel" data-prov="' + esc(pid) + '" data-field="preset">' +
+                '<option value="inherit"' + (!conf.preset || conf.preset === "inherit" ? " selected" : "") + '>Inherit Default Baseline</option>';
+            presets.forEach((pr) => {
+              lightingRowsHtml += '<option value="' + esc(pr.id) + '"' + (conf.preset === pr.id ? " selected" : "") + '>' + esc(pr.name || pr.id) + '</option>';
+            });
+            lightingRowsHtml += '</select></div>';
+          } else {
+            lightingRowsHtml += '<div class="settings-toggle-row" style="margin-bottom:8px;">' +
+              '<span class="settings-toggle-label" style="font-size:12px;">Observe Daylight Cycle</span>' +
+              '<div class="settings-toggle prof-light-day-tog' + (followDay ? ' on' : '') + '" data-prov="' + esc(pid) + '"><div class="settings-toggle-thumb"></div></div>' +
+            '</div>' +
+            '<div class="settings-control" style="margin-bottom:6px;">' +
+              '<label class="settings-label" style="font-size:11px;">Daytime Preset (07:30–19:30)</label>' +
+              '<select class="settings-select prof-light-sel" data-prov="' + esc(pid) + '" data-field="day_preset">' +
+                '<option value="">(None / No Action)</option>';
+            presets.forEach((pr) => {
+              lightingRowsHtml += '<option value="' + esc(pr.id) + '"' + (curDayPreset === pr.id ? " selected" : "") + '>' + esc(pr.name || pr.id) + '</option>';
+            });
+            lightingRowsHtml += '</select></div>' +
+            '<div class="settings-control">' +
+              '<label class="settings-label" style="font-size:11px;">Nighttime Preset (19:30–07:30)</label>' +
+              '<select class="settings-select prof-light-sel" data-prov="' + esc(pid) + '" data-field="night_preset">' +
+                '<option value="">(None / No Action)</option>';
+            presets.forEach((pr) => {
+              lightingRowsHtml += '<option value="' + esc(pr.id) + '"' + (curNightPreset === pr.id ? " selected" : "") + '>' + esc(pr.name || pr.id) + '</option>';
+            });
+            lightingRowsHtml += '</select></div>';
+          }
+          lightingRowsHtml += '</div>';
+        } else {
+          // Standard Provider (e.g. OpenRGB)
+          const curPreset = conf.preset || "";
+          lightingRowsHtml += '<div style="background:rgba(255,255,255,0.02);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:10px;">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">' +
+              '<span class="settings-label" style="margin:0;font-weight:700;">' + esc(pName) + '</span>' +
+              statusBadge +
+            '</div>' +
+            '<div class="settings-control">' +
+              '<select class="settings-select prof-light-sel" data-prov="' + esc(pid) + '" data-field="preset">';
+          if (!isDef) {
+            lightingRowsHtml += '<option value="inherit"' + (!curPreset || curPreset === "inherit" ? " selected" : "") + '>Inherit Default Baseline</option>';
+          } else {
+            lightingRowsHtml += '<option value="">(None / No Action)</option>';
+          }
+          presets.forEach((pr) => {
+            lightingRowsHtml += '<option value="' + esc(pr.id) + '"' + (curPreset === pr.id ? " selected" : "") + '>' + esc(pr.name || pr.id) + '</option>';
+          });
+          lightingRowsHtml += '</select></div></div>';
+        }
+      });
+    } else {
+      lightingRowsHtml = '<div style="font-size:12px;color:var(--fg-dim);padding:6px 0;">No lighting plugins active. Install OpenRGB or Home Assistant in Plugins.</div>';
+    }
+
     return '<div class="panel-modal-backdrop" id="panel-profile-modal">' +
-      '<div class="panel-modal">' +
-      '<h3>Profile settings</h3>' +
-      '<div class="settings-control"><label class="settings-label">Profile name</label>' +
+      '<div class="panel-modal" style="max-width:540px;">' +
+      '<div class="panel-modal-header">' +
+        '<h3>' + (isDef ? 'Default Profile & Lighting' : 'Profile Settings') + '</h3>' +
+        '<span class="panel-modal-subtitle">' + (isDef ? 'Configure base ambient lighting and device defaults' : 'Configure focus switching and profile ambient overrides') + '</span>' +
+      '</div>' +
+      (!isDef ? ('<div class="settings-control"><label class="settings-label">Profile name</label>' +
       '<input type="text" class="settings-input" id="profile-name" value="' + esc(p.name || "") + '"></div>' +
       '<div class="settings-toggle-row" id="profile-group-row">' +
         '<span class="settings-toggle-label">Group Profile (No linked app)</span>' +
         '<div class="settings-toggle' + (isGrp ? " on" : "") + '" id="profile-group-tog"><div class="settings-toggle-thumb"></div></div>' +
       '</div>' +
-      '<span class="settings-hint" style="margin-top:-4px; margin-bottom:6px;">Group profiles are activated by a panel button. App profiles are triggered when the specified app is loaded.</span>' +
+      '<span class="settings-hint" style="margin-top:-4px; margin-bottom:6px;">Group profiles are activated by a panel button. App profiles switch on focus.</span>' +
       '<div class="settings-control" id="profile-exe-wrap">' +
-        '<label class="settings-toggle-label" style="display:block; margin-bottom:6px;">App Profile (EXECUTABLE)</label>' +
+        '<label class="settings-toggle-label" style="display:block; margin-bottom:6px;">App Executable</label>' +
         '<div class="settings-picker-row">' +
           '<input type="text" class="settings-input" id="profile-exe" placeholder="e.g. EliteDangerous64.exe" value="' + esc(p.exe || "") + '"' + (isGrp ? " disabled" : "") + '>' +
           '<button type="button" class="settings-btn" id="profile-pick"' + (isGrp ? " disabled" : "") + '>Pick\u2026</button>' +
@@ -4769,12 +4786,16 @@
         '<span class="settings-toggle-label">Auto Switch on Focus</span>' +
         '<div class="settings-toggle' + (on ? " on" : "") + '" id="profile-tog"><div class="settings-toggle-thumb"></div></div>' +
       '</div>' +
-      '<span class="settings-hint" style="margin-top:-4px; margin-bottom:6px;">Automatically switches to this panel profile when the specified app gains focus.</span>' +
+      '<span class="settings-hint" style="margin-top:-4px; margin-bottom:6px;">Automatically switches to this profile when the application gains focus (with built-in anti-spam cooldown).</span>') : '') +
+      '<div class="settings-control" style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px;">' +
+        '<label class="settings-label" style="display:block;margin-bottom:8px;font-size:12px;font-weight:700;color:var(--neon-text);">Ambient Lighting Presets</label>' +
+        lightingRowsHtml +
+      '</div>' +
       '<div class="panel-modal-actions">' +
-      '<button type="button" class="settings-btn settings-btn-danger" id="profile-delete">Delete</button>' +
+      (!isDef ? '<button type="button" class="settings-btn settings-btn-danger" id="profile-delete">Delete</button>' : '') +
       '<div style="flex:1"></div>' +
       '<button type="button" class="settings-btn" id="profile-cancel">Cancel</button>' +
-      '<button type="button" class="settings-btn settings-btn-primary" id="profile-save">Save</button>' +
+      '<button type="button" class="settings-btn settings-btn-primary" id="profile-save">Save Settings</button>' +
       '</div>' +
       '</div></div>';
   }
@@ -4978,7 +4999,7 @@
     if (boxOn) {
       frameHtml += '<div class="prev-box" id="prev-box-wheel" title="Scroll mousewheel over widgets to switch pages">' +
         '<div class="prev-track" style="' + trackTransform + '">' +
-          boardPagesHtml(curBoard, null, null, true) +
+          boardPagesHtml(curBoard, null) +
         '</div>' +
       '</div>';
     }
@@ -5299,6 +5320,18 @@
     const entOptHtml = buildEntityOptions(curType, curEntity);
 
     // Group entities by plugin / domain for 2-step plugin + searchable entity picker in button modal
+    let curEntityPlugin = "all";
+    if (curEntity) {
+      const matchEnt = (panelEntities || []).find((e) => e.id === curEntity || e.state_key === curEntity);
+      if (matchEnt && matchEnt.plugin) {
+        curEntityPlugin = matchEnt.plugin;
+      } else if (slot.plugin) {
+        curEntityPlugin = slot.plugin;
+      } else if (curEntity.includes(".")) {
+        curEntityPlugin = curEntity.split(".")[0];
+      }
+    }
+
     const buttonPluginGroups = { "all": "All Sources" };
     (panelEntities || []).forEach((ent) => {
       const plg = ent.plugin || (ent.id && ent.id.includes(".") ? ent.id.split(".")[0] : "core");
@@ -5306,7 +5339,7 @@
       if (!buttonPluginGroups[plg]) buttonPluginGroups[plg] = dName;
     });
 
-    let buttonPluginOptionsHtml = Object.keys(buttonPluginGroups).map((k) => '<option value="' + esc(k) + '">' + esc(buttonPluginGroups[k]) + '</option>').join("");
+    let buttonPluginOptionsHtml = Object.keys(buttonPluginGroups).map((k) => '<option value="' + esc(k) + '"' + (k === curEntityPlugin ? ' selected' : '') + '>' + esc(buttonPluginGroups[k]) + '</option>').join("");
 
     let h = '<div class="panel-modal-backdrop" id="panel-modal">' +
       '<div class="panel-modal panel-modal-wide">' +
@@ -5383,22 +5416,10 @@
           '</div>' +
 
           '<div class="settings-control" id="pe-keys-wrap"' + (showKeys ? "" : ' style="display:none"') + '>' +
-            '<div style="display:flex;align-items:center;gap:6px">' +
-              '<label class="settings-label" style="margin:0">Hotkey (Trigger Keystroke)</label>' +
-              '<span class="pe-hotkey-help" title="Type or press Capture to record.\n\nSupported keys:\nDigits: 0-9\nLetters: A-Z\nF-keys: F1-F24\nNumpad: Num0-Num9, NumEnter, Num+, Num-, Num*, Num/\nModifiers: Ctrl, Alt, Shift\nOther: Space, Enter, Tab, Esc, Backspace\nNav: Up, Down, Left, Right, Home, End, PgUp, PgDn, Ins, Del\nCombos: Ctrl+1, Alt+F5, Ctrl+Alt+Numpad0\n\nSentences (type text): wrap in quotes.\ne.g. enter &quot;Hello World&quot; enter\npresses Enter, types Hello World, presses Enter.\n\nBackspace clears the field.">?</span>' +
-            '</div>' +
+            '<label class="settings-label">Hotkey (Trigger Keystroke)</label>' +
             '<div class="pe-hotkey-input-row">' +
-              '<input type="text" class="settings-input pe-hotkey-input" id="pe-keys" value="' + esc(curHotkey) + '" placeholder="Space, Enter, F13, Ctrl+1, Enter &quot;Hello World&quot; Enter...">' +
+              '<input type="text" class="settings-input pe-hotkey-input" id="pe-keys" value="' + esc(curHotkey) + '" placeholder="Space, Enter, F13, Ctrl+1...">' +
               '<button type="button" class="settings-btn pe-hotkey-capture-btn" id="pe-hotkey-capture-btn" title="Press a key combo to record it">Capture</button>' +
-            '</div>' +
-            '<div class="pe-key-chips" style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">' +
-              '<button type="button" class="settings-btn-mini pe-chip" data-k="1">1</button>' +
-              '<button type="button" class="settings-btn-mini pe-chip" data-k="Space">Space</button>' +
-              '<button type="button" class="settings-btn-mini pe-chip" data-k="Enter">Enter</button>' +
-              '<button type="button" class="settings-btn-mini pe-chip" data-k="F13">F13</button>' +
-              '<button type="button" class="settings-btn-mini pe-chip" data-k="Ctrl+1">Ctrl+1</button>' +
-              '<button type="button" class="settings-btn-mini pe-chip" data-k="Numpad1">Num1</button>' +
-              '<button type="button" class="settings-btn-mini pe-chip" data-k="Ctrl+Space">Ctrl+Space</button>' +
             '</div>' +
           '</div>' +
         '</div>' +
@@ -5953,11 +5974,11 @@
     const profEdit = document.getElementById("panel-profile-edit");
     if (profEdit) {
       profEdit.addEventListener("click", () => {
-        if (panelProfileSel === "__default__") return;
-        if (!panelProfileCurrent().profile) return;
-        panelEdit = null;
-        panelProfileModal = true;
-        renderPanel();
+        fetchLightingStatus().then(() => {
+          panelEdit = null;
+          panelProfileModal = true;
+          renderPanel();
+        });
       });
     }
 
@@ -5996,16 +6017,50 @@
         renderPanel();
       });
     }
+
+    // Toggle daylight switches in profile modal
+    document.querySelectorAll(".prof-light-day-tog").forEach((tog) => {
+      tog.addEventListener("click", () => tog.classList.toggle("on"));
+    });
+
     const profSave = document.getElementById("profile-save");
     if (profSave) {
       profSave.addEventListener("click", () => {
-        const p = panelProfileCurrent().profile;
+        const isDef = (panelProfileSel === "__default__");
+        if (!panelDraft.panel_profiles) panelDraft.panel_profiles = [];
+        let p = isDef
+          ? panelDraft.panel_profiles.find((x) => x.id === "__default__")
+          : panelProfileCurrent().profile;
+
+        if (isDef && !p) {
+          p = { id: "__default__", name: "Default Profile", enabled: true, is_group: true, board: [] };
+          panelDraft.panel_profiles.push(p);
+        }
         if (!p) return;
-        const isGrp = document.getElementById("profile-group-tog").classList.contains("on");
-        p.name = document.getElementById("profile-name").value.trim();
-        p.is_group = isGrp;
-        p.exe = isGrp ? "" : document.getElementById("profile-exe").value.trim();
-        p.enabled = isGrp ? true : document.getElementById("profile-tog").classList.contains("on");
+
+        if (!isDef) {
+          const isGrp = document.getElementById("profile-group-tog").classList.contains("on");
+          p.name = document.getElementById("profile-name").value.trim();
+          p.is_group = isGrp;
+          p.exe = isGrp ? "" : document.getElementById("profile-exe").value.trim();
+          p.enabled = isGrp ? true : document.getElementById("profile-tog").classList.contains("on");
+        }
+
+        // Collect generic provider lighting settings
+        const lightingMap = {};
+        document.querySelectorAll(".prof-light-sel").forEach((sel) => {
+          const provId = sel.dataset.prov;
+          const field = sel.dataset.field || "preset";
+          if (!lightingMap[provId]) lightingMap[provId] = {};
+          lightingMap[provId][field] = sel.value;
+        });
+        document.querySelectorAll(".prof-light-day-tog").forEach((tog) => {
+          const provId = tog.dataset.prov;
+          if (!lightingMap[provId]) lightingMap[provId] = {};
+          lightingMap[provId].follow_daylight = tog.classList.contains("on");
+        });
+
+        p.lighting = lightingMap;
         panelProfileModal = false;
         setPanelDirty(true);
         renderPanel();
@@ -6385,45 +6440,56 @@
     notifCard.innerHTML = notifHtml(pNotif);
   }
 
+  let activeBoxPage = 1;
+
   function rememberBoxScroll() {
     const box = document.querySelector(".panel-view-overlay .pv-box");
     if (!box) return;
-    boxScrollLeft = Math.round(box.scrollLeft);
+    const isLand = document.documentElement.classList.contains("is-landscape");
+    boxScrollLeft = Math.round(isLand ? box.scrollLeft : box.scrollTop);
+    const cur = getCurBoxPage();
+    if (cur > 0) activeBoxPage = cur;
   }
 
   function restoreBoxScroll(forcePage) {
     const box = document.querySelector(".panel-view-overlay .pv-box");
     if (!box) return;
-    if (forcePage !== undefined && forcePage !== null) {
-      const g = box.querySelector('.pdev-grid[data-page="' + forcePage + '"]');
-      if (g) {
-        try {
-          g.scrollIntoView({ behavior: "smooth", inline: "start", block: "nearest" });
-        } catch (_) {}
-        const track = box.querySelector(".pv-track");
+    const targetPage = (forcePage !== undefined && forcePage !== null)
+      ? forcePage
+      : (activeBoxPage > 0 ? activeBoxPage : 1);
+
+    const isLand = document.documentElement.classList.contains("is-landscape");
+    const track = box.querySelector(".pv-track");
+    const g = box.querySelector('.pdev-grid[data-page="' + targetPage + '"]');
+
+    if (g) {
+      if (isLand) {
         const W = track ? track.offsetWidth : 0;
-        const isLand = document.documentElement.classList.contains("is-landscape");
-        const x = track ? (isLand ? g.offsetLeft : (g.offsetLeft - track.offsetLeft)) : 0;
-        box.scrollLeft = isLand ? (W - x - g.offsetWidth) : x;
+        const x = g.offsetLeft;
+        box.scrollLeft = W - x - g.offsetWidth;
         boxScrollLeft = box.scrollLeft;
-        return;
+      } else {
+        const y = track ? (g.offsetTop - track.offsetTop) : g.offsetTop;
+        box.scrollTop = y;
+        boxScrollLeft = y;
       }
+      if (targetPage > 0) activeBoxPage = targetPage;
+      return;
     }
-    if (boxScrollLeft !== null) {
-      box.scrollLeft = boxScrollLeft;
-    } else {
-      const g1 = box.querySelector('.pdev-grid[data-page="1"]');
-      if (g1) {
-        try {
-          g1.scrollIntoView({ behavior: "auto", inline: "start", block: "nearest" });
-        } catch (_) {}
-        const track = box.querySelector(".pv-track");
+
+    const g1 = box.querySelector('.pdev-grid[data-page="1"]');
+    if (g1) {
+      if (isLand) {
         const W = track ? track.offsetWidth : 0;
-        const isLand = document.documentElement.classList.contains("is-landscape");
-        const x = track ? (isLand ? g1.offsetLeft : (g1.offsetLeft - track.offsetLeft)) : 0;
-        box.scrollLeft = isLand ? (W - x - g1.offsetWidth) : x;
+        const x = g1.offsetLeft;
+        box.scrollLeft = W - x - g1.offsetWidth;
         boxScrollLeft = box.scrollLeft;
+      } else {
+        const y = track ? (g1.offsetTop - track.offsetTop) : g1.offsetTop;
+        box.scrollTop = y;
+        boxScrollLeft = y;
       }
+      activeBoxPage = 1;
     }
   }
 
@@ -6464,8 +6530,8 @@
       } else if (isAlert && panelLive) {
         panelLive.notification = null;
       }
+      lastNotifKey = notifKey();
       triggerNotificationSlide(normalizeNotifTheme(msg.theme), isAlert, msg);
-      pendingNotifSlide = true;
       if (currentPage === "notifications") {
         fetchNotifications();
       }
@@ -6477,7 +6543,6 @@
         panelLive.notification = null;
       }
       triggerNotificationSlide(theme, true, msg);
-      pendingNotifSlide = true;
     } else if (msg.type === "config") {
       if (msg.config) {
         _panelLiveConfigVersion = null;
@@ -6535,6 +6600,32 @@
     return "purple";
   }
 
+  function notifCardEl() {
+    return document.querySelector(".panel-view-overlay #pv-notif");
+  }
+
+  function openNotifDrawer() {
+    const notifCard = notifCardEl();
+    if (notifCard) {
+      notifCard.classList.add("pv-notif-open");
+    }
+    const scrollEl = document.querySelector(".panel-view-overlay .pv-scroll");
+    if (scrollEl) {
+      scrollEl.scrollTop = 0;
+    }
+  }
+
+  function closeNotifDrawer() {
+    const notifCard = notifCardEl();
+    if (notifCard) {
+      notifCard.classList.remove("pv-notif-open");
+    }
+    const scrollEl = document.querySelector(".panel-view-overlay .pv-scroll");
+    if (scrollEl) {
+      scrollEl.scrollTop = 0;
+    }
+  }
+
   function triggerNotificationSlide(theme, isEvent, eventData) {
     if (typeof screensaverWakeOnEvent === "function") {
       screensaverWakeOnEvent();
@@ -6550,14 +6641,6 @@
     if (!theme) {
       const cur = (panelLive && panelLive.notification) || null;
       theme = normalizeNotifTheme(cur && cur.theme);
-    }
-
-    // Remember which page the user was on before we interrupt with the notification.
-    // Only update when we're not already showing the notification (page 0), so that
-    // back-to-back notifications don't overwrite the real "return" page.
-    const curPage = getCurBoxPage();
-    if (curPage !== 0) {
-      notifReturnPage = curPage;
     }
 
     const normTheme = (theme === "green" || theme === "red" || theme === "alert") ? theme : "purple";
@@ -6579,37 +6662,48 @@
     notifCard.classList.add("notif-shine", "notif-flash-" + normTheme, "notif-theme-" + themeCls);
 
     openNotifDrawer();
-    restoreBoxScroll(0);
 
     notifDismissTimer = setTimeout(() => {
       notifDismissTimer = null;
       closeNotifDrawer();
-      restoreBoxScroll(notifReturnPage);
     }, 5000);
   }
 
   function getCurBoxPage() {
     const box = document.querySelector(".panel-view-overlay .pv-box");
-    if (!box) return 1;
+    if (!box) return (activeBoxPage || 1);
     const track = box.querySelector(".pv-track");
     const pages = Array.from(box.querySelectorAll('.pdev-grid[data-page]'));
-    if (!pages.length) return 1;
+    if (!pages.length) return (activeBoxPage || 1);
     const isLand = document.documentElement.classList.contains("is-landscape");
-    const curScroll = box.scrollLeft;
-    let closestPage = 1;
+    let closestPage = activeBoxPage || 1;
     let minDiff = Infinity;
-    const W = track ? track.offsetWidth : 0;
 
-    pages.forEach((p) => {
-      const pNum = parseInt(p.getAttribute("data-page"), 10);
-      const x = track ? (isLand ? p.offsetLeft : (p.offsetLeft - track.offsetLeft)) : 0;
-      const targetScroll = isLand ? (W - x - p.offsetWidth) : x;
-      const diff = Math.abs(curScroll - targetScroll);
-      if (diff < minDiff) {
-        minDiff = diff;
-        closestPage = pNum;
-      }
-    });
+    if (isLand) {
+      const curScroll = box.scrollLeft;
+      const W = track ? track.offsetWidth : 0;
+      pages.forEach((p) => {
+        const pNum = parseInt(p.getAttribute("data-page"), 10);
+        const x = p.offsetLeft;
+        const targetScroll = W - x - p.offsetWidth;
+        const diff = Math.abs(curScroll - targetScroll);
+        if (diff < minDiff) {
+          minDiff = diff;
+          closestPage = pNum;
+        }
+      });
+    } else {
+      const curScroll = box.scrollTop;
+      pages.forEach((p) => {
+        const pNum = parseInt(p.getAttribute("data-page"), 10);
+        const y = track ? (p.offsetTop - track.offsetTop) : p.offsetTop;
+        const diff = Math.abs(curScroll - y);
+        if (diff < minDiff) {
+          minDiff = diff;
+          closestPage = pNum;
+        }
+      });
+    }
     return closestPage;
   }
 
@@ -6629,10 +6723,33 @@
   function setupNotifDrawerGestures() {
     const notifCard = document.querySelector(".panel-view-overlay #pv-notif");
     if (notifCard) {
-      notifCard.addEventListener("click", () => {
-        closeNotifDrawer();
-        restoreBoxScroll(notifReturnPage);
-      });
+      let nStartX = 0, nStartY = 0, nTracking = false;
+      notifCard.addEventListener("touchstart", (e) => {
+        if (e.touches.length !== 1) return;
+        nTracking = true;
+        nStartX = e.touches[0].clientX;
+        nStartY = e.touches[0].clientY;
+      }, { passive: false });
+
+      notifCard.addEventListener("touchmove", (e) => {
+        if (!nTracking || e.touches.length !== 1) return;
+        const isLand = document.documentElement.classList.contains("is-landscape");
+        if (isLand) {
+          e.preventDefault();
+        }
+      }, { passive: false });
+
+      notifCard.addEventListener("touchend", (e) => {
+        if (!nTracking) return;
+        nTracking = false;
+        const t = e.changedTouches[0];
+        const ndx = t.clientX - nStartX;
+        const ndy = t.clientY - nStartY;
+        // Only swipe LEFT on screen dismisses the toast (no tap dismiss)
+        if (ndx < -25 && Math.abs(ndx) > Math.abs(ndy)) {
+          closeNotifDrawer();
+        }
+      }, { passive: false });
     }
 
     const box = document.querySelector(".panel-view-overlay .pv-box");
@@ -6648,7 +6765,15 @@
       tracking = true;
       startX = e.touches[0].clientX;
       startY = e.touches[0].clientY;
-    }, { passive: true });
+    }, { passive: false });
+
+    box.addEventListener("touchmove", (e) => {
+      if (!tracking || e.touches.length !== 1) return;
+      const isLand = document.documentElement.classList.contains("is-landscape");
+      if (isLand) {
+        e.preventDefault();
+      }
+    }, { passive: false });
 
     box.addEventListener("touchend", (e) => {
       if (!tracking) return;
@@ -6656,31 +6781,35 @@
       const t = e.changedTouches[0];
       const dx = t.clientX - startX;
       const dy = t.clientY - startY;
-      const isLand = document.documentElement.classList.contains("is-landscape");
 
-      const cur = getCurBoxPage();
+      const cur = activeBoxPage || getCurBoxPage();
       const maxP = getMaxBoxPage();
 
-      if (isLand) {
-        // Landscape: screen-Y axis paging
-        if (Math.abs(dy) > THRESH && Math.abs(dy) > Math.abs(dx)) {
-          if (dy < 0) {
-            // Swipe UP -> Next button page
-            if (cur < maxP) restoreBoxScroll(cur + 1);
-          } else {
-            // Swipe DOWN -> Previous page / Page 0 Notifications
-            if (cur > 0) restoreBoxScroll(cur - 1);
-          }
+      // Horizontal swipe on physical screen:
+      if (Math.abs(dx) > THRESH && Math.abs(dx) > Math.abs(dy)) {
+        if (dx > 0) {
+          // Swipe RIGHT -> open notification toast (Column 1)
+          openNotifDrawer();
+        } else {
+          // Swipe LEFT -> close notification toast
+          closeNotifDrawer();
         }
-      } else {
-        // Portrait: screen-X axis paging
-        if (Math.abs(dx) > THRESH && Math.abs(dx) > Math.abs(dy)) {
-          if (dx < 0) {
-            // Swipe LEFT -> Next button page
-            if (cur < maxP) restoreBoxScroll(cur + 1);
-          } else {
-            // Swipe RIGHT -> Previous page / Page 0 Notifications
-            if (cur > 0) restoreBoxScroll(cur - 1);
+        return;
+      }
+
+      // Vertical swipe on physical screen:
+      if (Math.abs(dy) > THRESH && Math.abs(dy) > Math.abs(dx)) {
+        if (dy < 0) {
+          // Swipe UP -> Next button page
+          if (cur < maxP) {
+            activeBoxPage = cur + 1;
+            restoreBoxScroll(cur + 1);
+          }
+        } else {
+          // Swipe DOWN -> Prev button page
+          if (cur > 1) {
+            activeBoxPage = cur - 1;
+            restoreBoxScroll(cur - 1);
           }
         }
       }
@@ -6763,18 +6892,17 @@
     const hw = !!(data.hardware_connected !== undefined ? data.hardware_connected
       : (panelDraft && panelDraft.hardware_connected));
     const board = panelNav.length
-      ? (panelNav[panelNav.length - 1].children || [])
-      : (cfg.panel_board || []);
+      ? ((panelNav[panelNav.length - 1].children && panelNav[panelNav.length - 1].children.length) ? panelNav[panelNav.length - 1].children : currentBoard())
+      : currentBoard();
     const util = cfg.panel_utility || [];
     const gauges = data.gauges || {};
     const volume = data.volume || {};
 
     const notif = data.notification || null;
     const curNotifKey = notifKey();
-    if (curNotifKey && curNotifKey !== lastNotifKey) {
-      pendingNotifSlide = true;
+    if (!lastNotifKey) {
+      lastNotifKey = curNotifKey;
     }
-    lastNotifKey = curNotifKey;
 
     let statusBarHtml = "";
     if (IS_APP || (window.location.search && window.location.search.includes("view=panel"))) {
@@ -6808,10 +6936,15 @@
       : "";
     let frameHtml = "";
     if (boxOn) {
+      const isDesktop = document.documentElement.classList.contains("is-desktop-companion");
+      const notifHtmlStr = (!isDesktop)
+        ? '<div class="pv-notif-card" id="pv-notif">' + notifHtml(notif) + '</div>'
+        : '';
       frameHtml = '<div class="pv-frame">' +
+        notifHtmlStr +
         '<div class="pv-box">' +
           '<div class="pv-track">' +
-            boardPagesHtml(board, buttonRows, notif) +
+            boardPagesHtml(board, buttonRows) +
           '</div>' +
         '</div>' +
       '</div>';
@@ -6859,27 +6992,11 @@
     layoutPanelBox(ov);
     requestAnimationFrame(() => {
       layoutPanelBox(ov);
-      restoreBoxScroll();
-      // Orientation flip: jump to the SAME page number that was on screen
-      // before the rotation, identified by its data-page.
       if (pendingPanelPage !== null) {
-        const pbox = ov.querySelector(".pv-box");
-        if (pbox) {
-          const g = pbox.querySelector('.pdev-grid[data-page="' + pendingPanelPage + '"]');
-          if (g) {
-            const track = pbox.querySelector(".pv-track");
-            const W = track ? track.offsetWidth : 0;
-            const isLand = document.documentElement.classList.contains("is-landscape");
-            const x = track ? (isLand ? g.offsetLeft : (g.offsetLeft - track.offsetLeft)) : 0;
-            boxScrollLeft = isLand ? (W - x - g.offsetWidth) : x;
-            pbox.scrollLeft = boxScrollLeft;
-          }
-        }
+        restoreBoxScroll(pendingPanelPage);
         pendingPanelPage = null;
-      }
-      if (pendingNotifSlide) {
-        pendingNotifSlide = false;
-        triggerNotificationSlide();
+      } else {
+        restoreBoxScroll();
       }
     });
     // Cold start PWA multi-pass stabilization (catches delayed orientation/safe-area settling)
@@ -7014,45 +7131,48 @@
     '</div>';
   }
 
-  function boardPagesHtml(board, rows, notif, isPreview) {
+  function boardPagesHtml(board, rows) {
     let h = "";
     const list = board || [];
     const btnRows = rows || _panelButtonRows || 4;
     const PAGE = btnRows * 4;
+    const isSubPanel = (panelNav && panelNav.length > 0);
     const totalTiles = list.length;
-    const numPages = Math.max(1, Math.ceil(totalTiles / PAGE));
+    const numPages = isSubPanel
+      ? Math.max(1, Math.ceil((totalTiles + 1) / PAGE))
+      : Math.max(1, Math.ceil(totalTiles / PAGE));
     const isLand = document.documentElement.classList.contains("is-landscape");
-    const isDesktop = document.documentElement.classList.contains("is-desktop-companion");
-
-    // Page 0: Notification Card (swipe right in portrait / swipe down in landscape to reveal)
-    // Only on mobile / remote phone portals; omitted on desktop companion and in the panel-editor preview
-    if (!isDesktop && !isPreview) {
-      h += '<div class="pdev-grid pv-notif-page" data-page="0">' +
-        '<div class="pv-notif-card" id="pv-notif">' +
-          notifHtml(notif) +
-        '</div>' +
-      '</div>';
-    }
 
     // Page 1..N: Button Pages
     for (let pg = 0; pg < numPages; pg++) {
       const pageNum = pg + 1;
       h += '<div class="pdev-grid" data-page="' + pageNum + '">';
-      const startIdx = pg * PAGE;
 
       for (let p = 0; p < PAGE; p++) {
         const slotOffset = isLand ? ((3 - (p % 4)) * btnRows + Math.floor(p / 4)) : p;
-        const i = startIdx + slotOffset;
-        if (pg === 0 && panelNav.length && p === 0) {
+
+        if (isSubPanel && pg === 0 && slotOffset === 0) {
           h += '<button type="button" class="pdev-tile pdev-back" data-nav="back" title="Back">' +
             '<span class="md" data-md="arrow-left"></span></button>';
           continue;
         }
-        const s = list[i];
-        if (!s || s.type === "EMPTY") {
-          h += '<button type="button" class="pdev-tile pdev-empty-tile" data-action="slot" data-list="board" data-idx="' + i + '"></button>';
+
+        let itemIndex;
+        if (isSubPanel) {
+          if (pg === 0) {
+            itemIndex = slotOffset - 1;
+          } else {
+            itemIndex = (PAGE - 1) + (pg - 1) * PAGE + slotOffset;
+          }
         } else {
-          h += panelTileHtml(s, "board", i);
+          itemIndex = pg * PAGE + slotOffset;
+        }
+
+        const s = (itemIndex >= 0 && itemIndex < totalTiles) ? list[itemIndex] : null;
+        if (!s || s.type === "EMPTY") {
+          h += '<button type="button" class="pdev-tile pdev-empty-tile" data-action="slot" data-list="board" data-idx="' + (itemIndex >= 0 ? itemIndex : 0) + '"></button>';
+        } else {
+          h += panelTileHtml(s, "board", itemIndex);
         }
       }
       h += '</div>';
@@ -7189,7 +7309,13 @@
       topBar = '<span class="pdev-group-bar">GROUP</span>';
       extraTileClass += " has-group-bar";
     } else if (s.entity !== "media.play_pause" && showState && (hasLiveState || labels.on || labels.off)) {
-      const lblText = bState.label || (isOn ? (labels.on || "ON") : (labels.off || "OFF"));
+      let lblText = bState.label;
+      if (!lblText && bState.value !== undefined && bState.value !== null) {
+        lblText = (typeof bState.value === "number") ? `${bState.value} JUMPS` : String(bState.value);
+      }
+      if (!lblText) {
+        lblText = isOn ? (labels.on || "ON") : (labels.off || "OFF");
+      }
       if (lblText) {
         topBar = '<span class="pdev-group-bar pdev-status-bar" style="color:' + esc(badgeColor) + ';">' + esc(lblText) + '</span>';
         extraTileClass += " has-group-bar has-status-bar";
@@ -7294,6 +7420,10 @@
   }
 
   function currentBoard() {
+    if (panelNav && panelNav.length > 0) {
+      const top = panelNav[panelNav.length - 1];
+      if (top && top.children && top.children.length) return top.children;
+    }
     const prof = panelProfileCurrent();
     if (prof && prof.board && prof.board.length) return prof.board;
     const cfg = panelViewConfig();
@@ -7362,8 +7492,10 @@
     if (slot.type === "GROUP") {
       const targetProf = slot.target_profile || slot.profile_id;
       if (targetProf) {
-        panelNav.push({ prevProfile: panelProfileSel });
+        const fromPage = (activeBoxPage > 0) ? activeBoxPage : getCurBoxPage();
+        panelNav.push({ prevProfile: panelProfileSel, returnPage: fromPage });
         panelProfileSel = targetProf;
+        activeBoxPage = 1;
         if (panelViewMode) renderPanelView(); else renderPanel();
       }
       apiFetch(`${API_BASE}/api/panel/action`, {
@@ -7491,6 +7623,8 @@
       notifCard.addEventListener("click", (e) => {
         if (e && e.target && e.target.closest(".pv-notif-link")) return;
         closeNotifDrawer();
+        activeBoxPage = notifReturnPage;
+        restoreBoxScroll(notifReturnPage);
       });
     }
     setupNotifDrawerGestures();
@@ -7499,8 +7633,9 @@
       if (tile.getAttribute("data-nav") === "back") {
         tile.addEventListener("click", () => {
           const prev = panelNav.pop();
-          if (prev && prev.prevProfile) {
-            panelProfileSel = prev.prevProfile;
+          if (prev) {
+            if (prev.prevProfile) panelProfileSel = prev.prevProfile;
+            activeBoxPage = prev.returnPage || 1;
           }
           panelViewSig = panelViewSignature();
           if (panelViewMode) renderPanelView(); else renderPanel();
@@ -7527,13 +7662,27 @@
       }
     });
 
+    const pbox = document.querySelector(".panel-view-overlay .pv-box");
+    if (pbox) {
+      let scrollDebounce = null;
+      pbox.addEventListener("scroll", () => {
+        clearTimeout(scrollDebounce);
+        scrollDebounce = setTimeout(() => {
+          const cur = getCurBoxPage();
+          if (cur > 0) activeBoxPage = cur;
+        }, 100);
+      }, { passive: true });
+    }
+
     wireSliderInputs(document);
   }
 
   function wireSliderInputs(container) {
     const root = container || document;
-    root.querySelectorAll("input[type=range].pdev-range").forEach((rng) => {
-      if (rng._wired) return;
+    root.querySelectorAll(".pdev-slider").forEach((sliderCard) => {
+      const rng = sliderCard.querySelector("input[type=range].pdev-range");
+      if (!rng || sliderCard._wired) return;
+      sliderCard._wired = true;
       rng._wired = true;
 
       function updateFromPointer(e) {
@@ -7563,28 +7712,56 @@
         }
       }
 
-      let isDragging = false;
+      function isNearThumb(e) {
+        const rect = rng.getBoundingClientRect();
+        const min = parseFloat(rng.min) || 0;
+        const max = parseFloat(rng.max) || 100;
+        const curVal = parseFloat(rng.value) || 0;
+        const curPct = max > min ? ((curVal - min) / (max - min)) : 0;
+        const isLand = document.documentElement.classList.contains("is-landscape");
+        const THUMB_RADIUS = 32; // Comfortable grab radius in pixels
 
-      rng.addEventListener("pointerdown", (e) => {
-        isDragging = true;
-        try { rng.setPointerCapture(e.pointerId); } catch (_) {}
-        updateFromPointer(e);
-      });
-
-      rng.addEventListener("pointermove", (e) => {
-        if (!isDragging) return;
-        updateFromPointer(e);
-      });
-
-      function stopDrag(e) {
-        if (isDragging) {
-          isDragging = false;
-          try { rng.releasePointerCapture(e.pointerId); } catch (_) {}
+        if (isLand) {
+          const thumbY = rect.bottom - (curPct * rect.height);
+          const thumbX = rect.left + rect.width / 2;
+          const dist = Math.hypot(e.clientX - thumbX, e.clientY - thumbY);
+          return dist <= THUMB_RADIUS;
+        } else {
+          const thumbX = rect.left + (curPct * rect.width);
+          const thumbY = rect.top + rect.height / 2;
+          const dist = Math.hypot(e.clientX - thumbX, e.clientY - thumbY);
+          return dist <= THUMB_RADIUS;
         }
       }
 
-      rng.addEventListener("pointerup", stopDrag);
-      rng.addEventListener("pointercancel", stopDrag);
+      let isDragging = false;
+
+      function onPointerDown(e) {
+        if (isNearThumb(e)) {
+          isDragging = true;
+          try { sliderCard.setPointerCapture(e.pointerId); } catch (_) {}
+          updateFromPointer(e);
+        } else {
+          isDragging = false;
+        }
+      }
+
+      function onPointerMove(e) {
+        if (!isDragging) return;
+        updateFromPointer(e);
+      }
+
+      function onPointerUp(e) {
+        if (isDragging) {
+          isDragging = false;
+          try { sliderCard.releasePointerCapture(e.pointerId); } catch (_) {}
+        }
+      }
+
+      sliderCard.addEventListener("pointerdown", onPointerDown);
+      sliderCard.addEventListener("pointermove", onPointerMove);
+      sliderCard.addEventListener("pointerup", onPointerUp);
+      sliderCard.addEventListener("pointercancel", onPointerUp);
 
       rng.addEventListener("input", () => {
         const id = rng.getAttribute("data-slider");
@@ -8174,6 +8351,11 @@
       ? ((panelDraft.panel_utility || [])[panelEdit.index] || {})
       : ((boardAtPath(panelEdit.path || [])[panelEdit.index]) || {});
     let customSelectedIconPath = (modalSlot && modalSlot.app_icon_path) || "";
+    let curEntity = (modalSlot && (modalSlot.entity || (modalSlot.plugin && modalSlot.button_id ? (modalSlot.plugin + "." + modalSlot.button_id) : ""))) || "";
+    if (!curEntity && modalSlot && modalSlot.openrgb_profile) {
+      const matchEnt = (panelEntities || []).find((e) => e.openrgb_profile === modalSlot.openrgb_profile || e.name === modalSlot.openrgb_profile);
+      if (matchEnt) curEntity = matchEnt.id;
+    }
 
     function loadCustomIconPreview(path) {
       const p = (path || customSelectedIconPath || "").trim();
@@ -8521,6 +8703,18 @@
         })
         .catch(() => { appIconPreview.hidden = true; });
     }
+    let curEntityPlugin = "all";
+    if (curEntity) {
+      const matchEnt = (panelEntities || []).find((e) => e.id === curEntity || e.state_key === curEntity);
+      if (matchEnt && matchEnt.plugin) {
+        curEntityPlugin = matchEnt.plugin;
+      } else if (modalSlot && modalSlot.plugin) {
+        curEntityPlugin = modalSlot.plugin;
+      } else if (curEntity.includes(".")) {
+        curEntityPlugin = curEntity.split(".")[0];
+      }
+    }
+
     const syncFields = () => {
       const t = typeEl.value;
       const showGroupProf = t === "GROUP";
@@ -8546,23 +8740,38 @@
 
       const refreshEntityOptions = (targetEntity) => {
         if (!entSelectEl) return;
-        const curVal = targetEntity !== undefined ? targetEntity : entSelectEl.value;
+        const curVal = targetEntity !== undefined ? targetEntity : (curEntity || (entSelectEl ? entSelectEl.value : ""));
         const pFilter = entPluginEl ? entPluginEl.value : "all";
         const sQuery = entSearchEl ? entSearchEl.value : "";
         entSelectEl.innerHTML = buildEntityOptions(t, curVal, pFilter, sQuery);
+        if (curVal && entSelectEl.querySelector(`option[value="${curVal}"]`)) {
+          entSelectEl.value = curVal;
+        } else {
+          entSelectEl.value = "";
+        }
         if (isAppShortcut || showGroupProf || isEmpty) {
           entSelectEl.value = "";
         }
       };
 
-      refreshEntityOptions();
+      if (entPluginEl && !entPluginEl._initialized) {
+        entPluginEl._initialized = true;
+        if (curEntityPlugin && curEntityPlugin !== "all") {
+          entPluginEl.value = curEntityPlugin;
+        }
+      }
+      refreshEntityOptions(curEntity);
       if (entPluginEl && !entPluginEl._wired) {
         entPluginEl._wired = true;
-        entPluginEl.addEventListener("change", () => refreshEntityOptions());
+        entPluginEl.addEventListener("change", () => {
+          refreshEntityOptions(curEntity);
+        });
       }
       if (entSearchEl && !entSearchEl._wired) {
         entSearchEl._wired = true;
-        entSearchEl.addEventListener("input", () => refreshEntityOptions());
+        entSearchEl.addEventListener("input", () => {
+          refreshEntityOptions(curEntity);
+        });
       }
 
       const entId = entSelectEl ? entSelectEl.value.trim() : "";
@@ -8604,11 +8813,12 @@
     const entSelect = document.getElementById("pe-entity");
     if (entSelect) {
       entSelect.addEventListener("change", () => {
-        const entId = entSelect.value;
+        const entId = entSelect.value.trim();
+        curEntity = entId;
         const found = (panelEntities || []).find((e) => e.id === entId);
         if (found) {
           const nameInp = document.getElementById("pe-name");
-          if (nameInp && (!nameInp.value || nameInp.value === "New Action")) nameInp.value = found.name;
+          if (nameInp && (!nameInp.value || nameInp.value === "New Action" || nameInp.value === "HUD Overlay")) nameInp.value = found.name;
           if (found.icon && iconInput) {
             iconInput.value = found.icon;
             updateLiveIcon(found.icon);
@@ -8648,6 +8858,7 @@
           else typeEl.value = "SENSOR";
           syncFields();
         } else {
+          curEntity = "";
           syncFields();
         }
       });
@@ -8683,14 +8894,6 @@
         }
         loadAppIcon();
       }, 400);
-    });
-    // Hotkey chips wiring
-    modal.querySelectorAll(".pe-chip").forEach((chip) => {
-      chip.addEventListener("click", () => {
-        const k = chip.getAttribute("data-k") || "";
-        const keysInp = document.getElementById("pe-keys");
-        if (keysInp) keysInp.value = k;
-      });
     });
 
     // Hotkey capture: toggle via Capture button; input always typable
@@ -8922,6 +9125,16 @@
         finalAppIconPath = null;
       }
 
+      const entSelectEl = document.getElementById("pe-entity");
+      const entPluginEl = document.getElementById("pe-entity-plugin");
+      const resolvedEntId = (canHaveEntity && entSelectEl && entSelectEl.value) ? entSelectEl.value.trim() : (modalSlot.entity || curEntity || "");
+      let targetEntObj = resolvedEntId ? (panelEntities || []).find((e) => e.id === resolvedEntId || e.state_key === resolvedEntId || (e.plugin && e.button_id && `${e.plugin}.${e.button_id}` === resolvedEntId)) : null;
+
+      if (!targetEntObj && resolvedEntId && resolvedEntId.includes(".")) {
+        const [p, b] = resolvedEntId.split(".", 2);
+        targetEntObj = (panelEntities || []).find((e) => (e.plugin === p || e.id.startsWith(p + ".")) && (e.button_id === b || e.state_key === b || e.id === resolvedEntId));
+      }
+
       const slot = {
         name: (document.getElementById("pe-name") ? document.getElementById("pe-name").value.trim() : ""),
         type: t,
@@ -8934,17 +9147,28 @@
         app_icon_path: finalAppIconPath,
         color: (document.getElementById("pe-color") ? document.getElementById("pe-color").value.trim() : ""),
       };
-      if (entId) {
-        slot.entity = entId;
+      if (resolvedEntId) {
+        slot.entity = resolvedEntId;
+        const [defaultPlg, defaultBid] = resolvedEntId.includes(".") ? resolvedEntId.split(".", 2) : [resolvedEntId, ""];
+        slot.plugin = defaultPlg;
+        slot.button_id = defaultBid;
+        slot.state_key = defaultBid;
       }
-      if (entObj) {
-        if (entObj.plugin) slot.plugin = entObj.plugin;
-        if (entObj.button_id) slot.button_id = entObj.button_id;
-        if (entObj.openrgb_profile) slot.openrgb_profile = entObj.openrgb_profile;
-        if (entObj.action_id) slot.action_id = entObj.action_id;
-        if (entObj.state_key) slot.state_key = entObj.state_key;
-        if (entObj.labels) slot.labels = entObj.labels;
-        if (entObj.color) slot.colors = { on: entObj.color };
+      if (targetEntObj) {
+        if (!slot.name && targetEntObj.name) slot.name = targetEntObj.name;
+        if (targetEntObj.plugin) slot.plugin = targetEntObj.plugin;
+        if (targetEntObj.button_id) slot.button_id = targetEntObj.button_id;
+        if (targetEntObj.openrgb_profile) slot.openrgb_profile = targetEntObj.openrgb_profile;
+        if (targetEntObj.action_id) slot.action_id = targetEntObj.action_id;
+        if (targetEntObj.state_key) slot.state_key = targetEntObj.state_key;
+        if (targetEntObj.labels) slot.labels = targetEntObj.labels;
+        if (targetEntObj.color) slot.colors = { on: targetEntObj.color };
+      } else if (modalSlot && (modalSlot.plugin || modalSlot.state_key)) {
+        if (modalSlot.plugin) slot.plugin = modalSlot.plugin;
+        if (modalSlot.button_id) slot.button_id = modalSlot.button_id;
+        if (modalSlot.state_key) slot.state_key = modalSlot.state_key;
+        if (modalSlot.labels) slot.labels = modalSlot.labels;
+        if (modalSlot.colors) slot.colors = modalSlot.colors;
       }
       if (t === "SHORTCUT") {
         slot.shortcut_path = document.getElementById("pe-path").value.trim();
@@ -9685,6 +9909,131 @@
     hideScreensaver();
     resetScreensaverTimer();
     try { requestWakeLock(); } catch (_) {}
+  }
+
+  // ── First-Run Ambient Lighting Setup Wizard ───────────────────
+  let _lightingWizardShown = false;
+
+  async function checkLightingWizard() {
+    if (_lightingWizardShown || IS_MOBILE) return;
+    try {
+      const res = await apiFetch(`${API_BASE}/api/lighting/status`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const providers = data.providers || [];
+      const connected = providers.filter((p) => p.connected);
+      if (!connected.length) return;
+
+      const cfg = featureConfig || {};
+      const lCfg = cfg.ambient_lighting;
+      // Trigger if ambient_lighting is undefined or not explicitly configured
+      if (!lCfg || lCfg._wizard_completed === undefined) {
+        _lightingWizardShown = true;
+        showLightingSetupWizard(connected);
+      }
+    } catch (_) {}
+  }
+
+  function showLightingSetupWizard(connectedProviders) {
+    const existing = document.getElementById("lighting-setup-modal");
+    if (existing) existing.remove();
+
+    const provNames = connectedProviders.map((p) => esc(p.name)).join(" & ");
+    const hasHA = connectedProviders.some((p) => p.id === "ha");
+    const hasOpenRGB = connectedProviders.some((p) => p.id === "openrgb");
+
+    let modalHtml = '<div class="panel-modal-backdrop" id="lighting-setup-modal" style="z-index:99999;">' +
+      '<div class="panel-modal" style="max-width:520px;">' +
+        '<div class="panel-modal-header" style="display:flex;align-items:center;gap:8px;">' +
+          '<span class="material-icons-outlined" style="font-size:24px;color:var(--neon-text);">auto_awesome</span>' +
+          '<div>' +
+            '<h3 style="margin:0;font-size:16px;">Ambient Lighting Setup</h3>' +
+            '<span class="panel-modal-subtitle">Detected: ' + provNames + '</span>' +
+          '</div>' +
+        '</div>' +
+        '<div style="padding:12px 0;display:flex;flex-direction:column;gap:12px;">' +
+          '<p style="font-size:12.5px;color:var(--fg);margin:0;line-height:1.5;">' +
+            'Iris has detected active lighting hardware. Would you like to configure your ambient lighting defaults?' +
+          '</p>' +
+          '<div style="background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:10px;">' +
+            '<div class="settings-toggle-row">' +
+              '<span class="settings-toggle-label" style="font-size:12.5px;">Sync with Iris Visual Theme</span>' +
+              '<div class="settings-toggle on" id="wz-light-sync"><div class="settings-toggle-thumb"></div></div>' +
+            '</div>' +
+            '<span class="settings-hint" style="margin-top:-6px;">Derives the highest luminance color from your active theme for PC hardware LEDs' + (hasHA ? ' & smart bulbs' : '') + '.</span>' +
+            '<div class="settings-toggle-row">' +
+              '<span class="settings-toggle-label" style="font-size:12.5px;">Follow Daylight Cycle</span>' +
+              '<div class="settings-toggle on" id="wz-light-day"><div class="settings-toggle-thumb"></div></div>' +
+            '</div>' +
+            '<span class="settings-hint" style="margin-top:-6px;">Automatically turns ceiling/office lights OFF during daytime hours (07:30–19:30) while PC LEDs stay lit.</span>' +
+          '</div>' +
+        '</div>' +
+        '<div class="panel-modal-actions" style="margin-top:8px;">' +
+          '<button type="button" class="settings-btn" id="wz-light-skip">Not Now</button>' +
+          '<button type="button" class="settings-btn" id="wz-light-config"><span class="material-icons-outlined" style="font-size:16px;">tune</span> Configure Presets</button>' +
+          '<button type="button" class="settings-btn primary" id="wz-light-apply"><span class="material-icons-outlined" style="font-size:16px;">check</span> Enable Ambient</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+
+    const wrap = document.createElement("div");
+    wrap.innerHTML = modalHtml;
+    document.body.appendChild(wrap);
+
+    const syncTog = document.getElementById("wz-light-sync");
+    const dayTog = document.getElementById("wz-light-day");
+    const skipBtn = document.getElementById("wz-light-skip");
+    const cfgBtn = document.getElementById("wz-light-config");
+    const applyBtn = document.getElementById("wz-light-apply");
+
+    if (syncTog) syncTog.addEventListener("click", () => syncTog.classList.toggle("on"));
+    if (dayTog) dayTog.addEventListener("click", () => dayTog.classList.toggle("on"));
+
+    const close = () => { if (wrap.parentNode) wrap.parentNode.removeChild(wrap); };
+
+    if (skipBtn) {
+      skipBtn.addEventListener("click", () => {
+        const patch = { ambient_lighting: Object.assign({}, featureConfig.ambient_lighting || {}, { _wizard_completed: true }) };
+        saveFeature(patch);
+        close();
+      });
+    }
+
+    if (cfgBtn) {
+      cfgBtn.addEventListener("click", () => {
+        const patch = { ambient_lighting: Object.assign({}, featureConfig.ambient_lighting || {}, { _wizard_completed: true }) };
+        saveFeature(patch);
+        close();
+        // Open Default Profile settings modal
+        panelProfileSel = "__default__";
+        fetchLightingStatus().then(() => {
+          panelEdit = null;
+          panelProfileModal = true;
+          if (currentPage !== "panel") {
+            if (typeof window.navigateToPage === "function") window.navigateToPage("panel");
+            else renderPage();
+          } else {
+            renderPanel();
+          }
+        });
+      });
+    }
+
+    if (applyBtn) {
+      applyBtn.addEventListener("click", () => {
+        const syncOn = syncTog ? syncTog.classList.contains("on") : true;
+        const dayOn = dayTog ? dayTog.classList.contains("on") : true;
+        const patch = {
+          ambient_lighting: {
+            sync_theme: syncOn,
+            follow_daylight: dayOn,
+            _wizard_completed: true
+          }
+        };
+        saveFeature(patch);
+        close();
+      });
+    }
   }
 
   // Called inline from openPanelView()

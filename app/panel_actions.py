@@ -175,6 +175,7 @@ def sanitize_profiles(raw):
             "name": name,
             "exe": exe,
             "enabled": bool(item.get("enabled", True)),
+            "lighting": item.get("lighting", {}) if isinstance(item.get("lighting"), dict) else {},
             "board": sanitize_board(item.get("board")),
         })
     return out

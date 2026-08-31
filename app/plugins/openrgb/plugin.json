@@ -14,7 +14,8 @@
     "outputs": true,
     "live_data": true,
     "actions": false,
-    "diagnostics": false
+    "diagnostics": false,
+    "lighting_provider": true
   },
 
   "labels": {
