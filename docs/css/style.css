@@ -1,39 +1,43 @@
 :root {
-  --bg: #0a0a0f;
-  --bg-elevated: #11111a;
-  --bg-card: #16161f;
+  --bg: #0C0D0F;
+  --bg-elevated: #11141a;
+  --bg-card: #14171d;
   --fg: #e8e8ed;
   --fg-muted: #8a8a9a;
-  --accent: #ffaa00;
-  --accent-dim: #cc8800;
-  --neon: #ff5500;
-  --neon-dim: #cc4400;
-  --blue: #48b2e9;
+  --accent: #48B2E9;
+  --accent-dim: #3892c9;
+  --neon: #B23AF6;
+  --neon-dim: #9a2ad6;
+  --blue: #48B2E9;
   --blue-dim: #3892c9;
-  --border: #2a2a3a;
-  --border-bright: #3a3a4a;
-  --focus: #ffaa00;
+  --purple: #B23AF6;
+  --purple-dim: #9a2ad6;
+  --border: #22262e;
+  --border-bright: #333a44;
+  --focus: #48B2E9;
   --shadow: rgba(0, 0, 0, 0.6);
-  --shadow-glow: rgba(255, 170, 0, 0.15);
+  --shadow-glow: rgba(72, 178, 233, 0.22);
 }
 
 @media (prefers-color-scheme: light) {
   :root {
-    --bg: #f5f5fa;
+    --bg: #f4f6fa;
     --bg-elevated: #ffffff;
-    --bg-card: #fafafa;
-    --fg: #1a1a2e;
-    --fg-muted: #5a5a6a;
-    --accent: #cc8800;
-    --accent-dim: #aa6600;
-    --neon: #cc4400;
-    --neon-dim: #aa3300;
+    --bg-card: #fafbfe;
+    --fg: #141a2e;
+    --fg-muted: #5a6476;
+    --accent: #3892c9;
+    --accent-dim: #2872a9;
+    --neon: #8a2ad6;
+    --neon-dim: #6a1ab6;
     --blue: #3892c9;
     --blue-dim: #2872a9;
-    --border: #d0d0e0;
-    --border-bright: #c0c0d0;
+    --purple: #8a2ad6;
+    --purple-dim: #6a1ab6;
+    --border: #d0d6e4;
+    --border-bright: #c0c6d8;
     --shadow: rgba(0, 0, 0, 0.1);
-    --shadow-glow: rgba(204, 136, 0, 0.1);
+    --shadow-glow: rgba(56, 146, 201, 0.18);
   }
 }
 
@@ -125,6 +129,14 @@ a:focus-visible {
   height: 36px;
 }
 
+.logo img {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  object-fit: cover;
+  box-shadow: 0 0 14px var(--shadow-glow);
+}
+
 .logo .accent-dot {
   width: 10px;
   height: 10px;
@@ -158,7 +170,7 @@ a:focus-visible {
 .nav-links a:hover,
 .nav-links a.active {
   color: var(--accent);
-  background: rgba(255, 170, 0, 0.1);
+  background: rgba(72, 178, 233, 0.1);
 }
 
 .nav-links a.active {
@@ -220,12 +232,25 @@ main {
   margin-bottom: 32px;
 }
 
+.hero-logo {
+  width: 128px;
+  height: 128px;
+  border-radius: 28px;
+  object-fit: cover;
+  margin: 0 auto 24px;
+  display: block;
+  box-shadow:
+    0 0 0 1px rgba(72, 178, 233, 0.35),
+    0 0 40px var(--shadow-glow),
+    0 0 80px rgba(178, 58, 246, 0.18);
+}
+
 .hero-badge {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   padding: 8px 16px;
-  background: rgba(255, 170, 0, 0.1);
+  background: rgba(72, 178, 233, 0.1);
   border: 1px solid var(--accent);
   border-radius: 100px;
   font-size: 0.85rem;
@@ -324,7 +349,7 @@ main {
 .section-tag {
   display: inline-block;
   padding: 6px 14px;
-  background: rgba(255, 85, 0, 0.1);
+  background: rgba(178, 58, 246, 0.1);
   border: 1px solid var(--neon);
   border-radius: 100px;
   font-size: 0.75rem;
@@ -381,8 +406,8 @@ main {
   font-size: 1.5rem;
 }
 
-.card-icon.orange { background: rgba(255, 170, 0, 0.15); color: var(--accent); }
-.card-icon.red { background: rgba(255, 85, 0, 0.15); color: var(--neon); }
+.card-icon.orange { background: rgba(72, 178, 233, 0.15); color: var(--accent); }
+.card-icon.red { background: rgba(178, 58, 246, 0.15); color: var(--neon); }
 .card-icon.blue { background: rgba(72, 178, 233, 0.15); color: var(--blue); }
 .card-icon.green { background: rgba(0, 200, 100, 0.15); color: #00c864; }
 .card-icon.purple { background: rgba(178, 90, 246, 0.15); color: #b25af6; }
@@ -489,13 +514,13 @@ main {
 }
 
 .content-block .note.warning {
-  background: rgba(255, 170, 0, 0.08);
-  border-color: rgba(255, 170, 0, 0.3);
+  background: rgba(72, 178, 233, 0.08);
+  border-color: rgba(72, 178, 233, 0.3);
 }
 
 .content-block .note.error {
-  background: rgba(255, 85, 0, 0.08);
-  border-color: rgba(255, 85, 0, 0.3);
+  background: rgba(178, 58, 246, 0.08);
+  border-color: rgba(178, 58, 246, 0.3);
 }
 
 .content-block .note .note-icon {
@@ -546,7 +571,7 @@ tr:last-child td {
 }
 
 tr:hover td {
-  background: rgba(255, 170, 0, 0.03);
+  background: rgba(72, 178, 233, 0.03);
 }
 
 /* Steps */
@@ -714,7 +739,7 @@ tr:hover td {
 .toc a:hover,
 .toc a.active {
   color: var(--accent);
-  background: rgba(255, 170, 0, 0.1);
+  background: rgba(72, 178, 233, 0.1);
 }
 
 /* Layout for setup page */
@@ -759,7 +784,7 @@ tr:hover td {
 
 /* Selection */
 ::selection {
-  background: rgba(255, 170, 0, 0.3);
+  background: rgba(72, 178, 233, 0.3);
   color: var(--fg);
 }
 
