@@ -47,15 +47,21 @@
           <li><a href="#hardware">3. Hardware &amp; Wiring</a></li>
           <li><a href="#firmware">4. Flashing the Firmware</a></li>
           <li><a href="#app">5. Desktop App</a></li>
-          <li><a href="#panel">6. Phone Panel / PWA</a></li>
-          <li><a href="#android">7. Android App</a></li>
-          <li><a href="#home-assistant">8. Home Assistant</a></li>
-          <li><a href="#plugins">9. Plugins</a></li>
-          <li><a href="#themes">10. Themes &amp; Appearance</a></li>
-          <li><a href="#build">11. Build &amp; Package</a></li>
-          <li><a href="#config">12. Configuration Reference</a></li>
-          <li><a href="#structure">13. Project Structure</a></li>
-          <li><a href="#troubleshooting">14. Troubleshooting</a></li>
+          <li><a href="#button-boxes">6. Command &amp; Control / Button Boxes</a></li>
+          <li><a href="#capture">7. Capture Toolbar &amp; Annotations</a></li>
+          <li><a href="#tools">8. Color Picker &amp; Notepad</a></li>
+          <li><a href="#volume">9. Media Mixing &amp; App Volume</a></li>
+          <li><a href="#vision">10. Vision System + OCR</a></li>
+          <li><a href="#macros">11. Conditional Macros &amp; Reactive Events</a></li>
+          <li><a href="#panel">12. Phone Panel / PWA</a></li>
+          <li><a href="#android">13. Android App</a></li>
+          <li><a href="#home-assistant">14. Home Assistant</a></li>
+          <li><a href="#plugins">15. Plugins</a></li>
+          <li><a href="#themes">16. Themes &amp; Appearance</a></li>
+          <li><a href="#build">17. Build &amp; Package</a></li>
+          <li><a href="#config">18. Configuration Reference</a></li>
+          <li><a href="#structure">19. Project Structure</a></li>
+          <li><a href="#troubleshooting">20. Troubleshooting</a></li>
         </ul>
       </aside>
 
@@ -66,21 +72,33 @@
         <section class="content-block" id="overview">
           <h3>1. Overview</h3>
           <p>
-            Iris is a <strong>Windows desktop companion</strong> that takes data from your PC and pushes it to a
-            physical <strong>MAX7219 LED matrix display</strong> driven by an ESP8266/ESP32 microcontroller over USB serial.
-            It also runs a <strong>floating overlay</strong> and a <strong>phone/PWA panel</strong> for control.
+            Iris is a <strong>dynamic Stream Deck–style utility</strong> for Windows. It turns your
+            PC into a command centre where you can <strong>control or automate lighting</strong>,
+            run a <strong>screen-capture toolbar with annotations and OCR</strong>, pick colours,
+            take notes, mix <strong>media and per-app volumes</strong>, monitor <strong>PC statistics</strong>,
+            and display custom <strong>button boxes</strong> in games, simulators, and apps. A
+            <strong>conditional macro system</strong> with hotkey injection and reactive events ties
+            it all together — for example, change your lighting to red when you enter combat.
           </p>
-          <p>The system has five main parts:</p>
+          <p>
+            Everything you capture and note is collected into an <strong>integrated library browser</strong>,
+            and the whole thing is extended by <strong>plugins and addons including Home Assistant</strong>.
+            Iris can also drive an optional physical <strong>MAX7219 LED matrix display</strong>, a
+            <strong>floating overlay</strong>, and a <strong>phone/PWA panel</strong> for control — but it is
+            first and foremost a general-purpose control and automation utility, not just a stats display.
+          </p>
+          <p>The system has six main parts:</p>
           <ul>
-            <li><strong>Python desktop app</strong> (<code>app/</code>) — gathers stats, services, and drives everything.</li>
-            <li><strong>ESP firmware</strong> (<code>firmware/</code>) — receives commands from the PC and lights the display.</li>
-            <li><strong>MAX7219 display</strong> — the physical 8×8 LED matrix modules.</li>
-            <li><strong>HTML panel / PWA</strong> (<code>HTML/</code>) — a web panel for pairing and phone control.</li>
+            <li><strong>Python desktop app</strong> (<code>app/</code>) — the core: control, capture, mixing, automation, and data plumbing.</li>
+            <li><strong>Capture &amp; Library tools</strong> (<code>capture_toolbar.py</code>, <code>colour_picker.py</code>, <code>notepad_window.py</code>, <code>quick_note.py</code>) — screen captures, OCR, colour picking, and notes, all browsed from the library.</li>
+            <li><strong>Automation &amp; Media</strong> (<code>automations.py</code>, <code>win_volume.py</code>, <code>lighting_service.py</code>, <code>keyboard_service.py</code>) — conditional macros, hotkey injection, per-app volume mixing, and reactive lighting.</li>
+            <li><strong>ESP firmware</strong> (<code>firmware/</code> — optional) — drives the MAX7219 display from the PC.</li>
+            <li><strong>HTML panel / PWA</strong> (<code>HTML/</code>) — a web panel for control from a browser or phone.</li>
             <li><strong>Android app</strong> (<code>android/</code>) — a native companion-device app.</li>
           </ul>
           <div class="note">
             <span class="note-icon">💡</span>
-            <span class="note-text">You can use Iris with just the desktop app and overlay (no hardware) — the display parts are optional.</span>
+            <span class="note-text">You can use Iris with just the desktop app and overlay (no hardware) — the capture, mixing, macro, and control features all work standalone; the LED display is optional.</span>
           </div>
         </section>
 
@@ -236,19 +254,161 @@ cd iris</code></pre>
                 <tr><td><code>app/win_platform.py</code></td><td>Windows-specific helpers (process checks, hotkeys, file dialogs, icon extraction).</td></tr>
                 <tr><td><code>app/config.py</code></td><td>JSON configuration load/save.</td></tr>
                 <tr><td><code>app/constants.py</code></td><td>Design tokens and default settings.</td></tr>
-                <tr><td><code>app/automations.py</code></td><td>Trigger engine — fires actions (hotkey, HA, sound, notification) on conditions.</td></tr>
                 <tr><td><code>app/providers/</code></td><td>Data providers: Stats, HA, Media (SMTC), OpenRGB, etc.</td></tr>
                 <tr><td><code>app/ws_bridge.py</code></td><td>HTTP/WebSocket bridge that serves the HTML panel API.</td></tr>
                 <tr><td><code>app/panel_window.py</code></td><td>Hosts the HTML panel via pywebview.</td></tr>
                 <tr><td><code>app/plugin_manager.py</code></td><td>Discovers, loads, and coordinates plugins.</td></tr>
+                <tr><td><code>app/capture_toolbar.py</code></td><td>Transient screen-capture toolbar — fullscreen/zone captures, annotations, and OCR.</td></tr>
+                <tr><td><code>app/colour_picker.py</code></td><td>System-wide colour picker with pixel grab and clipboard HEX values.</td></tr>
+                <tr><td><code>app/notepad_window.py</code> / <code>quick_note.py</code></td><td>Built-in notepad and quick notes, filed into the library browser.</td></tr>
+                <tr><td><code>app/win_volume.py</code></td><td>Per-application volume mixing and muting via the Windows audio session.</td></tr>
+                <tr><td><code>app/serial_comm.py</code></td><td>USB serial bridge that sends stats/commands to the ESP (optional display).</td></tr>
+                <tr><td><code>app/lighting_service.py</code></td><td>Generic lighting &amp; profile-focus manager — plugins declare lighting presets (OpenRGB, HA, etc.).</td></tr>
+                <tr><td><code>app/keyboard_service.py</code></td><td>Hotkey injection and keyboard automation backend for the macro system.</td></tr>
+                <tr><td><code>app/vision.py</code></td><td>Reusable screen-analysis engine — colour detection and OCR text extraction.</td></tr>
+                <tr><td><code>app/automations.py</code></td><td>Trigger engine — fires actions (hotkey, HA, sound, notification, lighting) on live-state conditions.</td></tr>
               </tbody>
             </table>
           </div>
         </section>
 
-        <!-- 6. Phone Panel / PWA -->
+        <!-- 6. Command & Control / Button Boxes -->
+        <section class="content-block" id="button-boxes">
+          <h3>6. Command &amp; Control / Button Boxes</h3>
+          <p>
+            The heart of Iris is a <strong>Stream Deck–style button system</strong>. Every button can be
+            assigned to an action — lighting, capture, volume, media, hotkey, an app launch, or a plugin
+            action — and organized into pages of buttons (<em>button boxes</em>).
+          </p>
+          <h4>What you can assign to a button</h4>
+          <ul>
+            <li><strong>Lighting / OpenRGB</strong> — switch lighting profiles and colours.</li>
+            <li><strong>Capture</strong> — take a fullscreen or zone screenshot, with annotations and OCR.</li>
+            <li><strong>Media &amp; volume</strong> — play/pause/next, and per-app volume mixing.</li>
+            <li><strong>Hotkeys / macros</strong> — inject a key combination or run a conditional macro.</li>
+            <li><strong>Apps / shortcuts</strong> — launch an application with its icon on the tile.</li>
+            <li><strong>Plugin actions</strong> — game integrations (e.g. Elite Dangerous), PC stats, vision, and more.</li>
+          </ul>
+          <h4>In-game and in-app button boxes</h4>
+          <p>
+            Button boxes aren't limited to the desk — Iris drives <strong>custom button-box overlays inside
+            simulators, games, or apps</strong>. Gaming integrations (plugins) expose live telemetry and
+            per-game actions so you can control anything from the ship cockpit to a production app, right
+            where you're working.
+          </p>
+        </section>
+
+        <!-- 7. Capture Toolbar & Annotations -->
+        <section class="content-block" id="capture">
+          <h3>7. Capture Toolbar &amp; Annotations</h3>
+          <p>
+            Iris ships a <strong>transient, top-centre capture toolbar</strong> for fast screen work. Launch
+            it from a button or the tray, then:
+          </p>
+          <ul>
+            <li><strong>Fullscreen or Zone capture</strong> — grab the whole screen or draw a region.</li>
+            <li><strong>Pixel annotations</strong> — mark up captures right before saving.</li>
+            <li><strong>Automatic OCR</strong> — every capture is OCR'd in the background and the recognised
+              text is copied to your clipboard and stored as a sidecar. <code>capture_toolbar.py</code> +
+              <code>vision.ocr_extract</code>.</li>
+            <li><strong>Filed into the Library</strong> — every capture and its OCR text lands in the
+              integrated library browser, grouped per app.</li>
+          </ul>
+          <h4>Colour picking</h4>
+          <p>
+            The included <strong>colour picker</strong> runs a system-wide low-level mouse hook — grab any
+            pixel on any screen, read its RGB/HEX, and copy it to the clipboard. It uses a safe hook-based
+            approach that never leaves your cursor stuck.
+          </p>
+        </section>
+
+        <!-- 8. Color Picker & Notepad -->
+        <section class="content-block" id="tools">
+          <h3>8. Color Picker &amp; Notepad</h3>
+          <p>
+            Beyond captures, Iris bundles everyday desk tools that all feed into one library:
+          </p>
+          <ul>
+            <li><strong>Color Picker</strong> (<code>colour_picker.py</code>) — pixel-level colour grab with
+              HEX/RGB output to clipboard, triggered from a panel button.</li>
+            <li><strong>Notepad</strong> (<code>notepad_window.py</code>) — a built-in note window.</li>
+            <li><strong>Quick Note</strong> (<code>quick_note.py</code>) — capture a fleeting thought in one shortcut.</li>
+          </ul>
+          <h4>Integrated Library Browser</h4>
+          <p>
+            Screenshots, OCR text, and notes are <strong>collected into the integrated library browser</strong>,
+            grouped per application and searchable from the panel — a single place to find any capture or note.
+          </p>
+        </section>
+
+        <!-- 9. Media Mixing & App Volume -->
+        <section class="content-block" id="volume">
+          <h3>9. Media Mixing &amp; App Volume</h3>
+          <p>
+            Iris gives you <strong>full media transport and a true mixer</strong>, not just a mute switch:
+          </p>
+          <ul>
+            <li><strong>Media controls</strong> — play/pause/next/previous for the active session; now-playing
+              info with live album art via Windows SMTC (<code>app/providers/media.py</code>).</li>
+            <li><strong>Per-application volume</strong> — <code>win_volume.py</code> enumerates every audio
+              session and tracks the foreground app, letting you <strong>adjust or mute any individual app's
+              volume</strong> without touching the master.</li>
+            <li><strong>Master / active-app control</strong> — set master volume, or tune the currently active
+              application's volume directly from a slider or button.</li>
+          </ul>
+        </section>
+
+        <!-- 10. Vision System + OCR -->
+        <section class="content-block" id="vision">
+          <h3>10. Vision System + OCR</h3>
+          <p>
+            Iris includes a <strong>generic screen-analysis ("Vision") system</strong> with OCR — not a
+            game-specific detector. Create one or more Vision Sensors, each watching a small region of the
+            screen and raising an Iris event when a condition is met:
+          </p>
+          <ul>
+            <li><strong>Colour-based modes</strong> — Colour Percentage, Pixel Match, and Average Brightness
+              within a region.</li>
+            <li><strong>Event integration</strong> — when a condition crosses its threshold (rising edge), Iris
+              can fire actions such as notifications, hotkeys, or lighting changes.</li>
+            <li><strong>OCR</strong> — extract text from any screen region and use it in your captures
+              (<code>vision.ocr_extract</code>), backed by Windows OCR.</li>
+            <li><strong>Calibration UI</strong> — a 5-step wizard to mark a region, pick colours, configure the
+              condition, and test it live.</li>
+          </ul>
+        </section>
+
+        <!-- 11. Conditional Macros & Reactive Events -->
+        <section class="content-block" id="macros">
+          <h3>11. Conditional Macros &amp; Reactive Events</h3>
+          <p>
+            Iris's <strong>macro and automation engine</strong> (<code>automations.py</code>) evaluates live
+            state and fires actions when conditions change — this is where "reactive" behaviour comes from.
+          </p>
+          <h4>How it works</h4>
+          <ul>
+            <li><strong>Conditions</strong> — a rule activates when a tracked value (a sensor, a Vision event, a
+              game status, a stat) matches a configured condition.</li>
+            <li><strong>Reactive events</strong> — the instant a condition becomes active, Iris fires and then
+              auto-releases when it clears.</li>
+            <li><strong>Hotkey injection</strong> — actions can inject key combinations
+              (<code>keyboard_service.py</code>), tap apps, or run your own scripts.</li>
+            <li><strong>Lighting reactions</strong> — e.g. <em>change the lighting to red when combat starts</em>,
+              via <code>lighting_service.py</code> and the lighting plugin.</li>
+            <li><strong>Notifications, sound, HA</strong> — a triggered event can also send a notification, play a
+              sound, or control Home Assistant.</li>
+          </ul>
+          <div class="note">
+            <span class="note-icon">⚡</span>
+            <span class="note-text">Example: set up a Vision sensor on your health bar and a macro that turns your
+              RGB lighting red when it tracks the combat condition — automatic reactive lighting with addons/plugins,
+              including Home Assistant.</span>
+          </div>
+        </section>
+
+        <!-- 12. Phone Panel / PWA -->
         <section class="content-block" id="panel">
-          <h3>6. Phone Panel / PWA</h3>
+          <h3>12. Phone Panel / PWA</h3>
           <p>The <code>HTML/</code> folder is a web panel served by the app (<code>panel_window.py</code> + <code>ws_bridge.py</code>). It can also run as a <strong>PWA</strong> on your phone.</p>
           <h4>How pairing works</h4>
           <ol>
@@ -277,7 +437,7 @@ cd iris</code></pre>
 
         <!-- 7. Android -->
         <section class="content-block" id="android">
-          <h3>7. Android App</h3>
+          <h3>13. Android App</h3>
           <p>A native Android companion lives in <code>android/</code>. It pairs with the panel and can serve as a companion device.</p>
           <div class="steps">
             <div class="step">
@@ -306,8 +466,8 @@ cd iris</code></pre>
 
         <!-- 8. Home Assistant -->
         <section class="content-block" id="home-assistant">
-          <h3>8. Home Assistant</h3>
-          <p>Iris can control Home Assistant entities (lights, scenes, switches) and show sensor states.</p>
+          <h3>14. Home Assistant</h3>
+          <p>Iris can control Home Assistant entities (lights, scenes, switches) and show sensor states — from buttons, the panel, the tray, and your automations. HA is also usable as a <strong>lighting provider</strong>, so your reactive macros and plugin actions can drive HA lights (e.g. turn the smart lights red when combat starts).</p>
           <h4>Configuration</h4>
           <p>Set these in <code>iris_config.json</code> (or via settings):</p>
           <div class="table-wrapper">
@@ -337,7 +497,7 @@ cd iris</code></pre>
 
         <!-- 9. Plugins -->
         <section class="content-block" id="plugins">
-          <h3>9. Plugins</h3>
+          <h3>15. Plugins</h3>
           <p>Iris has an <strong>extensible plugin system</strong> (<code>app/plugin_manager.py</code> + <code>app/plugins/</code>). Each plugin declares settings, status, buttons, outputs, and live data.</p>
           <h4>What a plugin exposes</h4>
           <ul>
@@ -355,9 +515,10 @@ cd iris</code></pre>
               </thead>
               <tbody>
                 <tr><td>Elite Dangerous</td><td><code>app/plugins/elite_dangerous/</code></td><td>Reads the game journal for ship/status/telemetry and drives button-box controls.</td></tr>
-                <tr><td>OpenRGB</td><td><code>app/plugins/openrgb/</code></td><td>Controls RGB lighting via the OpenRGB SDK server, switching profiles and colors.</td></tr>
+                <tr><td>OpenRGB</td><td><code>app/plugins/openrgb/</code></td><td>Controls RGB lighting via the OpenRGB SDK server, switching profiles and colors. Declares a lighting provider for the lighting service.</td></tr>
+                <tr><td>Home Assistant</td><td><code>app/plugins/ha/</code></td><td>Addon/plugin integration for HA entities, sensors, and lighting through the plugin system.</td></tr>
                 <tr><td>PC Stats</td><td><code>app/plugins/pc_stats/</code></td><td>Reports CPU/GPU temp, usage, FPS.</td></tr>
-                <tr><td>Vision</td><td><code>app/plugins/vision/</code></td><td>Screen-analysis sensors that watch a screen region and fire events on colour conditions.</td></tr>
+                <tr><td>Vision</td><td><code>app/plugins/vision/</code></td><td>Screen-analysis sensors that watch a screen region and fire events on colour conditions, plus OCR.</td></tr>
               </tbody>
             </table>
           </div>
@@ -369,7 +530,7 @@ cd iris</code></pre>
 
         <!-- 10. Themes -->
         <section class="content-block" id="themes">
-          <h3>10. Themes &amp; Appearance</h3>
+          <h3>16. Themes &amp; Appearance</h3>
           <p>Iris has a theme engine. Themes are defined in <code>config.json</code> under <code>"theme"</code>.</p>
           <div class="table-wrapper">
             <table>
@@ -388,7 +549,7 @@ cd iris</code></pre>
 
         <!-- 11. Build -->
         <section class="content-block" id="build">
-          <h3>11. Build &amp; Package</h3>
+          <h3>17. Build &amp; Package</h3>
           <p>To build a standalone Windows executable and installer:</p>
           <div class="steps">
             <div class="step">
@@ -411,7 +572,7 @@ cd iris</code></pre>
 
         <!-- 12. Config Reference -->
         <section class="content-block" id="config">
-          <h3>12. Configuration Reference</h3>
+          <h3>18. Configuration Reference</h3>
           <p>
             The config file location depends on how you run Iris:
             <strong>source</strong> → <code>app/iris_config.json</code>;
@@ -441,12 +602,21 @@ cd iris</code></pre>
 
         <!-- 13. Structure -->
         <section class="content-block" id="structure">
-          <h3>13. Project Structure</h3>
+          <h3>19. Project Structure</h3>
 <pre><code>Iris/
 ├── app/                    # Python desktop application
 │   ├── main.py             # Entry point
 │   ├── main_window.py      # iPhone-shaped overlay window
-│   ├── serial_comm.py      # USB serial bridge to ESP
+│   ├── capture_toolbar.py  # Screen-capture toolbar with annotations & OCR
+│   ├── colour_picker.py    # System-wide colour picker
+│   ├── notepad_window.py   # Built-in notepad
+│   ├── quick_note.py       # Quick notes
+│   ├── win_volume.py       # Per-application volume mixing & mute
+│   ├── lighting_service.py # Generic lighting / profile-focus manager
+│   ├── keyboard_service.py # Hotkey injection backend
+│   ├── automations.py      # Conditional macro & reactive-event engine
+│   ├── vision.py           # Screen-analysis engine + OCR primitives
+│   ├── serial_comm.py      # USB serial bridge to ESP (optional display)
 │   ├── win_platform.py     # Windows-specific helpers
 │   ├── providers/          # Data providers (Stats, HA, Media, ...)
 │   ├── plugins/            # Plugin system & bundled plugins
@@ -470,7 +640,7 @@ cd iris</code></pre>
 
         <!-- 14. Troubleshooting -->
         <section class="content-block" id="troubleshooting">
-          <h3>14. Troubleshooting</h3>
+          <h3>20. Troubleshooting</h3>
           <div class="content-block">
             <h4>Display not lighting up</h4>
             <p>
@@ -504,6 +674,24 @@ cd iris</code></pre>
               The MAX7219 failsafe should shut the display off after 60 s of no serial traffic. Ensure <code>serial_comm.py</code> keeps communicating and the PC app stays alive.
             </p>
           </div>
+          <div class="content-block">
+            <h4>OCR returning no text</h4>
+            <p>
+              OCR relies on the Windows OCR language pack. Ensure the matching language pack is installed and that the captured region contains legible text. Protected/DRM content may capture black.
+            </p>
+          </div>
+          <div class="content-block">
+            <h4>Vision sensor not triggering</h4>
+            <p>
+              A vision sensor only captures while its target app/process is running. Re-calibrate the region if you move the target to another monitor, since regions are anchored to the display they were captured on.
+            </p>
+          </div>
+          <div class="content-block">
+            <h4>Per-app volume shows the wrong app</h4>
+            <p>
+              The mixer tracks the <strong>foreground</strong> application's audio session. Bring the app you want to adjust to the foreground, or use the session list to target it directly.
+            </p>
+          </div>
         </section>
 
       </div>
@@ -517,7 +705,7 @@ cd iris</code></pre>
           <span class="accent-dot" aria-hidden="true"></span>
           <span>Iris</span>
         </a>
-        <p>Windows PC companion overlay and MAX7219 display driver.</p>
+        <p>Dynamic Stream Deck–style PC command centre — control lighting, capture &amp; annotate with OCR, mix audio, and automate with macros, hotkeys, and vision.</p>
       </div>
       <div class="footer-links">
         <div class="footer-column">

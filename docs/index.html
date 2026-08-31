@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Iris — PC Companion Overlay. A Windows desktop companion that drives an ESP8266/ESP32 MAX7219 display, floating overlay, and companion panel.">
+  <meta name="description" content="Iris — a dynamic Stream Deck–style PC companion. Control lighting, run a capture/annotation toolbar with OCR, mix media and app volumes, monitor PC stats, drive in-game button boxes, and automate everything with conditional macros, hotkey injection, and a vision system with OCR.">
   <meta name="theme-color" content="#0a0a0f">
-  <meta property="og:title" content="Iris — PC Companion Overlay">
-  <meta property="og:description" content="Windows desktop companion for MAX7219 displays, floating overlays, and your phone panel.">
+  <meta property="og:title" content="Iris — Dynamic Stream Deck for your PC">
+  <meta property="og:description" content="Control lighting, capture & annotate, mix volumes, monitor stats, drive in-game button boxes, and automate with macros, hotkeys, and vision+OCR.">
   <meta property="og:type" content="website">
-  <title>Iris — PC Companion Overlay</title>
+  <title>Iris — Dynamic Stream Deck for your PC</title>
   <link rel="stylesheet" href="css/style.css">
   <link rel="icon" href="https://github.com/iamfud/iris/raw/master/Iris.ico">
 </head>
@@ -33,12 +33,16 @@
 
   <main id="main">
     <section class="hero">
-      <span class="hero-badge">PC Companion Overlay</span>
-      <h1>Your PC, <span class="highlight">on a physical display.</span></h1>
+      <span class="hero-badge">Dynamic Stream Deck for your PC</span>
+      <h1>Turn your PC into a <span class="highlight">command centre.</span></h1>
       <p>
-        Iris is a Windows desktop companion that streams PC stats, notifications, media info,
-        and Home Assistant entities to an ESP8266/ESP32-driven MAX7219 LED matrix — plus a
-        floating overlay and a phone/PWA panel for full control.
+        Iris is a dynamic, Stream Deck–style utility that puts your whole setup under one roof —
+        controlling and automating <strong>lighting</strong>, running a <strong>screen-capture
+        toolbar with annotations and OCR</strong>, mixing <strong>media and per-app volumes</strong>,
+        tracking <strong>PC statistics</strong>, and driving custom <strong>button boxes</strong> in
+        games and simulators. Add a <strong>conditional macro system</strong> with hotkey injection,
+        a <strong>vision system with OCR</strong>, and a <strong>library browser</strong> for every
+        capture and note you take. Fully extensible with plugins — including Home Assistant.
       </p>
       <div class="hero-actions">
         <a href="setup.html" class="btn btn-primary">Start Setup Guide</a>
@@ -49,49 +53,54 @@
     <section class="section" id="features">
       <div class="section-header">
         <span class="section-tag">Features</span>
-        <h2>Everything your desk deserves</h2>
-        <p>From hardware telemetry to smart-home control, Iris brings your PC's data to the physical world.</p>
+        <h2>Everything under one roof</h2>
+        <p>Iris is a dynamic Stream Deck–style utility. Assign anything to a button — control lighting, capture &amp; annotate your screen, mix audio, run shots, and react to your PC, your games, and your smart home.</p>
       </div>
       <div class="cards-grid">
         <div class="card">
+          <div class="card-icon orange">🎛️</div>
+          <h3>Control &amp; Automate Lighting</h3>
+          <p>Drive RGB and smart-home lighting from buttons, OpenRGB presets, and reactive automations (e.g. lighting turns red when you enter combat).</p>
+        </div>
+        <div class="card">
+          <div class="card-icon red">📸</div>
+          <h3>Capture Toolbar + OCR</h3>
+          <p>A transient screen-capture toolbar — fullscreen or zone screenshots, pixel annotations, and automatic OCR text extraction to your clipboard, all filed in the library.</p>
+        </div>
+        <div class="card">
+          <div class="card-icon green">🎨</div>
+          <h3>Color Picker &amp; Notepad</h3>
+          <p>A system-wide color picker (with pixel grab and clipboard HEX) and a built-in notepad with quick notes — everything collected in one integrated library browser.</p>
+        </div>
+        <div class="card">
+          <div class="card-icon blue">🔊</div>
+          <h3>Media Mixing &amp; App Volume</h3>
+          <p>Full media transport controls plus per-application volume mixing — adjust the currently active app's volume and mute from a button or slider.</p>
+        </div>
+        <div class="card">
           <div class="card-icon orange">📊</div>
-          <h3>Live PC Stats</h3>
-          <p>CPU/GPU temperature, usage, and FPS streamed in real time to the matrix display.</p>
+          <h3>Live PC Statistics</h3>
+          <p>CPU/GPU temperature, usage, and FPS. Stream to the optional MAX7219 matrix display, the floating overlay, or your phone panel.</p>
         </div>
         <div class="card">
-          <div class="card-icon blue">🕐</div>
-          <h3>Clock &amp; Date</h3>
-          <p>Large clock with date, minute bar, and an ambient animated "eyes" doodle.</p>
+          <div class="card-icon red">🎮</div>
+          <h3>Game / App Button Boxes</h3>
+          <p>Display custom button boxes inside simulators, games, or apps — per-game actions and telemetry via integrations like Elite Dangerous.</p>
         </div>
         <div class="card">
-          <div class="card-icon red">🔔</div>
-          <h3>Notifications</h3>
-          <p>Windows notifications mirrored onto the secondary display and your phone panel.</p>
+          <div class="card-icon blue">👁️</div>
+          <h3>Vision System + OCR</h3>
+          <p>Screen-analysis sensors watch a region and fire events on colour conditions — plus full OCR for extracting text from anything on screen.</p>
         </div>
         <div class="card">
-          <div class="card-icon green">🏠</div>
-          <h3>Home Assistant</h3>
-          <p>View sensor states and trigger shortcuts for lights, scenes, and switches.</p>
+          <div class="card-icon green">⚡</div>
+          <h3>Conditional Macros &amp; Hotkeys</h3>
+          <p>A macro system with hotkey injection and reactive events. Trigger actions when a condition is true — e.g. change lighting when combat starts.</p>
         </div>
         <div class="card">
-          <div class="card-icon orange">⏰</div>
-          <h3>Alarm Clock</h3>
-          <p>Set alarms from your PC; dismiss or snooze right from the panel.</p>
-        </div>
-        <div class="card">
-          <div class="card-icon blue">🎵</div>
-          <h3>Media Controls</h3>
-          <p>Now-playing display via Windows SMTC, with album art and playback status.</p>
-        </div>
-        <div class="card">
-          <div class="card-icon red">🎨</div>
-          <h3>OpenRGB</h3>
-          <p>Sync RGB lighting profiles over the OpenRGB SDK server.</p>
-        </div>
-        <div class="card">
-          <div class="card-icon green">🎮</div>
-          <h3>Vision &amp; Plugins</h3>
-          <p>Screen-analysis vision sensors and a plugin system for Elite Dangerous, OpenRGB, and more.</p>
+          <div class="card-icon orange">🏠</div>
+          <h3>Home Assistant &amp; Plugins</h3>
+          <p>Control lights, scenes, and switches; extend with addons and plugins including Home Assistant, OpenRGB, Elite Dangerous, and PC stats.</p>
         </div>
       </div>
     </section>
@@ -127,8 +136,8 @@
     <section class="section" id="components">
       <div class="section-header">
         <span class="section-tag">Components</span>
-        <h2>An integrated system</h2>
-        <p>Iris is more than a display — it's a full companion stack.</p>
+        <h2>An integrated command system</h2>
+        <p>Iris is a full utility stack — desktop app, capture &amp; library tools, macro engine, hardware display, and a control panel.</p>
       </div>
       <div class="cards-grid">
         <div class="card">
@@ -147,9 +156,19 @@
           <p>A native Android companion in <code>android/</code> for companion-device use.</p>
         </div>
         <div class="card">
+          <div class="card-icon green">📚</div>
+          <h3>Library Browser</h3>
+          <p>One integrated browser for every screenshot, OCR text, and note — grouped per app, searchable from the panel.</p>
+        </div>
+        <div class="card">
           <div class="card-icon red">🧩</div>
           <h3>Plugin System</h3>
-          <p>Extensible plugins for Elite Dangerous, OpenRGB, PC stats, and vision sensors.</p>
+          <p>Extensible plugins for Elite Dangerous, OpenRGB, Home Assistant, PC stats, lighting, and vision sensors.</p>
+        </div>
+        <div class="card">
+          <div class="card-icon orange">⚡</div>
+          <h3>Macro &amp; Automation Engine</h3>
+          <p>Conditional macros, hotkey injection, and reactive events that fire actions (lighting, hotkeys, notifications) based on live state.</p>
         </div>
       </div>
     </section>
@@ -158,7 +177,8 @@
       <div class="content-block" style="text-align:center;padding:48px;">
         <h3 style="display:block;text-align:center;font-size:1.6rem;">Ready to build yours?</h3>
         <p style="max-width:560px;margin:16px auto 24px;">
-          Follow the step-by-step setup guide covering hardware, firmware, the Python app, and every component.
+          Follow the step-by-step setup guide covering control &amp; capture tools, macros, plugins,
+          hardware, the Python app, and every component.
         </p>
         <a href="setup.html" class="btn btn-primary">Open the Setup Guide</a>
       </div>
@@ -172,7 +192,7 @@
           <span class="accent-dot" aria-hidden="true"></span>
           <span>Iris</span>
         </a>
-        <p>Windows PC companion overlay and MAX7219 display driver. Built with Python, ESP firmware, and a touch of neon.</p>
+        <p>Dynamic Stream Deck–style PC command centre — control lighting, capture &amp; annotate, mix audio, automate with macros, hotkeys, and vision+OCR. Built with Python, ESP firmware, and a touch of neon.</p>
       </div>
       <div class="footer-links">
         <div class="footer-column">

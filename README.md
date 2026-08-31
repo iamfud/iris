@@ -1,14 +1,18 @@
-# Iris — PC Companion Overlay
+# Iris — Dynamic Stream Deck for your PC
 
-A Windows desktop companion that displays PC stats (CPU/GPU temps, clock, notifications) and controls Home Assistant entities via an ESP8266/ESP32-driven secondary display. The main panel is an iPhone-shaped floating overlay with gauges, quick tiles, and Home Assistant shortcuts.
+A dynamic, Stream Deck–style utility that turns your PC into a command centre. Control and automate **lighting**, run a **screen-capture toolbar with annotations and OCR**, mix **media and per-app volumes**, monitor **PC statistics**, and drive custom **button boxes** in games, simulators, and apps. A **conditional macro system** with hotkey injection and reactive events ties it together — for example, change your lighting to red when you enter combat.
 
-## Hardware Required
+Everything you capture, OCR, and note is collected into an **integrated library browser**, and the whole thing is extended by **plugins and addons including Home Assistant**. Iris can also drive an optional ESP8266/ESP32 + MAX7219 LED matrix display, a floating overlay, and a phone/PWA panel.
+
+> **Full step-by-step setup guide:** https://iamfud.github.io/iris/
+
+## Hardware Required (optional — for the LED display)
 
 - **ESP8266 (Wemos D1 Mini) or ESP32** running the firmware in `firmware/d1mini/`
 - **MAX7219 LED matrix display** (or daisy-chained modules) driven by the ESP over SPI
 - **USB cable** to connect the ESP to your PC
 
-The ESP connects over USB serial, receives stats/commands from the PC, and drives the MAX7219 display.
+The ESP connects over USB serial, receives stats/commands from the PC, and drives the MAX7219 display. The capture, mixing, macro, and control features all work *without* the display.
 
 ### Wiring (ESP8266 D1 Mini → MAX7219)
 
@@ -24,15 +28,19 @@ Display type: `FC16_HW` — 4 daisy-chained 8×8 LED matrix modules.
 
 ## Features
 
+- **Control & automate lighting** — OpenRGB and Home Assistant that react to your PC and your games
+- **Capture toolbar + annotations** — fullscreen/zone screenshots with pixel annotations
+- **Automatic OCR** — every capture is OCR'd to your clipboard and stored
+- **Color picker** — system-wide pixel colour grab with HEX/RGB to clipboard
+- **Notepad & quick notes** — collected into the integrated library browser
+- **Media mixing & app volume** — full transport controls plus per-application volume/mute
 - **Live PC stats** — CPU/GPU temperature, usage, FPS
-- **Large clock** with date, minute bar, and ambient "eyes" animation
-- **Notification mirroring** — Windows notifications pushed to the display
-- **Home Assistant integration** — View sensor states, trigger shortcuts
-- **Alarm clock** — Set alarms from the PC, dismiss/snooze from the panel
-- **Media controls** — Now-playing display via Windows SMTC
-- **Audio visualizer** — FFT-based spectrum on the secondary display
-- **OpenRGB integration** — Sync RGB profiles
-- **Steam integration** — Friends online / game status
+- **Game / app button boxes** — custom button-box overlays in simulators, games, and apps
+- **Vision system + OCR** — screen sensors firing events on colour conditions, plus text extraction
+- **Conditional macros & hotkeys** — reactive events with hotkey injection (e.g. lighting turns red in combat)
+- **Home Assistant & plugins** — extensible addons/plugins, including HA
+- **Phone / PWA panel** — pair and control from your phone
+- **Optional MAX7219 display** — clock, notification mirroring, stats on a physical LED matrix
 - **Global hotkey** — `Ctrl+Alt+I` to toggle the overlay
 
 ## Dependencies
@@ -43,7 +51,7 @@ Display type: `FC16_HW` — 4 daisy-chained 8×8 LED matrix modules.
 
 ## Quick Start
 
-### 1. Flash the firmware
+### 1. Flash the firmware (optional)
 
 Open `firmware/d1mini/main/main.ino` in the Arduino IDE, select your ESP board, and upload.
 
@@ -81,15 +89,24 @@ Iris/
 ├── app/                    # Python desktop application
 │   ├── main.py             # Entry point
 │   ├── main_window.py      # iPhone-shaped overlay window
-│   ├── settings_dialog.py  # Settings UI
-│   ├── overlay_window.py   # Numline-style overlay
-│   ├── serial_comm.py      # USB serial bridge to ESP
+│   ├── capture_toolbar.py  # Screen-capture toolbar with annotations & OCR
+│   ├── colour_picker.py    # System-wide colour picker
+│   ├── notepad_window.py   # Built-in notepad
+│   ├── quick_note.py       # Quick notes
+│   ├── win_volume.py       # Per-application volume mixing & mute
+│   ├── lighting_service.py # Generic lighting / profile-focus manager
+│   ├── keyboard_service.py # Hotkey injection backend
+│   ├── automations.py      # Conditional macro & reactive-event engine
+│   ├── vision.py           # Screen-analysis engine + OCR primitives
+│   ├── serial_comm.py      # USB serial bridge to ESP (optional display)
 │   ├── win_platform.py     # Windows-specific helpers
 │   ├── providers/          # Data providers (Stats, HA, Media, etc.)
+│   ├── plugins/            # Plugin system & bundled plugins
 │   ├── config.py           # JSON config management
 │   └── constants.py        # Design tokens, defaults
 ├── firmware/
 │   └── d1mini/main/        # ESP8266/32 Arduino firmware
+├── docs/                   # GitHub Pages documentation site
 ├── requirements.txt
 └── build.bat
 ```
