@@ -1,6 +1,6 @@
-# Iris — Dynamic Stream Deck for your PC
+# Iris — Dynamic PC Command Centre
 
-A dynamic, Stream Deck–style utility that turns your PC into a command centre. Control and automate **lighting**, run a **screen-capture toolbar with annotations and OCR**, mix **media and per-app volumes**, monitor **PC statistics**, and drive custom **button boxes** in games, simulators, and apps. A **conditional macro system** with hotkey injection and reactive events ties it together — for example, change your lighting to red when you enter combat.
+A dynamic, control-and-automation utility that turns your PC into a command centre. Control and automate **lighting**, run a **screen-capture toolbar with annotations and OCR**, mix **media and per-app volumes**, monitor **PC statistics** (FPS live from RTSS), run an **alarm, stopwatch, and countdown timer**, and drive custom **button boxes** in games, simulators, and apps. A **conditional macro system** with hotkey injection and reactive events ties it together — for example, change your lighting to red when you enter combat.
 
 Everything you capture, OCR, and note is collected into an **integrated library browser**, and the whole thing is extended by **plugins and addons including Home Assistant**. Iris can also drive an optional ESP8266/ESP32 + MAX7219 LED matrix display, a floating overlay, and a phone/PWA panel.
 
@@ -30,13 +30,15 @@ Display type: `FC16_HW` — 4 daisy-chained 8×8 LED matrix modules.
 
 - **Control & automate lighting** — OpenRGB and Home Assistant that react to your PC and your games
 - **Capture toolbar + annotations** — fullscreen/zone screenshots with pixel annotations
-- **Automatic OCR** — every capture is OCR'd to your clipboard and stored
+- **OCR on every capture** — every capture is OCR'd to your clipboard and stored
+- **Capture text to clipboard** — standalone OCR that grabs text from any screen region, no screenshot needed
 - **Color picker** — system-wide pixel colour grab with HEX/RGB to clipboard
 - **Notepad & quick notes** — collected into the integrated library browser
 - **Media mixing & app volume** — full transport controls plus per-application volume/mute
-- **Live PC stats** — CPU/GPU temperature, usage, FPS
+- **Live PC stats** — CPU/GPU temperature (MSI Afterburner) and FPS, read live from RTSS
+- **Alarm, stopwatch & countdown** — alarms from your PC, plus an on-screen stopwatch and countdown timer
 - **Game / app button boxes** — custom button-box overlays in simulators, games, and apps
-- **Vision system + OCR** — screen sensors firing events on colour conditions, plus text extraction
+- **Vision system** — screen sensors firing events on colour conditions (colour % / pixel match / brightness)
 - **Conditional macros & hotkeys** — reactive events with hotkey injection (e.g. lighting turns red in combat)
 - **Home Assistant & plugins** — extensible addons/plugins, including HA
 - **Phone / PWA panel** — pair and control from your phone
@@ -98,6 +100,9 @@ Iris/
 │   ├── keyboard_service.py # Hotkey injection backend
 │   ├── automations.py      # Conditional macro & reactive-event engine
 │   ├── vision.py           # Screen-analysis engine + OCR primitives
+│   ├── alarm_popup.py      # Alarm popup (dismiss/snooze from the panel)
+│   ├── alarm_sound.py      # Alarm sound playback
+│   ├── stopwatch.py        # Floating stopwatch / countdown-timer overlay
 │   ├── serial_comm.py      # USB serial bridge to ESP (optional display)
 │   ├── win_platform.py     # Windows-specific helpers
 │   ├── providers/          # Data providers (Stats, HA, Media, etc.)

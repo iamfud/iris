@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Iris — a dynamic Stream Deck–style PC companion. Control lighting, run a capture/annotation toolbar with OCR, mix media and app volumes, monitor PC stats, drive in-game button boxes, and automate everything with conditional macros, hotkey injection, and a vision system with OCR.">
+  <meta name="description" content="Iris — a dynamic PC command centre and macro utility. Control lighting, run a capture/annotation toolbar with OCR, mix media and app volumes, monitor PC stats from RTSS, drive in-game button boxes, and automate everything with conditional macros, hotkey injection, and a vision system with OCR.">
   <meta name="theme-color" content="#0a0a0f">
-  <meta property="og:title" content="Iris — Dynamic Stream Deck for your PC">
+  <meta property="og:title" content="Iris — Dynamic PC Command Centre">
   <meta property="og:description" content="Control lighting, capture & annotate, mix volumes, monitor stats, drive in-game button boxes, and automate with macros, hotkeys, and vision+OCR.">
   <meta property="og:type" content="website">
-  <title>Iris — Dynamic Stream Deck for your PC</title>
+  <title>Iris — Dynamic PC Command Centre</title>
   <link rel="stylesheet" href="css/style.css">
   <link rel="icon" href="https://github.com/iamfud/iris/raw/master/Iris.ico">
 </head>
@@ -33,10 +33,10 @@
 
   <main id="main">
     <section class="hero">
-      <span class="hero-badge">Dynamic Stream Deck for your PC</span>
+      <span class="hero-badge">Dynamic PC Command Centre</span>
       <h1>Turn your PC into a <span class="highlight">command centre.</span></h1>
       <p>
-        Iris is a dynamic, Stream Deck–style utility that puts your whole setup under one roof —
+        Iris is a dynamic, control-and-automation utility that puts your whole setup under one roof —
         controlling and automating <strong>lighting</strong>, running a <strong>screen-capture
         toolbar with annotations and OCR</strong>, mixing <strong>media and per-app volumes</strong>,
         tracking <strong>PC statistics</strong>, and driving custom <strong>button boxes</strong> in
@@ -54,7 +54,7 @@
       <div class="section-header">
         <span class="section-tag">Features</span>
         <h2>Everything under one roof</h2>
-        <p>Iris is a dynamic Stream Deck–style utility. Assign anything to a button — control lighting, capture &amp; annotate your screen, mix audio, run shots, and react to your PC, your games, and your smart home.</p>
+        <p>Iris is a dynamic control-and-automation utility. Assign anything to a button — control lighting, capture &amp; annotate your screen, mix audio, run shots, and react to your PC, your games, and your smart home.</p>
       </div>
       <div class="cards-grid">
         <div class="card">
@@ -64,8 +64,13 @@
         </div>
         <div class="card">
           <div class="card-icon red">📸</div>
-          <h3>Capture Toolbar + OCR</h3>
-          <p>A transient screen-capture toolbar — fullscreen or zone screenshots, pixel annotations, and automatic OCR text extraction to your clipboard, all filed in the library.</p>
+          <h3>Capture Toolbar + Annotations</h3>
+          <p>A transient screen-capture toolbar — fullscreen or zone screenshots with pixel annotations. OCR runs on every capture automatically, and everything is filed in the library.</p>
+        </div>
+        <div class="card">
+          <div class="card-icon blue">🔤</div>
+          <h3>Capture Text (OCR to Clipboard)</h3>
+          <p>A standalone OCR feature that grabs text from any screen region and copies it straight to your clipboard — no screenshot needed.</p>
         </div>
         <div class="card">
           <div class="card-icon green">🎨</div>
@@ -80,7 +85,12 @@
         <div class="card">
           <div class="card-icon orange">📊</div>
           <h3>Live PC Statistics</h3>
-          <p>CPU/GPU temperature, usage, and FPS. Stream to the optional MAX7219 matrix display, the floating overlay, or your phone panel.</p>
+          <p>CPU/GPU temperature and FPS, with FPS read live from RTSS. Stream to the optional MAX7219 matrix display, the floating overlay, or your phone panel.</p>
+        </div>
+        <div class="card">
+          <div class="card-icon red">⏰</div>
+          <h3>Alarm, Stopwatch &amp; Countdown</h3>
+          <p>Set alarms from your PC and dismiss or snooze from the panel — plus an on-screen stopwatch and countdown timer overlay.</p>
         </div>
         <div class="card">
           <div class="card-icon red">🎮</div>
@@ -89,8 +99,8 @@
         </div>
         <div class="card">
           <div class="card-icon blue">👁️</div>
-          <h3>Vision System + OCR</h3>
-          <p>Screen-analysis sensors watch a region and fire events on colour conditions — plus full OCR for extracting text from anything on screen.</p>
+          <h3>Vision System</h3>
+          <p>Screen-analysis sensors watch a region and fire events on colour conditions — colour percentage, pixel match, or average brightness.</p>
         </div>
         <div class="card">
           <div class="card-icon green">⚡</div>
@@ -192,7 +202,7 @@
           <span class="accent-dot" aria-hidden="true"></span>
           <span>Iris</span>
         </a>
-        <p>Dynamic Stream Deck–style PC command centre — control lighting, capture &amp; annotate, mix audio, automate with macros, hotkeys, and vision+OCR. Built with Python, ESP firmware, and a touch of neon.</p>
+        <p>Dynamic PC command centre — control lighting, capture &amp; annotate, mix audio, automate with macros, hotkeys, and vision+OCR. Built with Python, ESP firmware, and a touch of neon.</p>
       </div>
       <div class="footer-links">
         <div class="footer-column">
