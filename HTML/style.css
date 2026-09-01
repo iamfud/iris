@@ -3426,12 +3426,12 @@ header p{
     width:100%;
     height:var(--fill-pct, 0%);
     background:var(--fill-color, var(--theme-color-1, #48B2E9));
-    opacity:.38;
+    opacity:.68;
     z-index:1;
     pointer-events:none;
-    transition:height .25s ease-out, width .25s ease-out;
+    transition:height .25s cubic-bezier(0.4, 0, 0.2, 1), width .25s cubic-bezier(0.4, 0, 0.2, 1);
     border-radius:0 0 calc(var(--radius-card, 10px) - 1px) calc(var(--radius-card, 10px) - 1px);
-    box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 0 12px var(--fill-color, var(--theme-color-1, #48B2E9));
+    box-shadow:inset 0 1.5px 0 rgba(255, 255, 255, 0.6), 0 0 16px var(--fill-color, var(--theme-color-1, #48B2E9));
 }
 .pdev-tile.has-fill-100 .pdev-progress-fill{
     border-radius:calc(var(--radius-card, 10px) - 1px);
@@ -4217,12 +4217,12 @@ html.is-landscape .panel-view-overlay .pdev-tile .pdev-progress-fill {
     height: 100% !important;
     width: var(--fill-pct, 0%) !important;
     background: var(--fill-color, var(--theme-color-1, #48B2E9)) !important;
-    opacity: 0.38 !important;
+    opacity: 0.68 !important;
     border-radius: calc(var(--radius-card, 10px) - 1px) 0 0 calc(var(--radius-card, 10px) - 1px) !important;
-    box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.4), 0 0 12px var(--fill-color, var(--theme-color-1, #48B2E9)) !important;
+    box-shadow: inset -1.5px 0 0 rgba(255, 255, 255, 0.6), 0 0 16px var(--fill-color, var(--theme-color-1, #48B2E9)) !important;
     z-index: 1 !important;
     pointer-events: none !important;
-    transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.3s ease !important;
+    transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.25s ease !important;
 }
 html.is-landscape .panel-view-overlay .pdev-tile.has-fill-100 .pdev-progress-fill {
     border-radius: calc(var(--radius-card, 10px) - 1px) !important;
@@ -6294,12 +6294,12 @@ select option,
     width: 100%;
     height: var(--fill-pct, 0%);
     background: var(--fill-color, var(--theme-color-1, #48B2E9));
-    opacity: 0.38;
+    opacity: 0.68;
     border-radius: 0 0 calc(var(--radius-card, 10px) - 1px) calc(var(--radius-card, 10px) - 1px);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 0 12px var(--fill-color, var(--theme-color-1, #48B2E9));
+    box-shadow: inset 0 1.5px 0 rgba(255, 255, 255, 0.6), 0 0 16px var(--fill-color, var(--theme-color-1, #48B2E9));
     z-index: 1;
     pointer-events: none;
-    transition: height 0.3s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.3s ease;
+    transition: height 0.25s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.25s ease;
 }
 
 .pdev-tile.has-fill-100 .pdev-progress-fill {

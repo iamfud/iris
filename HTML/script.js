@@ -7826,6 +7826,8 @@
 
     const isProgressActive = (s.show_progress_fill !== false) && (fillPct !== null);
     if (isProgressActive) {
+      colorPlate = ""; // Progress bar drives the color fill — suppress solid 100% full-tile mask
+      glyphStyle = "";
       const fillColor = s.color || activeColor || "var(--theme-color-1, #48B2E9)";
       progressFillPlate = '<span class="pdev-progress-fill" style="--fill-pct:' + fillPct.toFixed(1) + '%; --fill-color:' + esc(fillColor) + ';"></span>';
       extraTileClass += " has-progress-fill" + (fillPct >= 99.5 ? " has-fill-100" : "");
@@ -8582,7 +8584,9 @@
 
           const isProgressActive = (s.show_progress_fill !== false) && (fillPct !== null);
           let progEl = tile.querySelector(".pdev-progress-fill");
+          const colorPlateEl = tile.querySelector(".pdev-color-plate");
           if (isProgressActive) {
+            if (colorPlateEl) colorPlateEl.style.display = "none";
             const fillColor = s.color || activeColor || "var(--theme-color-1, #48B2E9)";
             if (!progEl) {
               progEl = document.createElement("span");
@@ -8594,6 +8598,7 @@
             tile.classList.add("has-progress-fill");
             tile.classList.toggle("has-fill-100", fillPct >= 99.5);
           } else {
+            if (colorPlateEl) colorPlateEl.style.display = "";
             if (progEl) progEl.remove();
             tile.classList.remove("has-progress-fill", "has-fill-100");
           }
