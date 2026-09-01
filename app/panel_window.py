@@ -490,11 +490,11 @@ def _run(width, height, x=None, y=None, query_params=None, nav_queue=None):
     try:
         import os
         import paths
-        wv_data = paths.get_webview_data_dir("WebView2")
+        wv_data = paths.get_webview_data_dir("WebView2_panel")
         os.environ["WEBVIEW2_USER_DATA_FOLDER"] = wv_data
-        # Prevent GPU composition/context hangs on cold window spawn
-        if "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS" not in os.environ:
-            os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = "--disable-gpu-compositing --disable-direct-composition"
+        # Ensure standard hardware acceleration and DirectComposition
+        if "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS" in os.environ:
+            os.environ.pop("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", None)
     except Exception as exc:
         log.error("[panel] WebView2 data-folder setup failed: %s", exc)
 
@@ -516,6 +516,7 @@ def _run(width, height, x=None, y=None, query_params=None, nav_queue=None):
 
     api = _JSApi(state)
     import urllib.parse
+    import urllib.request
     if query_params:
         if isinstance(query_params, dict):
             qs = urllib.parse.urlencode(query_params)
@@ -524,6 +525,15 @@ def _run(width, height, x=None, y=None, query_params=None, nav_queue=None):
         panel_url = f"http://127.0.0.1:15502/index.html?{qs}"
     else:
         panel_url = "http://127.0.0.1:15502/index.html"
+
+    # Pre-flight check: ensure local HTTP server is responding before launching webview
+    for _ in range(25):
+        try:
+            with urllib.request.urlopen("http://127.0.0.1:15502/api/status", timeout=0.2) as resp:
+                if resp.status == 200:
+                    break
+        except Exception:
+            time.sleep(0.04)
 
     log.info("[panel] loading %s (%dx%d)", panel_url, width, height)
     try:

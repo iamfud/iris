@@ -12,8 +12,13 @@
   <link rel="shortcut icon" href="icon.png?v=4">
   <link rel="apple-touch-icon" sizes="180x180" href="icon-180.png?v=4">
   <link rel="manifest" href="manifest.json?v=4">
-  <title>Iris</title>
-  <link rel="stylesheet" href="style.css?v=307">
+  <link rel="stylesheet" href="style.css?v=308">
+  <script>
+    window.onerror = function (msg, url, line, col, error) {
+      console.error("[Iris Fatal UI Error]", msg, url, line, col, error);
+      return false;
+    };
+  </script>
 </head>
 <body>
   <div class="app">
