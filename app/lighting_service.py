@@ -179,6 +179,9 @@ class LightingService:
                 p_conf = default_lighting.get(pid) or {}
 
             preset = p_conf.get("preset", "")
+            if not preset and pid == "openrgb":
+                preset = "__theme__"
+
             # Handle day/night split if configured
             follow_day = p_conf.get("follow_daylight", False)
             if global_follow_day is False:

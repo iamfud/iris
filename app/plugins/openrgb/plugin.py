@@ -26,14 +26,21 @@ class Plugin:
 
     def get_lighting_presets(self) -> list:
         """Return available OpenRGB profiles as standardized lighting presets."""
+        presets = [{"id": "__theme__", "name": "Sync Active Theme (Neon 1)"}]
         profs = self._connector.get_options("openrgb_profiles") or []
-        return [{"id": p, "name": p} for p in profs]
+        presets.extend([{"id": p, "name": p} for p in profs])
+        return presets
 
     def apply_lighting_preset(self, preset_id: str):
         """Apply OpenRGB profile or color."""
         if not preset_id:
             return
-        if preset_id.startswith("#"):
+        if preset_id == "__theme__":
+            cfg = self._cfg or {}
+            theme = cfg.get("theme") or {}
+            color = theme.get("neon") or theme.get("accent") or "#48B2E9"
+            self._connector._set_color(color)
+        elif preset_id.startswith("#"):
             self._connector._set_color(preset_id)
         else:
             self._connector._apply_profile(preset_id)
