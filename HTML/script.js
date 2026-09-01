@@ -7843,12 +7843,18 @@
     const fillPct = parseProgressPercentage(progressVal, progressLabel, slotMin, slotMax);
 
     const isProgressActive = (s.show_progress_fill !== false) && (fillPct !== null);
+    let fillColor = "";
     if (isProgressActive) {
       colorPlate = ""; // Progress bar drives the color fill — suppress solid 100% full-tile mask
       glyphStyle = "";
-      const fillColor = resolveProgressFillColor(s.color, activeColor);
+      fillColor = resolveProgressFillColor(s.color, activeColor);
       progressFillPlate = '<span class="pdev-progress-fill" style="--fill-pct:' + fillPct.toFixed(1) + '%; --fill-color:' + esc(fillColor) + ';"></span>';
       extraTileClass += " has-progress-fill" + (fillPct >= 99.5 ? " has-fill-100" : "");
+    }
+
+    const isTileLight = (isProgressActive && isLightColor(fillColor) && fillPct >= 45) || (!isProgressActive && color && isLightColor(color));
+    if (isTileLight) {
+      extraTileClass += " pdev-tile-light";
     }
 
     if (isOn && !colorPlate && !albumArtPlate && !isElite) {
@@ -8603,9 +8609,10 @@
           const isProgressActive = (s.show_progress_fill !== false) && (fillPct !== null);
           let progEl = tile.querySelector(".pdev-progress-fill");
           const colorPlateEl = tile.querySelector(".pdev-color-plate");
+          let fillColor = "";
           if (isProgressActive) {
             if (colorPlateEl) colorPlateEl.style.display = "none";
-            const fillColor = resolveProgressFillColor(s.color, activeColor);
+            fillColor = resolveProgressFillColor(s.color, activeColor);
             if (!progEl) {
               progEl = document.createElement("span");
               progEl.className = "pdev-progress-fill";
@@ -8620,6 +8627,9 @@
             if (progEl) progEl.remove();
             tile.classList.remove("has-progress-fill", "has-fill-100");
           }
+
+          const isTileLight = (isProgressActive && isLightColor(fillColor) && fillPct >= 45) || (!isProgressActive && s.color && isLightColor(s.color));
+          tile.classList.toggle("pdev-tile-light", !!isTileLight);
 
           // Update status bar
           const statusBar = tile.querySelector(".pdev-status-bar");

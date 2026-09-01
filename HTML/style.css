@@ -6213,6 +6213,27 @@ select option,
     line-height: 1.2;
 }
 
+/* Auto-contrast luminance overrides for light buttons / filled progress bars */
+.pdev-tile.pdev-tile-light {
+    --fg: #0a0a0a;
+}
+.pdev-tile.pdev-tile-light .md,
+.pdev-tile.pdev-tile-light .material-icons-outlined,
+.pdev-tile.pdev-tile-light .pdev-text-only {
+    color: #0a0a0a !important;
+    text-shadow: 0 1px 1px rgba(255, 255, 255, 0.45);
+}
+.pdev-tile.pdev-tile-light .pdev-name-bar {
+    color: #0a0a0a !important;
+    background: rgba(255, 255, 255, 0.9);
+    border-top: 1px solid rgba(0, 0, 0, 0.15);
+}
+.pdev-tile.pdev-tile-light .pdev-group-bar {
+    color: #0a0a0a !important;
+    background: rgba(255, 255, 255, 0.9);
+    border-bottom: 1px solid rgba(0, 0, 0, 0.15);
+}
+
 .pdev-tile.has-group-bar .md{
     margin-top: 6px;
 }
