@@ -5757,7 +5757,7 @@
     const hasStateCapability = !isMediaPlayPause && !isActionEntity && (curType === "TOGGLE" || curType === "SENSOR" || (entObj && (entObj.type === "status" || entObj.type === "data" || !!entObj.state_key || !!entObj.openrgb_profile)));
     const showState = (slot.show_state !== false);
     const showProgressFill = (slot.show_progress_fill !== false);
-    const showKeys = (curType === "HOTKEY" || curType === "TOGGLE") && !isAnyMediaControl;
+    const showKeys = (curType !== "EMPTY" && curType !== "AUDIO OUTPUT") && !isAnyMediaControl;
 
     const initColor = slot.color || "";
     const colorHexVal = (initColor && initColor.startsWith("#") && (initColor.length === 7 || initColor.length === 4))
@@ -8572,11 +8572,46 @@
             }
           }
 
+          // Update progress fill plate
+          const entObj = entKey ? (panelEntities || []).find((e) => e.id === entKey || e.state_key === entKey) : null;
+          const progressVal = (bState.value !== undefined && bState.value !== null) ? bState.value : (s.value !== undefined ? s.value : null);
+          const progressLabel = bState.label || (typeof progressVal === "string" ? progressVal : "");
+          const slotMin = (s.fill_min !== undefined) ? s.fill_min : (entObj ? entObj.min : (bState.min !== undefined ? bState.min : 0));
+          const slotMax = (s.fill_max !== undefined) ? s.fill_max : (entObj ? entObj.max : (bState.max !== undefined ? bState.max : null));
+          const fillPct = parseProgressPercentage(progressVal, progressLabel, slotMin, slotMax);
+
+          const isProgressActive = (s.show_progress_fill !== false) && (fillPct !== null);
+          let progEl = tile.querySelector(".pdev-progress-fill");
+          if (isProgressActive) {
+            const fillColor = s.color || activeColor || "var(--theme-color-1, #48B2E9)";
+            if (!progEl) {
+              progEl = document.createElement("span");
+              progEl.className = "pdev-progress-fill";
+              tile.insertBefore(progEl, tile.firstChild);
+            }
+            progEl.style.setProperty("--fill-pct", fillPct.toFixed(1) + "%");
+            progEl.style.setProperty("--fill-color", fillColor);
+            tile.classList.add("has-progress-fill");
+            tile.classList.toggle("has-fill-100", fillPct >= 99.5);
+          } else {
+            if (progEl) progEl.remove();
+            tile.classList.remove("has-progress-fill", "has-fill-100");
+          }
+
           // Update status bar
           const statusBar = tile.querySelector(".pdev-status-bar");
           if (statusBar) {
             const labels = s.labels || {};
-            const lblText = bState.label || (isOn ? (labels.on || "ON") : (labels.off || "OFF"));
+            let lblText = bState.label;
+            if (!lblText && bState.value !== undefined && bState.value !== null) {
+              lblText = (typeof bState.value === "number") ? `${bState.value}` : String(bState.value);
+            }
+            if (!lblText && fillPct !== null) {
+              lblText = fillPct.toFixed(0) + "%";
+            }
+            if (!lblText) {
+              lblText = isOn ? (labels.on || "ON") : (labels.off || "OFF");
+            }
             if (lblText) {
               statusBar.textContent = lblText;
               statusBar.style.color = badgeColor;
@@ -9321,7 +9356,9 @@
       const audioWrap = document.getElementById("pe-audio-output-wrap");
       if (audioWrap) audioWrap.style.display = isAudio ? "" : "none";
 
-      const showKeys = (t === "HOTKEY" || t === "TOGGLE") && !isAnyMediaControl && !isAudio;
+      const showKeys = (t !== "EMPTY" && t !== "AUDIO OUTPUT") && !isAnyMediaControl;
+      const keysWrap = document.getElementById("pe-keys-wrap");
+      if (keysWrap) keysWrap.style.display = showKeys ? "" : "none";
 
       const modeAutoTab = document.getElementById("pe-mode-auto");
       const hasAutoIcon = (isAppShortcut || isMediaEject);
@@ -9735,7 +9772,7 @@
         slot.target_profile = (grpProfEl && grpProfEl.value) ? grpProfEl.value : "";
         slot.profile_id = slot.target_profile;
       }
-      if (t === "TOGGLE" || t === "HOTKEY") {
+      if (t !== "EMPTY" && t !== "AUDIO OUTPUT") {
         let val = document.getElementById("pe-keys") ? document.getElementById("pe-keys").value.trim() : "";
         if (val === "Conflict !!") val = "";
         slot.hotkey = val;
