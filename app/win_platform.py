@@ -1,8 +1,11 @@
 """Iris — Windows platform utilities."""
 
 import os
+import sys
 import logging
 import threading
+import ctypes
+from ctypes import wintypes
 from PIL import Image
 
 log = logging.getLogger("iris.platform")
@@ -1197,22 +1200,24 @@ def get_monitor_refresh_rate(hwnd=None) -> int:
 
 
 # ── Native Borderless Window Engine ──────────────────────────────────────────
-_BORDERLESS_CACHE: dict[int, tuple[int, int, tuple[int, int, int, int]]] = {}
+_BORDERLESS_CACHE: dict[int, tuple[int, int, tuple[int, int, int, int], bool]] = {}
 
 def toggle_borderless_window(hwnd: int | None = None) -> bool:
     """Toggle a window between its original framed style and edge-to-edge borderless."""
-    if not _IS_WINDOWS:
+    if sys.platform != "win32":
         return False
     try:
         user32 = ctypes.windll.user32
         target_hwnd = hwnd or user32.GetForegroundWindow()
         if not target_hwnd or not user32.IsWindow(target_hwnd):
+            log.warning("[borderless] No valid foreground window found")
             return False
 
         # Protect shell desktop and taskbar from accidental style modifications
         class_name = ctypes.create_unicode_buffer(256)
         user32.GetClassNameW(target_hwnd, class_name, 256)
         if class_name.value in ("Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"):
+            log.info("[borderless] Ignoring shell window: %s", class_name.value)
             return False
 
         GWL_STYLE = -16
@@ -1224,16 +1229,29 @@ def toggle_borderless_window(hwnd: int | None = None) -> bool:
 
         if target_hwnd in _BORDERLESS_CACHE:
             # Revert to original windowed style and position
-            old_style, old_ex_style, (left, top, width, height) = _BORDERLESS_CACHE.pop(target_hwnd)
+            old_style, old_ex_style, (left, top, width, height), was_maximized = _BORDERLESS_CACHE.pop(target_hwnd)
             user32.SetWindowLongW(target_hwnd, GWL_STYLE, old_style)
             user32.SetWindowLongW(target_hwnd, GWL_EXSTYLE, old_ex_style)
-            user32.SetWindowPos(
-                target_hwnd, 0, left, top, width, height,
-                SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW
-            )
-            log.info("[borderless] Reverted window %s to windowed (%dx%d at %d,%d)", target_hwnd, width, height, left, top)
+            if was_maximized:
+                user32.ShowWindow(target_hwnd, 3)  # SW_MAXIMIZE
+            else:
+                user32.SetWindowPos(
+                    target_hwnd, 0, left, top, width, height,
+                    SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW
+                )
+            log.info("[borderless] Reverted window %s (%s) to windowed (%dx%d at %d,%d)", target_hwnd, class_name.value, width, height, left, top)
+            try:
+                import winsound
+                winsound.MessageBeep(winsound.MB_OK)
+            except Exception:
+                pass
             return False
         else:
+            # If window is currently maximized, restore to standard rect before styling
+            was_maximized = bool(user32.IsZoomed(target_hwnd))
+            if was_maximized:
+                user32.ShowWindow(target_hwnd, 9)  # SW_RESTORE
+
             # Save current window rect and styles
             rect = ctypes.wintypes.RECT()
             user32.GetWindowRect(target_hwnd, ctypes.byref(rect))
@@ -1241,7 +1259,8 @@ def toggle_borderless_window(hwnd: int | None = None) -> bool:
             old_ex_style = user32.GetWindowLongW(target_hwnd, GWL_EXSTYLE)
             _BORDERLESS_CACHE[target_hwnd] = (
                 old_style, old_ex_style,
-                (rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
+                (rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top),
+                was_maximized
             )
 
             # Get target monitor bounds
@@ -1286,6 +1305,11 @@ def toggle_borderless_window(hwnd: int | None = None) -> bool:
                 SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW
             )
             log.info("[borderless] Converted window %s (%s) to borderless (%dx%d at %d,%d)", target_hwnd, class_name.value, mw, mh, mx, my)
+            try:
+                import winsound
+                winsound.MessageBeep(winsound.MB_ICONASTERISK)
+            except Exception:
+                pass
             return True
     except Exception as ex:
         log.warning("[borderless] Failed to toggle borderless: %s", ex)

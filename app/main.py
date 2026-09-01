@@ -352,8 +352,9 @@ if __name__ == "__main__":
                                         log.warning("[hotkey] capture toolbar toggle failed: %s", ex)
                                 elif msg.wParam == HOTKEY_ID_BORDERLESS:
                                     try:
+                                        fg = user32.GetForegroundWindow()
                                         from win_platform import toggle_borderless_window
-                                        self._root.after(0, toggle_borderless_window)
+                                        self._root.after(0, lambda target_hwnd=fg: toggle_borderless_window(target_hwnd))
                                     except Exception as ex:
                                         log.warning("[hotkey] borderless toggle failed: %s", ex)
                             elif msg.message == 0x0012:
