@@ -14,8 +14,7 @@ UninstallDisplayIcon={app}\Iris.exe
 PrivilegesRequired=admin
 ArchitecturesInstallIn64BitMode=x64compatible
 WizardStyle=modern
-DisableProgramGroupPage=yes
-CloseApplications=force
+CloseApplications=no
 RestartApplications=no
 
 [Languages]
@@ -51,13 +50,18 @@ Type: filesandordirs; Name: "{userappdata}\Iris"
 Type: filesandordirs; Name: "{localappdata}\Iris"
 
 [Run]
-Filename: "{app}\Iris.exe"; Description: "Launch Iris now"; Flags: nowait postinstall skipifsilent; Check: not VCInstallFailed
+Filename: "{app}\Iris.exe"; Description: "Launch Iris now"; Flags: nowait postinstall skipifsilent; Check: NotVCInstallFailed
 
 [Code]
 var
   NeedsReboot: Boolean;
   VCInstallFailed: Boolean;
   VCProgress: TOutputProgressWizardPage;
+
+function NotVCInstallFailed: Boolean;
+begin
+  Result := not VCInstallFailed;
+end;
 
 type
   TProcessInformation = record
@@ -88,20 +92,33 @@ procedure CloseHandle(hObject: THandle);
 function GetExitCodeProcess(hProcess: THandle; var lpExitCode: DWord): Boolean;
   external 'GetExitCodeProcess@kernel32.dll stdcall';
 
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ResultCode: Integer;
+begin
+  { Instantly terminate any running Iris app and child processes (<50ms) }
+  Exec('taskkill.exe', '/IM Iris.exe /F /T', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Result := '';
+end;
+
 function IsWebView2Installed: Boolean;
 var
   Version: String;
 begin
-  Result := RegQueryStringValue(HKLM, 'SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BEE-13A6279F0EA9}', 'pv', Version);
+  // Check Microsoft WebView2 Client GUID {F3017226-FE2A-4295-8BDF-00C324E0F2B7} across 64-bit, 32-bit, and HKCU
+  Result :=
+    RegQueryStringValue(HKLM, 'SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C324E0F2B7}', 'pv', Version) or
+    RegQueryStringValue(HKLM, 'SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C324E0F2B7}', 'pv', Version) or
+    RegQueryStringValue(HKCU, 'Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C324E0F2B7}', 'pv', Version);
 end;
 
 function IsVCRedistInstalled: Boolean;
 var
   Installed: Cardinal;
 begin
-  Result := RegQueryDWordValue(
-    HKLM, 'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64',
-    'Installed', Installed) and (Installed = 1);
+  Result :=
+    (RegQueryDWordValue(HKLM, 'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64', 'Installed', Installed) and (Installed = 1)) or
+    (RegQueryDWordValue(HKLM, 'SOFTWARE\WOW6432Node\Microsoft\VisualStudio\14.0\VC\Runtimes\x64', 'Installed', Installed) and (Installed = 1));
 end;
 
 function ExecuteAndWait(const Filename, Params: String; var ExitCode: DWord): Boolean;
@@ -120,7 +137,7 @@ begin
         keeping the wizard window responsive and movable during the install. }
       i := (i + 5) mod 100;
       VCProgress.SetProgress(i, 100);
-      Application.ProcessMessages;
+      WizardForm.Refresh;
       Sleep(10);
     end;
     Result := GetExitCodeProcess(PI.hProcess, ExitCode);
@@ -179,14 +196,23 @@ var
 begin
   if CurStep = ssPostInstall then
   begin
+    WizardForm.StatusLabel.Caption := 'Configuring dependencies...';
+    WizardForm.Update;
+
     { Install the Microsoft Visual C++ Runtime first (skipped if already present) }
     InstallVCRedist;
 
     { Install WebView2 Runtime via Evergreen Bootstrapper only if not already present }
     if not IsWebView2Installed then
+    begin
+      WizardForm.StatusLabel.Caption := 'Installing Microsoft WebView2 Runtime...';
+      WizardForm.Update;
       Exec(ExpandConstant('{tmp}\iris_deps\MicrosoftEdgeWebview2Setup.exe'), '/silent /install', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    end;
 
     { Install Interception driver — reboot required if success }
+    WizardForm.StatusLabel.Caption := 'Configuring input driver...';
+    WizardForm.Update;
     Exec(ExpandConstant('{tmp}\iris_deps\install-interception.exe'), '/install', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     if ResultCode = 3010 then
       NeedsReboot := True;
