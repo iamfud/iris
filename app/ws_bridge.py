@@ -407,11 +407,11 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         try:
             if _is_loopback_address(self.client_address[0]):
                 origin = self.headers.get("Origin", "")
-                if origin:
+                if origin and origin != "null":
                     from urllib.parse import urlparse
                     try:
                         op = urlparse(origin)
-                        if op.hostname not in ("127.0.0.1", "localhost", "::1"):
+                        if op.hostname and op.hostname not in ("127.0.0.1", "localhost", "::1", "0.0.0.0"):
                             return False
                     except Exception:
                         return False

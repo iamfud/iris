@@ -64,8 +64,10 @@ function apiFetch(url, opts) {
   if (_IRIS_TOKEN) opts.headers["X-Iris-Token"] = _IRIS_TOKEN;
   return fetch(url, opts).then(function (res) {
     if (res.status === 401) {
-      // Session expired or unauthenticated remote access -> back to login.
-      window.location.href = "/login";
+      if (typeof IS_MOBILE !== 'undefined' && IS_MOBILE && !_isApp()) {
+        // Session expired or unauthenticated remote access -> back to login.
+        window.location.href = "/login";
+      }
       throw new Error("unauthorized");
     }
     return res;
@@ -111,149 +113,169 @@ class SettingsRenderer {
   /* ── Render a built-in page ─────────────────────────────────── */
 
   renderBuiltInPage(pageId, config, pluginConfig, pluginState, deviceStatus) {
-    var page = this.getPage(pageId);
-    if (!page) return null;
+    try {
+      var page = this.getPage(pageId);
+      if (!page) return null;
 
-    this._configCache = config || {};
-    this._pluginConfigCache = pluginConfig || {};
+      this._configCache = config || {};
+      this._pluginConfigCache = pluginConfig || {};
 
-    var self = this;
-    var html = "";
+      var self = this;
+      var html = "";
 
-    if (pageId === "features" && deviceStatus && typeof deviceStatus.connected === "boolean" && !deviceStatus.connected) {
-      return '<section class="device-offline">' +
-        '<div class="device-offline-tile">' +
-          '<span class="material-icons-outlined device-offline-icon">usb</span>' +
-          '<p class="device-offline-msg">Please connect your Iris device.</p>' +
-        "</div>" +
-      "</section>";
+      if (pageId === "features" && deviceStatus && typeof deviceStatus.connected === "boolean" && !deviceStatus.connected) {
+        return '<section class="device-offline">' +
+          '<div class="device-offline-tile">' +
+            '<span class="material-icons-outlined device-offline-icon">usb</span>' +
+            '<p class="device-offline-msg">Please connect your Iris device.</p>' +
+          "</div>" +
+        "</section>";
+      }
+
+      if (page.sections && page.sections.length > 0) {
+        var isApp = _isApp();
+        var isCollapsiblePage = (pageId === "settings");
+        var renderedIndex = 0;
+        html += '<section class="settings-content">';
+        page.sections.forEach(function (section) {
+          if (section.app_only && !isApp) return;
+          var isOpen = (renderedIndex === 0);
+          html += self._renderSection(section, config, isOpen, isCollapsiblePage);
+          renderedIndex++;
+        });
+        html += "</section>";
+      } else {
+        html += '<section class="settings-content settings-empty">';
+        html += '<div class="settings-placeholder">';
+        html += '<span class="material-icons-outlined">construction</span>';
+        html += "<p>" + self._esc(page.subtitle || "Coming soon") + "</p>";
+        html += "</div>";
+        html += "</section>";
+      }
+
+      return html;
+    } catch (err) {
+      console.error("[SettingsRenderer] renderBuiltInPage error:", err);
+      return '<section class="settings-content settings-empty">' +
+        '<div class="settings-placeholder">' +
+          '<span class="material-icons-outlined">error_outline</span>' +
+          '<p>Unable to load settings page.</p>' +
+        '</div>' +
+      '</section>';
     }
-
-    if (page.sections && page.sections.length > 0) {
-      var isApp = _isApp();
-      var isCollapsiblePage = (pageId === "settings");
-      var renderedIndex = 0;
-      html += '<section class="settings-content">';
-      page.sections.forEach(function (section) {
-        if (section.app_only && !isApp) return;
-        var isOpen = (renderedIndex === 0);
-        html += self._renderSection(section, config, isOpen, isCollapsiblePage);
-        renderedIndex++;
-      });
-      html += "</section>";
-    } else {
-      html += '<section class="settings-content settings-empty">';
-      html += '<div class="settings-placeholder">';
-      html += '<span class="material-icons-outlined">construction</span>';
-      html += "<p>" + self._esc(page.subtitle || "Coming soon") + "</p>";
-      html += "</div>";
-      html += "</section>";
-    }
-
-    return html;
   }
 
   /* ── Render a plugin settings page ──────────────────────────── */
 
   renderPluginPage(name, pluginCfg, pluginData, pluginStateData, config) {
-    if (config) {
-      this._configCache = Object.assign(this._configCache || {}, config);
-    }
-    var p = pluginCfg || {};
-    var capabilities = p.capabilities || {};
-    var hasCapabilities = Object.keys(capabilities).length > 0;
-
-    if (!hasCapabilities) {
-      return this._renderPluginPageLegacy(name, pluginCfg, pluginData, pluginStateData);
-    }
-
-    var LABEL_DEFAULTS = {
-      status: "Connection",
-      configuration: "Game Detection",
-      buttons: "Button Controls",
-      outputs: "Output Routing",
-      actions: "Actions",
-      diagnostics: "Diagnostics",
-    };
-
-    var self = this;
-
-    function buildSectionCard(sKey, renderFn) {
-      if (!capabilities[sKey]) return null;
-      var content = self[renderFn](name, p, pluginData, pluginStateData, config);
-      if (!content) return null;
-      var label = (p.labels && p.labels[sKey]) || LABEL_DEFAULTS[sKey] || sKey;
-      var html = '<div class="settings-section plugin-section-' + sKey + '">';
-      html += '<h2 class="settings-section-title">' + self._esc(label) + '</h2>';
-      html += '<div class="settings-card">';
-      html += content;
-      html += '</div></div>';
-      return { key: sKey, html: html };
-    }
-
-    var col1Html = "";
-    var col2Html = "";
-    var col1Height = 0;
-    var col2Height = 0;
-
-    function addToCol(colNum, html, estHeight) {
-      if (colNum === 1) {
-        col1Html += html;
-        col1Height += estHeight;
-      } else {
-        col2Html += html;
-        col2Height += estHeight;
+    try {
+      if (config) {
+        this._configCache = Object.assign(this._configCache || {}, config);
       }
-    }
+      var p = pluginCfg || {};
+      var capabilities = p.capabilities || {};
+      var hasCapabilities = Object.keys(capabilities).length > 0;
 
-    // 1. Column 1: Connection (Status)
-    var statusCard = buildSectionCard("status", "_renderPluginStatus");
-    if (statusCard) addToCol(1, statusCard.html, 140);
+      if (!hasCapabilities) {
+        return this._renderPluginPageLegacy(name, pluginCfg, pluginData, pluginStateData);
+      }
 
-    // 2. Column 2: Output Routing (Outputs)
-    var outputsCard = buildSectionCard("outputs", "_renderPluginOutputs");
-    if (outputsCard) addToCol(2, outputsCard.html, 160);
+      var LABEL_DEFAULTS = {
+        status: "Connection",
+        configuration: "Game Detection",
+        buttons: "Button Controls",
+        outputs: "Output Routing",
+        actions: "Actions",
+        diagnostics: "Diagnostics",
+      };
 
-    // 3. Column 1: Plugin Specific Controls (Configuration / Game Detection)
-    var configCard = buildSectionCard("configuration", "_renderPluginConfig");
-    if (configCard) addToCol(1, configCard.html, 180);
+      var self = this;
 
-    // 4. Column 2: Button Controls (Buttons)
-    var buttonsCard = buildSectionCard("buttons", "_renderPluginButtons");
-    if (buttonsCard) addToCol(2, buttonsCard.html, 340);
+      function buildSectionCard(sKey, renderFn) {
+        if (!capabilities[sKey]) return null;
+        var content = self[renderFn](name, p, pluginData, pluginStateData, config);
+        if (!content) return null;
+        var label = (p.labels && p.labels[sKey]) || LABEL_DEFAULTS[sKey] || sKey;
+        var html = '<div class="settings-section plugin-section-' + sKey + '">';
+        html += '<h2 class="settings-section-title">' + self._esc(label) + '</h2>';
+        html += '<div class="settings-card">';
+        html += content;
+        html += '</div></div>';
+        return { key: sKey, html: html };
+      }
 
-    // Actions & Diagnostics
-    var actionsCard = buildSectionCard("actions", "_renderPluginActions");
-    if (actionsCard) {
-      if (col1Height <= col2Height) addToCol(1, actionsCard.html, 100);
-      else addToCol(2, actionsCard.html, 100);
-    }
-    var diagCard = buildSectionCard("diagnostics", "_renderPluginDiagnostics");
-    if (diagCard) {
-      if (col1Height <= col2Height) addToCol(1, diagCard.html, 100);
-      else addToCol(2, diagCard.html, 100);
-    }
+      var col1Html = "";
+      var col2Html = "";
+      var col1Height = 0;
+      var col2Height = 0;
 
-    // 5. Below: 2 columns of telemetry category cards, distributed by shortest stack
-    if (capabilities.live_data) {
-      var telemetryCards = this._getPluginLiveDataCardList(name, p, pluginData, pluginStateData);
-      telemetryCards.forEach(function(card) {
-        var estH = 50 + (card.fieldCount || 4) * 32;
-        if (col1Height <= col2Height) {
-          addToCol(1, card.html, estH);
+      function addToCol(colNum, html, estHeight) {
+        if (colNum === 1) {
+          col1Html += html;
+          col1Height += estHeight;
         } else {
-          addToCol(2, card.html, estH);
+          col2Html += html;
+          col2Height += estHeight;
         }
-      });
-    }
+      }
 
-    var html = '<section class="settings-content plugin-settings-layout">';
-    html += '<div class="plugin-masonry-container">';
-    html += '<div class="plugin-masonry-col plugin-masonry-col-1">' + col1Html + '</div>';
-    html += '<div class="plugin-masonry-col plugin-masonry-col-2">' + col2Html + '</div>';
-    html += '</div>';
-    html += '</section>';
-    return html;
+      // 1. Column 1: Connection (Status)
+      var statusCard = buildSectionCard("status", "_renderPluginStatus");
+      if (statusCard) addToCol(1, statusCard.html, 140);
+
+      // 2. Column 2: Output Routing (Outputs)
+      var outputsCard = buildSectionCard("outputs", "_renderPluginOutputs");
+      if (outputsCard) addToCol(2, outputsCard.html, 160);
+
+      // 3. Column 1: Plugin Specific Controls (Configuration / Game Detection)
+      var configCard = buildSectionCard("configuration", "_renderPluginConfig");
+      if (configCard) addToCol(1, configCard.html, 180);
+
+      // 4. Column 2: Button Controls (Buttons)
+      var buttonsCard = buildSectionCard("buttons", "_renderPluginButtons");
+      if (buttonsCard) addToCol(2, buttonsCard.html, 340);
+
+      // Actions & Diagnostics
+      var actionsCard = buildSectionCard("actions", "_renderPluginActions");
+      if (actionsCard) {
+        if (col1Height <= col2Height) addToCol(1, actionsCard.html, 100);
+        else addToCol(2, actionsCard.html, 100);
+      }
+      var diagCard = buildSectionCard("diagnostics", "_renderPluginDiagnostics");
+      if (diagCard) {
+        if (col1Height <= col2Height) addToCol(1, diagCard.html, 100);
+        else addToCol(2, diagCard.html, 100);
+      }
+
+      // 5. Below: 2 columns of telemetry category cards, distributed by shortest stack
+      if (capabilities.live_data) {
+        var telemetryCards = this._getPluginLiveDataCardList(name, p, pluginData, pluginStateData);
+        telemetryCards.forEach(function(card) {
+          var estH = 50 + (card.fieldCount || 4) * 32;
+          if (col1Height <= col2Height) {
+            addToCol(1, card.html, estH);
+          } else {
+            addToCol(2, card.html, estH);
+          }
+        });
+      }
+
+      var html = '<section class="settings-content plugin-settings-layout">';
+      html += '<div class="plugin-masonry-container">';
+      html += '<div class="plugin-masonry-col plugin-masonry-col-1">' + col1Html + '</div>';
+      html += '<div class="plugin-masonry-col plugin-masonry-col-2">' + col2Html + '</div>';
+      html += '</div>';
+      html += '</section>';
+      return html;
+    } catch (err) {
+      console.error("[SettingsRenderer] renderPluginPage error:", err);
+      return '<section class="settings-content settings-empty">' +
+        '<div class="settings-placeholder">' +
+          '<span class="material-icons-outlined">error_outline</span>' +
+          '<p>Unable to load plugin settings.</p>' +
+        '</div>' +
+      '</section>';
+    }
   }
 
   /* ── Legacy renderer for plugins without capabilities ───────── */

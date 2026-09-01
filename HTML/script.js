@@ -424,8 +424,10 @@
     if (IRIS_TOKEN) opts.headers["X-Iris-Token"] = IRIS_TOKEN;
     return fetch(url, opts).then(function (res) {
       if (res.status === 401) {
-        // Session expired or unauthenticated remote access -> back to login.
-        window.location.href = "/login";
+        if (IS_MOBILE && !IS_APP && !(window.pywebview && window.pywebview.api)) {
+          // Session expired or unauthenticated remote phone access -> back to login.
+          window.location.href = "/login";
+        }
         throw new Error("unauthorized");
       }
       return res;
@@ -752,6 +754,15 @@
 
   function startPolling() {
     const urlParams = new URLSearchParams(window.location.search);
+    const isStandaloneViewer = urlParams.get("view") === "viewer";
+    const isStandaloneNotepad = urlParams.get("view") === "notepad";
+
+    if (isStandaloneViewer || isStandaloneNotepad) {
+      renderInitialView();
+      connectWs();
+      return;
+    }
+
     const isMobilePanel = (IS_MOBILE && !IS_APP) || urlParams.get("view") === "panel" || urlParams.get("panel") === "1";
 
     if (isMobilePanel) {
@@ -2827,6 +2838,22 @@
 
     let dpr = window.devicePixelRatio || 1;
     let cssWidth = 0, cssHeight = 0;
+    let retryCount = 0;
+
+    function handleImageError() {
+      if (retryCount < 3) {
+        retryCount++;
+        setTimeout(function () {
+          if (img) {
+            img.src = `${API_BASE}/api/library/image/${encodeURIComponent(filename)}?retry=${retryCount}&t=${Date.now()}`;
+          }
+        }, 400 * retryCount);
+      } else {
+        console.error("Screenshot image failed to load after retries:", filename);
+      }
+    }
+
+    img.addEventListener("error", handleImageError);
 
     function resizeCanvas() {
       if (!img.complete || img.naturalWidth === 0) return;
@@ -9866,7 +9893,7 @@
   }
 
   function resetScreensaverTimer() {
-    if (IS_APP || !panelViewMode) return;
+    if (IS_APP || window.pywebview || isDesktopEnvironment() || !IS_MOBILE || !panelViewMode) return;
     requestWakeLock();
     if (ssActive) {
       // Any real interaction wakes the screensaver
@@ -9881,7 +9908,7 @@
   }
 
   function showScreensaver() {
-    if (IS_APP || !panelViewMode) return;
+    if (IS_APP || window.pywebview || isDesktopEnvironment() || !IS_MOBILE || !panelViewMode) return;
     const timeoutMs = getScreensaverTimeoutMs();
     if (timeoutMs <= 0) return;
     ssActive = true;
