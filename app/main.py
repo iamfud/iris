@@ -99,6 +99,11 @@ if __name__ == "__main__":
                 except Exception as e:
                     log.warning(f"[provider] {p.__class__.__name__} failed: {e}")
             start_plugins(self.cfg, serial_sender, overlays)
+            try:
+                from lighting_service import get_lighting_service
+                get_lighting_service().update_config(self.cfg)
+            except Exception as ex:
+                log.warning("[lighting] startup sync failed: %s", ex)
 
         def _poll_serial(self):
             while self._running:

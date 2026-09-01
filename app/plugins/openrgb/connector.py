@@ -70,6 +70,11 @@ class OpenRGBConnector(BaseConnector):
                     log.info(f"[openrgb] Connecting to OpenRGB SDK server at 127.0.0.1:{p}...")
                     cli = OpenRGBClient(port=p, name="Iris")
                     cli.update()
+                    try:
+                        if hasattr(cli, "update_profiles"):
+                            cli.update_profiles()
+                    except Exception:
+                        pass
 
                     self._client = cli
                     raw_ver = getattr(cli, "protocol_version", None)
@@ -260,7 +265,11 @@ class OpenRGBConnector(BaseConnector):
             return
 
         try:
-            self._client.load_profile(clean_name)
+            try:
+                from openrgb.utils import Profile
+                self._client.load_profile(Profile(clean_name))
+            except Exception:
+                self._client.load_profile(clean_name)
             log.info(f"[openrgb] Profile '{clean_name}' successfully loaded in OpenRGB")
         except Exception as e:
             log.warning(f"[openrgb] Failed to load profile '{clean_name}': {e}")
