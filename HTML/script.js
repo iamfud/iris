@@ -2803,41 +2803,82 @@
           <span class="ssv-ts">${escapeHtml(title)}</span>
         </div>
         <div class="ssv-actions">
-          <span class="ssv-hint"><span class="material-icons-outlined" style="font-size:14px;">gesture</span> Drag arrow to annotate</span>
-          <button class="ssv-btn-icon" id="ssv-toggle-ann-btn" title="Show/Hide Annotations">
+          <div class="ssv-tool-group">
+            <button type="button" class="ssv-tool active" data-tool="arrow" title="Arrow & Label Annotation (A)">
+              <span class="material-icons-outlined" style="font-size:18px;">north_east</span>
+            </button>
+            <button type="button" class="ssv-tool" data-tool="pen" title="Freehand Drawing Pen (P)">
+              <span class="material-icons-outlined" style="font-size:18px;">draw</span>
+            </button>
+            <button type="button" class="ssv-tool" data-tool="hand" title="Pan View (H / Space+Drag)">
+              <span class="material-icons-outlined" style="font-size:18px;">pan_tool</span>
+            </button>
+            <button type="button" class="ssv-tool" data-tool="zoom" title="Zoom In/Out (Z)">
+              <span class="material-icons-outlined" style="font-size:18px;">zoom_in</span>
+            </button>
+          </div>
+          <button type="button" class="ssv-btn-icon" id="ssv-reset-btn" title="Reset View (0)">
+            <span class="material-icons-outlined" style="font-size:18px;">fit_screen</span>
+          </button>
+          <span class="ssv-zoom-label" id="ssv-zoom-label" style="display:none">100%</span>
+          <button type="button" class="ssv-btn-icon" id="ssv-toggle-ann-btn" title="Show/Hide Annotations">
             <span class="material-icons-outlined" style="font-size:18px;">visibility</span>
           </button>
-          <button class="ssv-btn-icon" id="ssv-copy-btn" title="Copy image with annotations to clipboard">
+          <button type="button" class="ssv-btn-icon" id="ssv-copy-btn" title="Copy image with annotations to clipboard">
             <span class="material-icons-outlined" style="font-size:18px;">content_copy</span>
           </button>
-          <button class="ssv-btn-icon" id="ssv-delete-btn" title="Delete screenshot">
+          <button type="button" class="ssv-btn-icon" id="ssv-delete-btn" title="Delete screenshot">
             <span class="material-icons-outlined" style="font-size:18px;">delete</span>
           </button>
-          <button class="ssv-btn-icon" id="ssv-fullscreen-btn" title="Toggle Fullscreen">
+          <button type="button" class="ssv-btn-icon" id="ssv-fullscreen-btn" title="Toggle Fullscreen">
             <span class="material-icons-outlined" style="font-size:18px;">fullscreen</span>
           </button>
-          <button class="ssv-close" aria-label="Close">&#x2715;</button>
+          <button type="button" class="ssv-close" aria-label="Close">&#x2715;</button>
         </div>
       </div>
       <div class="ssv-canvas-stage" id="ssv-stage">
-        <img id="ssv-img" class="ssv-img" src="${API_BASE}/api/library/image/${encodeURIComponent(filename)}" alt="Screenshot" draggable="false">
+        <div class="ssv-world" id="ssv-world">
+          <img id="ssv-img" class="ssv-img" src="${API_BASE}/api/library/image/${encodeURIComponent(filename)}" alt="Screenshot" draggable="false">
+        </div>
+        <canvas id="ssv-ink" class="ssv-ink-canvas"></canvas>
         <canvas id="ssv-canvas" class="ssv-annotation-canvas"></canvas>
       </div>`;
     document.body.appendChild(el);
 
     const img = el.querySelector("#ssv-img");
+    const world = el.querySelector("#ssv-world");
     const canvas = el.querySelector("#ssv-canvas");
+    const inkCanvas = el.querySelector("#ssv-ink");
     const stage = el.querySelector("#ssv-stage");
     const ctx = canvas.getContext("2d");
+    const inkCtx = inkCanvas.getContext("2d");
     const annotations = sidecarData.annotations || [];
+
+    let viewScale = 1.0;
+    let viewTx = 0, viewTy = 0;
+    let toolMode = "arrow"; // "arrow" | "pen" | "hand" | "zoom"
+    let fitW = 0, fitH = 0;
+    let stageW = 0, stageH = 0;
+    let dpr = window.devicePixelRatio || 1;
 
     let isDrawing = false;
     let startX = 0, startY = 0;
     let currX = 0, currY = 0;
+    let activeStroke = null;
     let activeTextBox = null;
+    let draggingTailIdx = null;
+    let draggingHeadIdx = null;
+    let resizingLabel = null;
 
-    let dpr = window.devicePixelRatio || 1;
-    let cssWidth = 0, cssHeight = 0;
+    let isPanning = false;
+    let panStartX = 0, panStartY = 0;
+    let panInitTx = 0, panInitTy = 0;
+    let isZoomDragging = false;
+    let zoomStartY = 0, zoomInitScale = 1.0;
+    let isSpacePanning = false;
+    let currentColor = "#48B2E9";
+    let annotationsVisible = true;
+    let rafPending = false;
     let retryCount = 0;
 
     function handleImageError() {
@@ -2855,24 +2896,89 @@
 
     img.addEventListener("error", handleImageError);
 
+    function screenToWorld(sx, sy) {
+      const fw = fitW || 1;
+      const fh = fitH || 1;
+      return {
+        nx: Math.max(0, Math.min(1, ((sx - viewTx) / viewScale) / fw)),
+        ny: Math.max(0, Math.min(1, ((sy - viewTy) / viewScale) / fh))
+      };
+    }
+
+    function worldToScreen(nx, ny) {
+      return {
+        sx: nx * (fitW || 1) * viewScale + viewTx,
+        sy: ny * (fitH || 1) * viewScale + viewTy
+      };
+    }
+
+    function updateZoomLabel() {
+      const label = el.querySelector("#ssv-zoom-label");
+      if (!label) return;
+      const pct = Math.round(viewScale * 100);
+      label.textContent = pct + "%";
+      if (Math.abs(viewScale - 1.0) < 0.01) {
+        label.style.display = "none";
+      } else {
+        label.style.display = "inline-flex";
+      }
+    }
+
+    function applyViewTransform() {
+      if (world) {
+        world.style.transform = `translate(${viewTx}px, ${viewTy}px) scale(${viewScale})`;
+      }
+      updateZoomLabel();
+      scheduleRedraw();
+    }
+
     function resizeCanvas() {
       if (!img.complete || img.naturalWidth === 0) return;
-      const rect = img.getBoundingClientRect();
+      stageW = stage.clientWidth;
+      stageH = stage.clientHeight;
+      if (stageW <= 0 || stageH <= 0) return;
+
       dpr = window.devicePixelRatio || 1;
-      cssWidth = rect.width;
-      cssHeight = rect.height;
-      
-      canvas.width = Math.round(rect.width * dpr);
-      canvas.height = Math.round(rect.height * dpr);
-      canvas.style.width = rect.width + "px";
-      canvas.style.height = rect.height + "px";
-      redraw();
+      canvas.width = Math.round(stageW * dpr);
+      canvas.height = Math.round(stageH * dpr);
+      canvas.style.width = stageW + "px";
+      canvas.style.height = stageH + "px";
+
+      if (inkCanvas) {
+        inkCanvas.width = Math.round(stageW * dpr);
+        inkCanvas.height = Math.round(stageH * dpr);
+        inkCanvas.style.width = stageW + "px";
+        inkCanvas.style.height = stageH + "px";
+      }
+
+      const maxW = stageW - 32;
+      const maxH = stageH - 32;
+      const imgAspect = img.naturalWidth / img.naturalHeight;
+      let w = maxW;
+      let h = maxW / imgAspect;
+      if (h > maxH) {
+        h = maxH;
+        w = maxH * imgAspect;
+      }
+      fitW = Math.round(w);
+      fitH = Math.round(h);
+
+      if (world) {
+        world.style.width = fitW + "px";
+        world.style.height = fitH + "px";
+      }
+
+      if (Math.abs(viewScale - 1.0) < 0.01) {
+        viewTx = (stageW - fitW) / 2;
+        viewTy = (stageH - fitH) / 2;
+      }
+
+      applyViewTransform();
     }
 
     img.addEventListener("load", resizeCanvas);
     window.addEventListener("resize", resizeCanvas);
     setTimeout(resizeCanvas, 50);
-
 
     function wrapText(context, text, maxWidth) {
       if (!maxWidth) return [text];
@@ -2895,14 +3001,15 @@
     }
 
     function getAnnotationLayout(ann) {
-      const w = cssWidth || (canvas.width / dpr);
-      const h = cssHeight || (canvas.height / dpr);
+      const w = fitW || 1;
+      const h = fitH || 1;
       const x1 = ann.x1 * w;
       const y1 = ann.y1 * h;
       const x2 = ann.x2 * w;
       const y2 = ann.y2 * h;
 
       ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.font = "600 13px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
       const padH = 12, padV = 6;
       const text = ann.text || "";
@@ -2933,18 +3040,27 @@
       return { x1, y1, x2, y2, boxX, boxY, boxW, boxH, lines, lineHeight, padH, padV };
     }
 
-    function hitTestAnnotation(px, py) {
+    function distToSegment(px, py, x1, y1, x2, y2) {
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      const lenSq = dx * dx + dy * dy;
+      if (lenSq === 0) return Math.hypot(px - x1, py - y1);
+      const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / lenSq));
+      return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+    }
+
+    function hitTestAnnotation(sx, sy) {
       if (!annotationsVisible) return null;
       const edgeThreshold = 8;
 
-      // Pass 1: Check label badges & resize edges FIRST (topmost interactive layer)
+      // 1. Check label badges & resize edges (in screen coordinates)
       for (let i = annotations.length - 1; i >= 0; i--) {
         const ann = annotations[i];
-        // Find the root annotation that actually owns the text if this is a secondary branch
+        if (ann.type === "path") continue;
         let ownerIdx = i;
         let ownerAnn = ann;
         if (!ann.text) {
-          const rootIdx = annotations.findIndex(a => !!a.text && Math.hypot(a.x2 - ann.x2, a.y2 - ann.y2) < 0.02);
+          const rootIdx = annotations.findIndex(a => a.type !== "path" && !!a.text && Math.hypot(a.x2 - ann.x2, a.y2 - ann.y2) < 0.02);
           if (rootIdx !== -1) {
             ownerIdx = rootIdx;
             ownerAnn = annotations[rootIdx];
@@ -2952,38 +3068,40 @@
         }
 
         const layout = getAnnotationLayout(ownerAnn);
+        const sBoxTopLeft = worldToScreen(layout.boxX / (fitW || 1), layout.boxY / (fitH || 1));
+        const sBoxW = layout.boxW * viewScale;
+        const sBoxH = layout.boxH * viewScale;
 
-        if (py >= layout.boxY && py <= layout.boxY + layout.boxH) {
-          if (Math.abs(px - (layout.boxX + layout.boxW)) <= edgeThreshold) {
+        if (sy >= sBoxTopLeft.sy && sy <= sBoxTopLeft.sy + sBoxH) {
+          if (Math.abs(sx - (sBoxTopLeft.sx + sBoxW)) <= edgeThreshold) {
             return { index: ownerIdx, target: "resize_right", annotation: ownerAnn, layout };
           }
-          if (Math.abs(px - layout.boxX) <= edgeThreshold) {
+          if (Math.abs(sx - sBoxTopLeft.sx) <= edgeThreshold) {
             return { index: ownerIdx, target: "resize_left", annotation: ownerAnn, layout };
           }
-          // Inside label box -> Click to edit
-          if (px > layout.boxX && px < layout.boxX + layout.boxW) {
+          if (sx > sBoxTopLeft.sx && sx < sBoxTopLeft.sx + sBoxW) {
             return { index: ownerIdx, target: "label", annotation: ownerAnn, layout };
           }
         }
       }
 
-      // Pass 2: Check arrow heads and tail anchors
+      // 2. Check arrow heads and tail anchors (in screen coordinates)
       for (let i = annotations.length - 1; i >= 0; i--) {
         const ann = annotations[i];
+        if (ann.type === "path") continue;
         const layout = getAnnotationLayout(ann);
+        const sHead = worldToScreen(layout.x1 / (fitW || 1), layout.y1 / (fitH || 1));
+        const sTail = worldToScreen(layout.x2 / (fitW || 1), layout.y2 / (fitH || 1));
 
-        // Check arrow head hit (radius 14px)
-        if (Math.hypot(px - layout.x1, py - layout.y1) <= 14) {
+        if (Math.hypot(sx - sHead.sx, sy - sHead.sy) <= 14) {
           return { index: i, target: "head", annotation: ann, layout };
         }
 
-        // Check tail dot hit (radius 12px)
-        if (Math.hypot(px - layout.x2, py - layout.y2) <= 12) {
-          // Resolve to the owner annotation holding the text
+        if (Math.hypot(sx - sTail.sx, sy - sTail.sy) <= 12) {
           let ownerIdx = i;
           let ownerAnn = ann;
           if (!ann.text) {
-            const rootIdx = annotations.findIndex(a => !!a.text && Math.hypot(a.x2 - ann.x2, a.y2 - ann.y2) < 0.02);
+            const rootIdx = annotations.findIndex(a => a.type !== "path" && !!a.text && Math.hypot(a.x2 - ann.x2, a.y2 - ann.y2) < 0.02);
             if (rootIdx !== -1) {
               ownerIdx = rootIdx;
               ownerAnn = annotations[rootIdx];
@@ -2992,6 +3110,21 @@
           return { index: ownerIdx, target: "tail", annotation: ownerAnn, layout };
         }
       }
+
+      // 3. Check freehand path strokes proximity (within 8 screen pixels)
+      for (let i = annotations.length - 1; i >= 0; i--) {
+        const ann = annotations[i];
+        if (ann.type !== "path" || !ann.points || ann.points.length < 2) continue;
+        for (let j = 0; j < ann.points.length - 1; j++) {
+          const p1 = worldToScreen(ann.points[j][0], ann.points[j][1]);
+          const p2 = worldToScreen(ann.points[j + 1][0], ann.points[j + 1][1]);
+          const dist = distToSegment(sx, sy, p1.sx, p1.sy, p2.sx, p2.sy);
+          if (dist <= 8) {
+            return { index: i, target: "path", annotation: ann };
+          }
+        }
+      }
+
       return null;
     }
 
@@ -3016,7 +3149,7 @@
       context.lineTo(toX, toY);
       context.stroke();
 
-      // Arrow head at fromX, fromY pointing towards the point of interest
+      // Arrow head pointing towards the point of interest
       context.beginPath();
       context.moveTo(fromX, fromY);
       context.lineTo(fromX + headlen * Math.cos(angle - Math.PI / 6), fromY + headlen * Math.sin(angle - Math.PI / 6));
@@ -3034,12 +3167,33 @@
       context.restore();
     }
 
+    function drawPath(context, ann) {
+      const pts = ann.points;
+      if (!pts || pts.length < 2) return;
+      const w = fitW || 1, h = fitH || 1;
+      context.save();
+      context.strokeStyle = ann.color || "#48B2E9";
+      context.lineWidth = ann.lineWidth || 3.5;
+      context.lineCap = "round";
+      context.lineJoin = "round";
+      context.shadowColor = "rgba(0,0,0,0.75)";
+      context.shadowBlur = 4;
+
+      context.beginPath();
+      context.moveTo(pts[0][0] * w, pts[0][1] * h);
+      for (let i = 1; i < pts.length; i++) {
+        context.lineTo(pts[i][0] * w, pts[i][1] * h);
+      }
+      context.stroke();
+      context.restore();
+    }
+
     function drawAnnotationLabel(context, layout, text, color) {
       context.save();
       context.font = "600 13px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
       const { boxX, boxY, boxW, boxH, lines, lineHeight, padH, padV } = layout;
 
-      // Background badge with high-contrast plate
+      // Background badge plate
       context.fillStyle = "rgba(12, 14, 18, 0.95)";
       context.strokeStyle = color;
       context.lineWidth = 2;
@@ -3055,7 +3209,7 @@
       context.fill();
       context.stroke();
 
-      // Sharp white text (single line or multi-line block)
+      // Sharp text
       context.fillStyle = "#ffffff";
       context.shadowBlur = 0;
       context.textBaseline = "top";
@@ -3068,33 +3222,51 @@
       context.restore();
     }
 
+    function scheduleRedraw(dragArrow) {
+      if (rafPending) return;
+      rafPending = true;
+      requestAnimationFrame(() => {
+        rafPending = false;
+        redraw(dragArrow);
+      });
+    }
+
     function redraw(dragArrow) {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      const w = cssWidth || (canvas.width / dpr);
-      const h = cssHeight || (canvas.height / dpr);
-      if (w === 0 || h === 0) return;
+      if (fitW === 0 || fitH === 0) return;
 
       ctx.save();
       ctx.scale(dpr, dpr);
+      ctx.translate(viewTx, viewTy);
+      ctx.scale(viewScale, viewScale);
 
       if (annotationsVisible) {
-        // Pass 1: Draw all arrow lines and heads first (bottom layer)
+        // 1. Draw all saved freehand paths
+        annotations.forEach((ann) => {
+          if (ann.type === "path") {
+            drawPath(ctx, ann);
+          }
+        });
+
+        // 2. Draw all arrow lines and heads
         annotations.forEach((ann, idx) => {
-          const layout = getAnnotationLayout(ann);
-          const isMoving = draggingTailIdx === idx;
-          drawArrow(ctx, layout.x1, layout.y1, layout.x2, layout.y2, ann.color || "#48B2E9", isMoving);
+          if (ann.type !== "path") {
+            const layout = getAnnotationLayout(ann);
+            const isMoving = draggingTailIdx === idx;
+            drawArrow(ctx, layout.x1, layout.y1, layout.x2, layout.y2, ann.color || "#48B2E9", isMoving);
+          }
         });
       }
 
-      // Draw current in-progress new arrow (always draw while user is actively dragging)
+      // 3. Draw in-progress new arrow
       if (dragArrow) {
-        drawArrow(ctx, dragArrow.x1, dragArrow.y1, dragArrow.x2, dragArrow.y2, "#48B2E9", true);
+        drawArrow(ctx, dragArrow.x1 * fitW, dragArrow.y1 * fitH, dragArrow.x2 * fitW, dragArrow.y2 * fitH, currentColor || "#48B2E9", true);
       }
 
       if (annotationsVisible) {
-        // Pass 2: Draw all label badges on top of all arrows (topmost layer)
+        // 4. Draw label badges topmost
         annotations.forEach((ann) => {
-          if (ann.text) {
+          if (ann.type !== "path" && ann.text) {
             const layout = getAnnotationLayout(ann);
             drawAnnotationLabel(ctx, layout, ann.text, ann.color || "#48B2E9");
           }
@@ -3102,6 +3274,29 @@
       }
 
       ctx.restore();
+    }
+
+    function drawInkStroke(pts) {
+      if (!inkCtx || !pts || pts.length < 2) return;
+      inkCtx.clearRect(0, 0, inkCanvas.width, inkCanvas.height);
+      inkCtx.save();
+      inkCtx.scale(dpr, dpr);
+      inkCtx.strokeStyle = currentColor || "#48B2E9";
+      inkCtx.lineWidth = (3.5 * viewScale);
+      inkCtx.lineCap = "round";
+      inkCtx.lineJoin = "round";
+      inkCtx.shadowColor = "rgba(0,0,0,0.6)";
+      inkCtx.shadowBlur = 4;
+
+      inkCtx.beginPath();
+      const p0 = worldToScreen(pts[0].nx, pts[0].ny);
+      inkCtx.moveTo(p0.sx, p0.sy);
+      for (let i = 1; i < pts.length; i++) {
+        const p = worldToScreen(pts[i].nx, pts[i].ny);
+        inkCtx.lineTo(p.sx, p.sy);
+      }
+      inkCtx.stroke();
+      inkCtx.restore();
     }
 
     async function saveAnnotations() {
@@ -3114,26 +3309,28 @@
       } catch (_) {}
     }
 
-    function promptAnnotationText(x1, y1, x2, y2, existingIdx) {
+    function promptAnnotationText(nx1, ny1, nx2, ny2, existingIdx) {
       if (activeTextBox) activeTextBox.remove();
 
       const isEdit = typeof existingIdx === "number";
       const initialText = isEdit ? (annotations[existingIdx].text || "") : "";
-      let selectedColor = isEdit ? (annotations[existingIdx].color || "#48B2E9") : "#48B2E9";
+      let selectedColor = isEdit ? (annotations[existingIdx].color || currentColor || "#48B2E9") : (currentColor || "#48B2E9");
 
       const NEON_COLORS = [
-        { name: "red", hex: "#ff3355" },
-        { name: "green", hex: "#00ff88" },
         { name: "blue", hex: "#48B2E9" },
+        { name: "green", hex: "#00ff88" },
+        { name: "red", hex: "#ff3355" },
         { name: "purple", hex: "#B23AF6" }
       ];
 
       const box = document.createElement("div");
       box.className = "ssv-text-box";
-      const left = Math.min(Math.max(x2, 10), canvas.width - 200);
-      const top = Math.min(Math.max(y2, 10), canvas.height - 80);
+      const sTail = worldToScreen(nx2, ny2);
+      const left = Math.min(Math.max(sTail.sx + 10, 10), (stageW || canvas.width) - 220);
+      const top = Math.min(Math.max(sTail.sy - 30, 10), (stageH || canvas.height) - 90);
       box.style.left = left + "px";
       box.style.top = top + "px";
+      box.style.borderColor = selectedColor;
 
       const swatchesHtml = NEON_COLORS.map(c => `
         <button type="button" class="ssv-swatch ${c.hex.toLowerCase() === selectedColor.toLowerCase() ? "active" : ""}" data-color="${c.hex}" style="background-color:${c.hex}; color:${c.hex};" title="${c.name}"></button>
@@ -3146,8 +3343,8 @@
             ${swatchesHtml}
           </div>
           <div class="ssv-action-btns">
-            <button class="ssv-btn-sm ssv-btn-del" id="ssv-cancel">Cancel</button>
-            <button class="ssv-btn-sm ssv-btn-ok" id="ssv-ok">Done</button>
+            <button type="button" class="ssv-btn-sm ssv-btn-del" id="ssv-cancel">Cancel</button>
+            <button type="button" class="ssv-btn-sm ssv-btn-ok" id="ssv-ok">Done</button>
           </div>
         </div>`;
 
@@ -3157,12 +3354,12 @@
       inp.focus();
       inp.select();
 
-      // Swatch selection
       box.querySelectorAll(".ssv-swatch").forEach(swatch => {
         swatch.addEventListener("click", () => {
           box.querySelectorAll(".ssv-swatch").forEach(s => s.classList.remove("active"));
           swatch.classList.add("active");
           selectedColor = swatch.dataset.color;
+          currentColor = selectedColor;
           box.style.borderColor = selectedColor;
         });
       });
@@ -3174,19 +3371,18 @@
             const targetAnn = annotations[existingIdx];
             targetAnn.text = val;
             targetAnn.color = selectedColor;
-            // Update color for any linked branching arrows sharing this tail
             annotations.forEach(a => {
-              if (Math.hypot(a.x2 - targetAnn.x2, a.y2 - targetAnn.y2) < 0.02) {
+              if (a.type !== "path" && Math.hypot(a.x2 - targetAnn.x2, a.y2 - targetAnn.y2) < 0.02) {
                 a.color = selectedColor;
               }
             });
           } else {
             annotations.push({
               type: "arrow_text",
-              x1: x1 / (cssWidth || (canvas.width / dpr)),
-              y1: y1 / (cssHeight || (canvas.height / dpr)),
-              x2: x2 / (cssWidth || (canvas.width / dpr)),
-              y2: y2 / (cssHeight || (canvas.height / dpr)),
+              x1: nx1,
+              y1: ny1,
+              x2: nx2,
+              y2: ny2,
               text: val,
               color: selectedColor
             });
@@ -3194,7 +3390,6 @@
           saveAnnotations();
           redraw();
         } else if (isEdit) {
-          // Empty edit removes label
           annotations.splice(existingIdx, 1);
           saveAnnotations();
           redraw();
@@ -3217,19 +3412,63 @@
       });
     }
 
-    let draggingTailIdx = null;
-    let draggingHeadIdx = null;
-    let resizingLabel = null; // { index, side, initialW, startPx, layout }
+    function setToolMode(mode) {
+      toolMode = mode;
+      el.querySelectorAll(".ssv-tool").forEach(btn => {
+        btn.classList.toggle("active", btn.getAttribute("data-tool") === mode);
+      });
+      updateCursor();
+    }
 
-    // Prevent native context menu on canvas so right-click delete works with confirmation
+    function updateCursor(targetCursor) {
+      if (targetCursor) {
+        canvas.style.cursor = targetCursor;
+        return;
+      }
+      if (isSpacePanning || toolMode === "hand") {
+        canvas.style.cursor = isPanning ? "grabbing" : "grab";
+      } else if (toolMode === "zoom") {
+        canvas.style.cursor = "zoom-in";
+      } else if (toolMode === "pen") {
+        canvas.style.cursor = "crosshair";
+      } else {
+        canvas.style.cursor = "crosshair";
+      }
+    }
+
+    el.querySelectorAll(".ssv-tool").forEach(btn => {
+      btn.addEventListener("click", () => {
+        setToolMode(btn.getAttribute("data-tool"));
+      });
+    });
+
+    const resetBtn = el.querySelector("#ssv-reset-btn");
+    if (resetBtn) {
+      resetBtn.addEventListener("click", () => {
+        viewScale = 1.0;
+        viewTx = (stageW - fitW) / 2;
+        viewTy = (stageH - fitH) / 2;
+        applyViewTransform();
+      });
+    }
+
+    // Context menu right-click deletion
     canvas.addEventListener("contextmenu", (e) => {
       e.preventDefault();
-      const rect = canvas.getBoundingClientRect();
-      const px = e.clientX - rect.left;
-      const py = e.clientY - rect.top;
-      const hit = hitTestAnnotation(px, py);
+      const rect = stage.getBoundingClientRect();
+      const sx = e.clientX - rect.left;
+      const sy = e.clientY - rect.top;
+      const hit = hitTestAnnotation(sx, sy);
       if (hit) {
-        // 1. Right click directly on an arrow head -> delete only this specific arrow
+        if (hit.target === "path") {
+          if (confirm("Delete this drawing stroke? This cannot be undone.")) {
+            annotations.splice(hit.index, 1);
+            saveAnnotations();
+            redraw();
+          }
+          return;
+        }
+
         if (hit.target === "head") {
           if (confirm("Delete this arrow? This cannot be undone.")) {
             annotations.splice(hit.index, 1);
@@ -3239,16 +3478,14 @@
           return;
         }
 
-        // 2. Right click on label/tail -> delete label and all linked arrows
         const targetAnn = annotations[hit.index];
-        const shared = annotations.filter(a => Math.hypot(a.x2 - targetAnn.x2, a.y2 - targetAnn.y2) < 0.02);
+        const shared = annotations.filter(a => a.type !== "path" && Math.hypot(a.x2 - targetAnn.x2, a.y2 - targetAnn.y2) < 0.02);
         const countMsg = shared.length > 1 ? ` (${shared.length} arrows)` : "";
         const labelName = targetAnn.text || "this annotation";
 
         if (confirm(`Delete label "${labelName}"${countMsg}? This cannot be undone.`)) {
-          // Remove all arrows linked to this label/tail
           for (let i = annotations.length - 1; i >= 0; i--) {
-            if (Math.hypot(annotations[i].x2 - targetAnn.x2, annotations[i].y2 - targetAnn.y2) < 0.02) {
+            if (annotations[i].type !== "path" && Math.hypot(annotations[i].x2 - targetAnn.x2, annotations[i].y2 - targetAnn.y2) < 0.02) {
               annotations.splice(i, 1);
             }
           }
@@ -3258,17 +3495,81 @@
       }
     });
 
-    // Pointer events on canvas
+    // Mouse wheel zoom centered on cursor
+    stage.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      const rect = stage.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+      const newScale = Math.max(0.2, Math.min(10.0, viewScale * factor));
+      viewTx = mouseX - (mouseX - viewTx) * (newScale / viewScale);
+      viewTy = mouseY - (mouseY - viewTy) * (newScale / viewScale);
+      viewScale = newScale;
+      applyViewTransform();
+    }, { passive: false });
+
+    // Double click to toggle 2x zoom centered on click
+    canvas.addEventListener("dblclick", (e) => {
+      const rect = stage.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const clickY = e.clientY - rect.top;
+      if (Math.abs(viewScale - 1.0) < 0.05) {
+        const newScale = 2.2;
+        viewTx = clickX - (clickX - viewTx) * (newScale / viewScale);
+        viewTy = clickY - (clickY - viewTy) * (newScale / viewScale);
+        viewScale = newScale;
+      } else {
+        viewScale = 1.0;
+        viewTx = (stageW - fitW) / 2;
+        viewTy = (stageH - fitH) / 2;
+      }
+      applyViewTransform();
+    });
+
+    // Pointer Events on canvas
     canvas.addEventListener("pointerdown", (e) => {
-      if (e.button === 2) return; // Right click handled by contextmenu
+      if (e.button === 2) return; // Handled by contextmenu
       if (activeTextBox) { activeTextBox.remove(); activeTextBox = null; }
-      const rect = canvas.getBoundingClientRect();
-      startX = e.clientX - rect.left;
-      startY = e.clientY - rect.top;
+      const rect = stage.getBoundingClientRect();
+      const sx = e.clientX - rect.left;
+      const sy = e.clientY - rect.top;
+      const worldPt = screenToWorld(sx, sy);
 
-      const hit = hitTestAnnotation(startX, startY);
+      // Hand tool or Spacebar pan
+      if (isSpacePanning || toolMode === "hand" || e.button === 1) {
+        isPanning = true;
+        panStartX = e.clientX;
+        panStartY = e.clientY;
+        panInitTx = viewTx;
+        panInitTy = viewTy;
+        canvas.setPointerCapture(e.pointerId);
+        updateCursor("grabbing");
+        return;
+      }
 
-      // 1. Click on arrow head -> Drag to reposition arrow head (point of interest)
+      // Zoom drag tool
+      if (toolMode === "zoom") {
+        isZoomDragging = true;
+        zoomStartY = e.clientY;
+        zoomInitScale = viewScale;
+        canvas.setPointerCapture(e.pointerId);
+        return;
+      }
+
+      // Freehand drawing pen tool
+      if (toolMode === "pen") {
+        isDrawing = true;
+        activeStroke = [worldPt];
+        canvas.setPointerCapture(e.pointerId);
+        drawInkStroke(activeStroke);
+        return;
+      }
+
+      // Arrow mode
+      const hit = hitTestAnnotation(sx, sy);
+
+      // 1. Arrow head drag
       if (hit && hit.target === "head") {
         draggingHeadIdx = hit.index;
         canvas.setPointerCapture(e.pointerId);
@@ -3276,20 +3577,20 @@
         return;
       }
 
-      // 2. Click on resize edges (left or right) -> Drag to resize box width
+      // 2. Label resize drag
       if (hit && (hit.target === "resize_right" || hit.target === "resize_left")) {
         resizingLabel = {
           index: hit.index,
           side: hit.target,
           initialBoxW: hit.layout.boxW,
-          startPx: startX,
+          startSx: sx,
           ann: hit.annotation
         };
         canvas.setPointerCapture(e.pointerId);
         return;
       }
 
-      // 3. Click on tail anchor -> Drag to move tail (and all linked arrows)
+      // 3. Arrow tail anchor drag
       if (hit && hit.target === "tail") {
         draggingTailIdx = hit.index;
         canvas.setPointerCapture(e.pointerId);
@@ -3297,97 +3598,155 @@
         return;
       }
 
-      // 4. Click inside label box -> Edit text
+      // 4. Click inside label badge -> edit text
       if (hit && hit.target === "label") {
-        promptAnnotationText(hit.layout.x1, hit.layout.y1, hit.layout.x2, hit.layout.y2, hit.index);
+        promptAnnotationText(hit.annotation.x1, hit.annotation.y1, hit.annotation.x2, hit.annotation.y2, hit.index);
         return;
       }
 
-      // 5. Otherwise start drawing a new arrow
+      // 5. Start new arrow
       isDrawing = true;
-      currX = startX;
-      currY = startY;
+      startX = worldPt.nx;
+      startY = worldPt.ny;
+      currX = worldPt.nx;
+      currY = worldPt.ny;
       canvas.setPointerCapture(e.pointerId);
     });
 
     canvas.addEventListener("pointermove", (e) => {
-      const rect = canvas.getBoundingClientRect();
-      const px = e.clientX - rect.left;
-      const py = e.clientY - rect.top;
-      const stageW = cssWidth || (canvas.width / dpr);
-      const stageH = cssHeight || (canvas.height / dpr);
+      const rect = stage.getBoundingClientRect();
+      const sx = e.clientX - rect.left;
+      const sy = e.clientY - rect.top;
+      const worldPt = screenToWorld(sx, sy);
 
-      // Handle arrow head repositioning
+      if (isPanning) {
+        viewTx = panInitTx + (e.clientX - panStartX);
+        viewTy = panInitTy + (e.clientY - panStartY);
+        applyViewTransform();
+        return;
+      }
+
+      if (isZoomDragging) {
+        const dy = zoomStartY - e.clientY;
+        const zoomFactor = Math.pow(2, dy / 150);
+        const newScale = Math.max(0.2, Math.min(10.0, zoomInitScale * zoomFactor));
+        const centerX = stageW / 2;
+        const centerY = stageH / 2;
+        viewTx = centerX - (centerX - viewTx) * (newScale / viewScale);
+        viewTy = centerY - (centerY - viewTy) * (newScale / viewScale);
+        viewScale = newScale;
+        applyViewTransform();
+        return;
+      }
+
+      if (toolMode === "pen" && isDrawing && activeStroke) {
+        const events = (e.getCoalescedEvents && e.getCoalescedEvents().length) ? e.getCoalescedEvents() : [e];
+        events.forEach(ev => {
+          const evSx = ev.clientX - rect.left;
+          const evSy = ev.clientY - rect.top;
+          activeStroke.push(screenToWorld(evSx, evSy));
+        });
+        drawInkStroke(activeStroke);
+        return;
+      }
+
+      // Arrow head repositioning
       if (draggingHeadIdx !== null) {
         const ann = annotations[draggingHeadIdx];
-        ann.x1 = Math.min(Math.max(px / stageW, 0.01), 0.99);
-        ann.y1 = Math.min(Math.max(py / stageH, 0.01), 0.99);
-        redraw();
+        ann.x1 = worldPt.nx;
+        ann.y1 = worldPt.ny;
+        scheduleRedraw();
         return;
       }
 
-      // Handle label width resizing
+      // Label width resizing
       if (resizingLabel) {
-        const dx = px - resizingLabel.startPx;
+        const dsx = (sx - resizingLabel.startSx) / viewScale;
         let newWidthPx = resizingLabel.initialBoxW;
         if (resizingLabel.side === "resize_right") {
-          newWidthPx += dx;
+          newWidthPx += dsx;
         } else {
-          newWidthPx -= dx;
+          newWidthPx -= dsx;
         }
-        newWidthPx = Math.max(50, Math.min(newWidthPx, stageW * 0.8));
-        resizingLabel.ann.box_width = newWidthPx / stageW;
-        redraw();
+        newWidthPx = Math.max(50, Math.min(newWidthPx, (fitW || 500) * 0.8));
+        resizingLabel.ann.box_width = newWidthPx / (fitW || 1);
+        scheduleRedraw();
         return;
       }
 
+      // Tail anchor repositioning
       if (draggingTailIdx !== null) {
         const primaryAnn = annotations[draggingTailIdx];
         const oldX2 = primaryAnn.x2;
         const oldY2 = primaryAnn.y2;
-        const newX2 = Math.min(Math.max(px / (cssWidth || (canvas.width / dpr)), 0.01), 0.99);
-        const newY2 = Math.min(Math.max(py / (cssHeight || (canvas.height / dpr)), 0.01), 0.99);
+        const newX2 = worldPt.nx;
+        const newY2 = worldPt.ny;
 
-        // Move all arrows that share this tail anchor
         annotations.forEach(ann => {
-          if (Math.hypot(ann.x2 - oldX2, ann.y2 - oldY2) < 0.02) {
+          if (ann.type !== "path" && Math.hypot(ann.x2 - oldX2, ann.y2 - oldY2) < 0.02) {
             ann.x2 = newX2;
             ann.y2 = newY2;
           }
         });
-        redraw();
+        scheduleRedraw();
         return;
       }
 
-      if (isDrawing) {
-        currX = px;
-        currY = py;
-        // Snap visual feedback if hovering over existing tail
-        const hit = hitTestAnnotation(px, py);
-        if (hit) {
-          redraw({ x1: startX, y1: startY, x2: hit.layout.x2, y2: hit.layout.y2 });
+      // In-progress new arrow drag preview
+      if (isDrawing && toolMode === "arrow") {
+        currX = worldPt.nx;
+        currY = worldPt.ny;
+        const hit = hitTestAnnotation(sx, sy);
+        if (hit && hit.target !== "path" && hit.annotation) {
+          scheduleRedraw({ x1: startX, y1: startY, x2: hit.annotation.x2, y2: hit.annotation.y2 });
         } else {
-          redraw({ x1: startX, y1: startY, x2: currX, y2: currY });
+          scheduleRedraw({ x1: startX, y1: startY, x2: currX, y2: currY });
         }
         return;
       }
 
       // Hover cursor management
-      const hit = hitTestAnnotation(px, py);
+      if (isSpacePanning || toolMode === "hand") {
+        updateCursor("grab");
+        return;
+      }
+      if (toolMode === "zoom") {
+        updateCursor("zoom-in");
+        return;
+      }
+      if (toolMode === "pen") {
+        updateCursor("crosshair");
+        return;
+      }
+
+      const hit = hitTestAnnotation(sx, sy);
       if (hit) {
         if (hit.target === "resize_right" || hit.target === "resize_left") {
-          canvas.style.cursor = "ew-resize";
+          updateCursor("ew-resize");
         } else if (hit.target === "head" || hit.target === "tail") {
-          canvas.style.cursor = "move";
+          updateCursor("move");
+        } else if (hit.target === "path") {
+          updateCursor("pointer");
         } else {
-          canvas.style.cursor = "pointer";
+          updateCursor("pointer");
         }
       } else {
-        canvas.style.cursor = "crosshair";
+        updateCursor("crosshair");
       }
     });
 
     canvas.addEventListener("pointerup", (e) => {
+      if (isPanning) {
+        isPanning = false;
+        updateCursor();
+        return;
+      }
+
+      if (isZoomDragging) {
+        isZoomDragging = false;
+        return;
+      }
+
       if (draggingHeadIdx !== null) {
         draggingHeadIdx = null;
         saveAnnotations();
@@ -3409,32 +3768,48 @@
         return;
       }
 
-      if (isDrawing) {
+      if (toolMode === "pen" && isDrawing && activeStroke) {
         isDrawing = false;
-        const rect = canvas.getBoundingClientRect();
-        const endX = e.clientX - rect.left;
-        const endY = e.clientY - rect.top;
-        const dist = Math.hypot(endX - startX, endY - startY);
+        if (inkCtx) inkCtx.clearRect(0, 0, inkCanvas.width, inkCanvas.height);
+        if (activeStroke.length >= 2) {
+          annotations.push({
+            type: "path",
+            points: activeStroke.map(p => [p.nx, p.ny]),
+            color: currentColor || "#48B2E9",
+            lineWidth: 3.5
+          });
+          saveAnnotations();
+        }
+        activeStroke = null;
+        redraw();
+        return;
+      }
 
-        if (dist > 15) {
-          // Check if ending on an existing tail or label box
-          const hit = hitTestAnnotation(endX, endY);
-          if (hit) {
-            // Link to the existing annotation's tail and text without opening a new prompt
-            const existingAnn = annotations[hit.index];
+      if (isDrawing && toolMode === "arrow") {
+        isDrawing = false;
+        const rect = stage.getBoundingClientRect();
+        const endSx = e.clientX - rect.left;
+        const endSy = e.clientY - rect.top;
+        const worldEnd = screenToWorld(endSx, endSy);
+        const distPx = Math.hypot(endSx - (worldToScreen(startX, startY).sx), endSy - (worldToScreen(startX, startY).sy));
+
+        if (distPx > 15) {
+          const hit = hitTestAnnotation(endSx, endSy);
+          if (hit && hit.target !== "path" && hit.annotation) {
+            const existingAnn = hit.annotation;
             annotations.push({
               type: "arrow_text",
-              x1: startX / (cssWidth || (canvas.width / dpr)),
-              y1: startY / (cssHeight || (canvas.height / dpr)),
+              x1: startX,
+              y1: startY,
               x2: existingAnn.x2,
               y2: existingAnn.y2,
-              text: "", // secondary arrow shares the main label
-              color: existingAnn.color || "#48B2E9"
+              text: "",
+              color: existingAnn.color || currentColor || "#48B2E9"
             });
             saveAnnotations();
             redraw();
           } else {
-            promptAnnotationText(startX, startY, endX, endY);
+            promptAnnotationText(startX, startY, worldEnd.nx, worldEnd.ny);
           }
         } else {
           redraw();
@@ -3442,7 +3817,6 @@
       }
     });
 
-    let annotationsVisible = true;
     const toggleAnnBtn = el.querySelector("#ssv-toggle-ann-btn");
     if (toggleAnnBtn) {
       toggleAnnBtn.addEventListener("click", () => {
@@ -3454,7 +3828,6 @@
       });
     }
 
-    // Delete screenshot from viewer
     const delBtn = el.querySelector("#ssv-delete-btn");
     if (delBtn) {
       delBtn.addEventListener("click", () => {
@@ -3470,36 +3843,41 @@
       });
     }
 
-    // Copy to clipboard with annotations
     const copyBtn = el.querySelector("#ssv-copy-btn");
     if (copyBtn) {
       copyBtn.addEventListener("click", async () => {
         if (!img.complete || img.naturalWidth === 0) return;
         try {
-          // 1. Create full-resolution offscreen export canvas
           const expCanvas = document.createElement("canvas");
           expCanvas.width = img.naturalWidth;
           expCanvas.height = img.naturalHeight;
           const expCtx = expCanvas.getContext("2d");
 
-          // 2. Draw base screenshot image
           expCtx.drawImage(img, 0, 0);
 
           if (annotationsVisible) {
-            // 3. Render annotations scaled to natural image resolution
-            const scale = img.naturalWidth / (cssWidth || (canvas.width / dpr));
+            const scale = img.naturalWidth / (fitW || 1);
             expCtx.save();
             expCtx.scale(scale, scale);
 
-            // Pass 1: Draw all arrow lines and heads first
+            // 1. Draw all freehand paths
             annotations.forEach((ann) => {
-              const layout = getAnnotationLayout(ann);
-              drawArrow(expCtx, layout.x1, layout.y1, layout.x2, layout.y2, ann.color || "#48B2E9", false);
+              if (ann.type === "path") {
+                drawPath(expCtx, ann);
+              }
             });
 
-            // Pass 2: Draw all label badges topmost
+            // 2. Draw all arrow lines and heads
             annotations.forEach((ann) => {
-              if (ann.text) {
+              if (ann.type !== "path") {
+                const layout = getAnnotationLayout(ann);
+                drawArrow(expCtx, layout.x1, layout.y1, layout.x2, layout.y2, ann.color || "#48B2E9", false);
+              }
+            });
+
+            // 3. Draw label badges topmost
+            annotations.forEach((ann) => {
+              if (ann.type !== "path" && ann.text) {
                 const layout = getAnnotationLayout(ann);
                 drawAnnotationLabel(expCtx, layout, ann.text, ann.color || "#48B2E9");
               }
@@ -3508,7 +3886,6 @@
             expCtx.restore();
           }
 
-          // 4. Convert to PNG blob and copy to system clipboard
           expCanvas.toBlob(async (blob) => {
             if (!blob) return;
             try {
@@ -3520,7 +3897,6 @@
                 throw new Error("Clipboard API not available");
               }
 
-              // Visual success feedback
               copyBtn.classList.add("copied");
               const icon = copyBtn.querySelector(".material-icons-outlined");
               if (icon) icon.textContent = "check";
@@ -3529,8 +3905,7 @@
                 if (icon) icon.textContent = "content_copy";
               }, 2000);
             } catch (err) {
-              console.warn("Clipboard copy failed, fallback downloading:", err);
-              // Fallback: download as PNG if clipboard permissions restricted
+              console.warn("Clipboard copy fallback downloading:", err);
               const a = document.createElement("a");
               a.href = URL.createObjectURL(blob);
               a.download = `annotated_${filename}`;
@@ -3548,7 +3923,6 @@
     const fsBtn = el.querySelector("#ssv-fullscreen-btn");
     if (fsBtn) {
       if (isStandaloneWindow) {
-        // In the dedicated fullscreen window, button acts as 'Reduce to Preview' (closes standalone window)
         fsBtn.title = "Reduce to Small Preview";
         const icon = fsBtn.querySelector(".material-icons-outlined");
         if (icon) icon.textContent = "fullscreen_exit";
@@ -3559,7 +3933,7 @@
         fsBtn.addEventListener("click", () => {
           if (window.pywebview && window.pywebview.api && window.pywebview.api.open_fullscreen_viewer) {
             window.pywebview.api.open_fullscreen_viewer(filename);
-            el.remove(); // Close embedded modal in the settings app
+            el.remove();
           } else {
             if (!document.fullscreenElement) {
               if (el.requestFullscreen) el.requestFullscreen();
@@ -3583,6 +3957,55 @@
     document.addEventListener("fullscreenchange", onFsChange);
     document.addEventListener("webkitfullscreenchange", onFsChange);
 
+    const onKeyDown = (e) => {
+      if (activeTextBox) return; // Don't intercept while typing in label input
+      if (e.key === "Escape") {
+        closeViewerAction();
+      } else if (e.key === " " && !isSpacePanning) {
+        isSpacePanning = true;
+        updateCursor();
+      } else if (e.key === "a" || e.key === "A") {
+        setToolMode("arrow");
+      } else if (e.key === "p" || e.key === "P") {
+        setToolMode("pen");
+      } else if (e.key === "h" || e.key === "H") {
+        setToolMode("hand");
+      } else if (e.key === "z" || e.key === "Z") {
+        setToolMode("zoom");
+      } else if (e.key === "0") {
+        viewScale = 1.0;
+        viewTx = (stageW - fitW) / 2;
+        viewTy = (stageH - fitH) / 2;
+        applyViewTransform();
+      } else if (e.key === "=" || e.key === "+") {
+        const newScale = Math.min(10.0, viewScale * 1.25);
+        const centerX = stageW / 2;
+        const centerY = stageH / 2;
+        viewTx = centerX - (centerX - viewTx) * (newScale / viewScale);
+        viewTy = centerY - (centerY - viewTy) * (newScale / viewScale);
+        viewScale = newScale;
+        applyViewTransform();
+      } else if (e.key === "-" || e.key === "_") {
+        const newScale = Math.max(0.2, viewScale / 1.25);
+        const centerX = stageW / 2;
+        const centerY = stageH / 2;
+        viewTx = centerX - (centerX - viewTx) * (newScale / viewScale);
+        viewTy = centerY - (centerY - viewTy) * (newScale / viewScale);
+        viewScale = newScale;
+        applyViewTransform();
+      }
+    };
+
+    const onKeyUp = (e) => {
+      if (e.key === " ") {
+        isSpacePanning = false;
+        updateCursor();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+
     const closeViewerAction = () => {
       if (isStandaloneWindow) {
         if (window.pywebview && window.pywebview.api) {
@@ -3604,16 +4027,10 @@
       document.removeEventListener("fullscreenchange", onFsChange);
       document.removeEventListener("webkitfullscreenchange", onFsChange);
       window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("resize", resizeCanvas);
       el.remove();
     };
-
-    const onKeyDown = (e) => {
-      if (e.key === "Escape") {
-        closeViewerAction();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
 
     el.querySelector(".ssv-close").addEventListener("click", closeViewerAction);
 
