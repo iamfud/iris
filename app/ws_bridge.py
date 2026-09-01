@@ -1145,7 +1145,7 @@ class _RequestHandler(SimpleHTTPRequestHandler):
                     set_startup(bool(body["run_at_startup"]))
                 except Exception as e:
                     log.warning("[http] failed to apply run_at_startup: %s", e)
-            if "hotkey_overlay" in body or "hotkey_toolbar" in body:
+            if "hotkey_overlay" in body or "hotkey_toolbar" in body or "hotkey_borderless" in body:
                 if hasattr(_app, "_reregister_hotkey"):
                     try:
                         _app._reregister_hotkey()

@@ -164,6 +164,20 @@ def get_core_entities() -> List[Dict[str, Any]]:
             "default_action": "screenshot_zone",
             "description": "Drag rectangular crosshairs to snip a screen zone",
         },
+        {
+            "id": "system.borderless_toggle",
+            "domain": "System",
+            "plugin": "system",
+            "button_id": "borderless_toggle",
+            "state_key": "borderless_toggle",
+            "name": "Toggle Borderless",
+            "type": "action",
+            "icon": "window-maximize",
+            "color": "#48B2E9",
+            "writable": True,
+            "default_action": "borderless_toggle",
+            "description": "Toggle active game/window between windowed and borderless fullscreen",
+        },
 
         # ── Media Controls (Momentary Actions) ───────────────────
         {

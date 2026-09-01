@@ -131,12 +131,13 @@ class SettingsRenderer {
 
     if (page.sections && page.sections.length > 0) {
       var isApp = _isApp();
+      var isCollapsiblePage = (pageId === "settings");
       var renderedIndex = 0;
       html += '<section class="settings-content">';
       page.sections.forEach(function (section) {
         if (section.app_only && !isApp) return;
-        var isOpen = (renderedIndex === 0) || (section.default_open === true);
-        html += self._renderSection(section, config, isOpen);
+        var isOpen = (renderedIndex === 0);
+        html += self._renderSection(section, config, isOpen, isCollapsiblePage);
         renderedIndex++;
       });
       html += "</section>";
@@ -673,8 +674,9 @@ class SettingsRenderer {
 
   /* ── Section renderer ───────────────────────────────────────── */
 
-  _renderSection(section, config, isOpen) {
+  _renderSection(section, config, isOpen, isCollapsible) {
     if (isOpen === undefined) isOpen = true;
+    if (isCollapsible === undefined) isCollapsible = false;
     var self = this;
     var controls = (section.controls && section.controls.length) ? section.controls : [];
     var isWide = !!section.full_width || section.columns === 2;
@@ -695,14 +697,22 @@ class SettingsRenderer {
     var html = '<div class="' + sectionClass + '"';
     if (isWide) html += ' data-span="full"';
     html += '>';
-    html += '<div class="settings-collapsible">';
-    if (section.title) {
-      var arrow = isOpen ? '&#9660; ' : '&#9654; ';
-      html += '<a href="#" class="collapse-toggle settings-section-title">' +
-        arrow + this._esc(section.title) + "</a>";
+
+    if (isCollapsible) {
+      html += '<div class="settings-collapsible">';
+      if (section.title) {
+        var arrow = isOpen ? '&#9660; ' : '&#9654; ';
+        html += '<a href="#" class="collapse-toggle settings-section-title">' +
+          arrow + this._esc(section.title) + "</a>";
+      }
+      var contentStyle = isOpen ? '' : ' style="display:none;"';
+      html += '<div class="collapse-content"' + contentStyle + '>';
+    } else {
+      if (section.title) {
+        html += '<h2 class="settings-section-title">' + this._esc(section.title) + '</h2>';
+      }
     }
-    var contentStyle = isOpen ? '' : ' style="display:none;"';
-    html += '<div class="collapse-content"' + contentStyle + '>';
+
     var cardClass = "settings-card";
     if (section.columns === 2) cardClass += " settings-card-cols-2";
     if (section.qr_top_right) cardClass += " settings-card-net";
@@ -739,8 +749,11 @@ class SettingsRenderer {
     });
 
     html += "</div>";
-    html += "</div>";
-    html += "</div>";
+
+    if (isCollapsible) {
+      html += "</div>";
+      html += "</div>";
+    }
     html += "</div>";
     return html;
   }

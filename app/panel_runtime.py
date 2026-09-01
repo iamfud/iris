@@ -374,6 +374,13 @@ def execute_slot(slot):
                 if app is not None and getattr(app, "_main_win", None):
                     app._root.after(0, app._main_win.start_quick_note)
                 return {"ok": True}
+            elif bid == "borderless_toggle" or ent == "system.borderless_toggle":
+                try:
+                    from win_platform import toggle_borderless_window
+                    return {"ok": True, "borderless": toggle_borderless_window()}
+                except Exception as ex:
+                    log.warning("[panel_runtime] borderless toggle failed: %s", ex)
+                    return {"ok": False, "error": str(ex)}
         elif pname == "media" or ent.startswith("media."):
             if bid == "play_pause" or ent == "media.play_pause":
                 _media_key(0xB3)

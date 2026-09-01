@@ -153,6 +153,13 @@
               "description": "Global shortcut to open or toggle the screen capture and actions toolbar."
             },
             {
+              "type": "hotkey",
+              "key": "hotkey_borderless",
+              "label": "Borderless Hotkey",
+              "default": "Ctrl+Shift+B",
+              "description": "Global shortcut to toggle the active game/window into borderless fullscreen."
+            },
+            {
               "type": "media_player_picker",
               "key": "media_player_path",
               "label": "Media Player",
@@ -199,6 +206,13 @@
           "app_only": true,
           "full_width": true,
           "qr_top_right": true,
+          "instructions": [
+            "Mobile Pairing & Connection Tips",
+            "• iOS (iPhone & iPad): Scan the QR code in Safari, tap the Share button ( ↑ ) → 'Add to Home Screen', and launch full-screen.",
+            "• Android: Download and install the native Iris.apk companion app below, or open in Chrome → 'Add to Home screen'.",
+            "• Dynamic IP & Reconnection: If your PC's IP address changes, simply scan the live QR code above to reconnect immediately.",
+            "• Reliable Setup: For the most seamless connection, reserve this PC's local IP address in your router's DHCP reservation settings."
+          ],
           "controls": [
             {
               "type": "toggle",
@@ -222,46 +236,12 @@
               "type": "devices",
               "label": "Paired devices",
               "description": "View or revoke connected phones and tablets."
-            }
-          ]
-        },
-        {
-          "title": "iOS Setup (iPhone & iPad)",
-          "app_only": true,
-          "instructions": [
-            "Full-Screen Web App (PWA)",
-            "1. Scan the QR code above to open the portal.",
-            "2. Open in Safari (Required — Safari is the only browser on iOS that supports full-screen standalone PWA mode without address bars).",
-            "3. Tap the Share button ( ↑ ) and select 'Add to Home Screen'.",
-            "4. Launch Iris from your home screen and enter your Panel Password to pair."
-          ]
-        },
-        {
-          "title": "Android Setup",
-          "app_only": true,
-          "instructions": [
-            "Choose your preferred setup method:",
-            "• Preferred: Native Android App — Best performance, keep-screen-on support, and auto-reconnect.",
-            "• Alternative: Chrome PWA — Open in Chrome, tap menu ( ⋮ ) → 'Add to Home screen' or 'Install app'."
-          ],
-          "controls": [
+            },
             {
               "type": "apk_download",
               "label": "Native Companion App",
               "description": "Download and install the native Android Iris.apk directly on your phone."
             }
-          ]
-        },
-        {
-          "title": "Connection & DHCP Tips",
-          "app_only": true,
-          "full_width": true,
-          "instructions": [
-            "Dynamic IP & Reconnection",
-            "• Live Dynamic QR: The QR code above automatically updates whenever your PC's local IP address changes.",
-            "• If Connection Drops: If your router assigns a new IP address, simply scan the QR code again — your device reconnects immediately at the new address without losing paired status.",
-            "• Set & Forget: For the most reliable connection, reserve this PC's local IP in your router's DHCP reservation settings.",
-            "• Security Notice: Iris runs on your local Wi-Fi over HTTP. Browser 'connection not secure' notices are normal for local network devices."
           ]
         }
       ]

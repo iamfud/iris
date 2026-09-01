@@ -1195,3 +1195,99 @@ def get_monitor_refresh_rate(hwnd=None) -> int:
 
     return 60
 
+
+# ── Native Borderless Window Engine ──────────────────────────────────────────
+_BORDERLESS_CACHE: dict[int, tuple[int, int, tuple[int, int, int, int]]] = {}
+
+def toggle_borderless_window(hwnd: int | None = None) -> bool:
+    """Toggle a window between its original framed style and edge-to-edge borderless."""
+    if not _IS_WINDOWS:
+        return False
+    try:
+        user32 = ctypes.windll.user32
+        target_hwnd = hwnd or user32.GetForegroundWindow()
+        if not target_hwnd or not user32.IsWindow(target_hwnd):
+            return False
+
+        # Protect shell desktop and taskbar from accidental style modifications
+        class_name = ctypes.create_unicode_buffer(256)
+        user32.GetClassNameW(target_hwnd, class_name, 256)
+        if class_name.value in ("Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"):
+            return False
+
+        GWL_STYLE = -16
+        GWL_EXSTYLE = -20
+        SWP_FRAMECHANGED = 0x0020
+        SWP_NOZORDER = 0x0004
+        SWP_NOACTIVATE = 0x0010
+        SWP_SHOWWINDOW = 0x0040
+
+        if target_hwnd in _BORDERLESS_CACHE:
+            # Revert to original windowed style and position
+            old_style, old_ex_style, (left, top, width, height) = _BORDERLESS_CACHE.pop(target_hwnd)
+            user32.SetWindowLongW(target_hwnd, GWL_STYLE, old_style)
+            user32.SetWindowLongW(target_hwnd, GWL_EXSTYLE, old_ex_style)
+            user32.SetWindowPos(
+                target_hwnd, 0, left, top, width, height,
+                SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW
+            )
+            log.info("[borderless] Reverted window %s to windowed (%dx%d at %d,%d)", target_hwnd, width, height, left, top)
+            return False
+        else:
+            # Save current window rect and styles
+            rect = ctypes.wintypes.RECT()
+            user32.GetWindowRect(target_hwnd, ctypes.byref(rect))
+            old_style = user32.GetWindowLongW(target_hwnd, GWL_STYLE)
+            old_ex_style = user32.GetWindowLongW(target_hwnd, GWL_EXSTYLE)
+            _BORDERLESS_CACHE[target_hwnd] = (
+                old_style, old_ex_style,
+                (rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
+            )
+
+            # Get target monitor bounds
+            class MONITORINFO(ctypes.Structure):
+                _fields_ = [
+                    ("cbSize", ctypes.c_ulong),
+                    ("rcMonitor", ctypes.wintypes.RECT),
+                    ("rcWork", ctypes.wintypes.RECT),
+                    ("dwFlags", ctypes.c_ulong),
+                ]
+
+            hmon = user32.MonitorFromWindow(target_hwnd, 2)  # MONITOR_DEFAULTTONEAREST
+            mi = MONITORINFO()
+            mi.cbSize = ctypes.sizeof(MONITORINFO)
+            user32.GetMonitorInfoW(hmon, ctypes.byref(mi))
+            mx = mi.rcMonitor.left
+            my = mi.rcMonitor.top
+            mw = mi.rcMonitor.right - mi.rcMonitor.left
+            mh = mi.rcMonitor.bottom - mi.rcMonitor.top
+
+            # Strip caption, sizing border, and window buttons
+            WS_CAPTION = 0x00C00000
+            WS_THICKFRAME = 0x00040000
+            WS_MINIMIZEBOX = 0x00020000
+            WS_MAXIMIZEBOX = 0x00010000
+            WS_SYSMENU = 0x00080000
+            WS_POPUP = 0x80000000
+
+            WS_EX_DLGMODALFRAME = 0x00000001
+            WS_EX_CLIENTEDGE = 0x00000200
+            WS_EX_STATICEDGE = 0x00020000
+            WS_EX_WINDOWEDGE = 0x00000100
+
+            new_style = old_style & ~(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU)
+            new_style |= WS_POPUP
+            new_ex_style = old_ex_style & ~(WS_EX_DLGMODALFRAME | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE | WS_EX_WINDOWEDGE)
+
+            user32.SetWindowLongW(target_hwnd, GWL_STYLE, new_style)
+            user32.SetWindowLongW(target_hwnd, GWL_EXSTYLE, new_ex_style)
+            user32.SetWindowPos(
+                target_hwnd, 0, mx, my, mw, mh,
+                SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW
+            )
+            log.info("[borderless] Converted window %s (%s) to borderless (%dx%d at %d,%d)", target_hwnd, class_name.value, mw, mh, mx, my)
+            return True
+    except Exception as ex:
+        log.warning("[borderless] Failed to toggle borderless: %s", ex)
+        return False
+

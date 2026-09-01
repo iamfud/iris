@@ -285,6 +285,7 @@ if __name__ == "__main__":
             WM_HOTKEY = 0x0312
             HOTKEY_ID = 1
             HOTKEY_ID_DESKTOP = 2
+            HOTKEY_ID_BORDERLESS = 3
 
             def _parse_hk(val, def_mods, def_vk):
                 if not val or not isinstance(val, str):
@@ -319,19 +320,24 @@ if __name__ == "__main__":
 
             ov_hk_str = self.cfg.get("hotkey_overlay") or "Ctrl+Alt+I"
             tb_hk_str = self.cfg.get("hotkey_toolbar") or "Ctrl+Alt+T"
+            bl_hk_str = self.cfg.get("hotkey_borderless") or "Ctrl+Shift+B"
 
             ov_mods, ov_vk = _parse_hk(ov_hk_str, MOD_CONTROL | MOD_ALT, ord('I'))
             tb_mods, tb_vk = _parse_hk(tb_hk_str, MOD_CONTROL | MOD_ALT, ord('T'))
+            bl_mods, bl_vk = _parse_hk(bl_hk_str, MOD_CONTROL | MOD_SHIFT, ord('B'))
 
             def listener():
                 msg = ctypes.wintypes.MSG()
                 user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 0)
                 reg1 = user32.RegisterHotKey(None, HOTKEY_ID, ov_mods, ov_vk)
                 reg2 = user32.RegisterHotKey(None, HOTKEY_ID_DESKTOP, tb_mods, tb_vk)
+                reg3 = user32.RegisterHotKey(None, HOTKEY_ID_BORDERLESS, bl_mods, bl_vk)
                 if not reg1:
                     log.warning("Failed to register overlay global hotkey: %s", ov_hk_str)
                 if not reg2:
                     log.warning("Failed to register toolbar global hotkey: %s", tb_hk_str)
+                if not reg3:
+                    log.warning("Failed to register borderless global hotkey: %s", bl_hk_str)
                 try:
                     while not self._hotkey_stop.is_set():
                         if user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1):
@@ -344,6 +350,12 @@ if __name__ == "__main__":
                                         self._root.after(0, self._toggle_capture_toolbar)
                                     except Exception as ex:
                                         log.warning("[hotkey] capture toolbar toggle failed: %s", ex)
+                                elif msg.wParam == HOTKEY_ID_BORDERLESS:
+                                    try:
+                                        from win_platform import toggle_borderless_window
+                                        self._root.after(0, toggle_borderless_window)
+                                    except Exception as ex:
+                                        log.warning("[hotkey] borderless toggle failed: %s", ex)
                             elif msg.message == 0x0012:
                                 break
                         else:
@@ -351,10 +363,11 @@ if __name__ == "__main__":
                 finally:
                     user32.UnregisterHotKey(None, HOTKEY_ID)
                     user32.UnregisterHotKey(None, HOTKEY_ID_DESKTOP)
+                    user32.UnregisterHotKey(None, HOTKEY_ID_BORDERLESS)
 
             self._hotkey_thread = threading.Thread(target=listener, daemon=True)
             self._hotkey_thread.start()
-            log.info("Global hotkeys registered (Overlay: %s, Toolbar: %s)", ov_hk_str, tb_hk_str)
+            log.info("Global hotkeys registered (Overlay: %s, Toolbar: %s, Borderless: %s)", ov_hk_str, tb_hk_str, bl_hk_str)
 
         def _queue_defaults(self):
             for key, val in DEVICE_DEFAULTS.items():
