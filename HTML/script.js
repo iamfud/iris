@@ -4884,6 +4884,24 @@
     return yiq >= 150;
   }
 
+  function resolveProgressFillColor(slotColor, activeColor) {
+    if (slotColor && typeof slotColor === "string" && slotColor.startsWith("#")) {
+      let h = slotColor.slice(1);
+      if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+      if (h.length === 6) {
+        const r = parseInt(h.slice(0, 2), 16) || 0;
+        const g = parseInt(h.slice(2, 4), 16) || 0;
+        const b = parseInt(h.slice(4, 6), 16) || 0;
+        const yiq = (r * 299 + g * 587 + b * 114) / 1000;
+        if (yiq >= 30) return slotColor; // Valid non-black custom color
+      }
+    }
+    if (activeColor && typeof activeColor === "string" && activeColor.startsWith("#") && activeColor !== "#555555") {
+      return activeColor;
+    }
+    return "var(--theme-color-1, #48B2E9)";
+  }
+
   function mdiChar(name) {
     if (!name) return "";
     const key = name.toLowerCase().trim().replace("mdi:", "").replace("mdi-", "");
@@ -7828,7 +7846,7 @@
     if (isProgressActive) {
       colorPlate = ""; // Progress bar drives the color fill — suppress solid 100% full-tile mask
       glyphStyle = "";
-      const fillColor = s.color || activeColor || "var(--theme-color-1, #48B2E9)";
+      const fillColor = resolveProgressFillColor(s.color, activeColor);
       progressFillPlate = '<span class="pdev-progress-fill" style="--fill-pct:' + fillPct.toFixed(1) + '%; --fill-color:' + esc(fillColor) + ';"></span>';
       extraTileClass += " has-progress-fill" + (fillPct >= 99.5 ? " has-fill-100" : "");
     }
@@ -8587,7 +8605,7 @@
           const colorPlateEl = tile.querySelector(".pdev-color-plate");
           if (isProgressActive) {
             if (colorPlateEl) colorPlateEl.style.display = "none";
-            const fillColor = s.color || activeColor || "var(--theme-color-1, #48B2E9)";
+            const fillColor = resolveProgressFillColor(s.color, activeColor);
             if (!progEl) {
               progEl = document.createElement("span");
               progEl.className = "pdev-progress-fill";
