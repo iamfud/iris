@@ -4027,6 +4027,7 @@ html.is-landscape {
     padding:0;
     cursor:pointer;
     touch-action:none;
+    pointer-events:none;
 }
 
 .panel-view-overlay .pv-sliders .pdev-range::-webkit-slider-thumb{
@@ -4035,10 +4036,11 @@ html.is-landscape {
     width:28px;
     height:28px;
     border-radius:50%;
-    background:#22252c;
-    border:2.5px solid var(--theme-color-1, #48B2E9);
-    box-shadow:0 0 10px var(--theme-glow, rgba(72,178,233,0.4));
+    background:var(--neon-bright, var(--neon-text, #48B2E9));
+    border:2.5px solid rgba(255, 255, 255, 0.9);
+    box-shadow:0 0 10px var(--theme-glow, rgba(72,178,233,0.6));
     cursor:pointer;
+    pointer-events:auto;
     transition:border-color 0.2s, background 0.2s;
 }
 
@@ -4046,10 +4048,11 @@ html.is-landscape {
     width:28px;
     height:28px;
     border-radius:50%;
-    background:#22252c;
-    border:2.5px solid var(--theme-color-1, #48B2E9);
-    box-shadow:0 0 10px var(--theme-glow, rgba(72,178,233,0.4));
+    background:var(--neon-bright, var(--neon-text, #48B2E9));
+    border:2.5px solid rgba(255, 255, 255, 0.9);
+    box-shadow:0 0 10px var(--theme-glow, rgba(72,178,233,0.6));
     cursor:pointer;
+    pointer-events:auto;
     transition:border-color 0.2s, background 0.2s;
 }
 

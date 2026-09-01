@@ -1,4 +1,4 @@
-const CACHE_NAME = 'iris-pwa-v116';
+const CACHE_NAME = 'iris-pwa-v117';
 const ASSETS = [
   '/',
   '/index.html',

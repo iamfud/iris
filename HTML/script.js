@@ -4872,7 +4872,12 @@
   let mdiCache = {};           // mdi icon name -> unicode char (from /api/mdi/codepoints)
   try {
     const savedMdi = localStorage.getItem("iris_mdi_cache");
-    if (savedMdi) mdiCache = JSON.parse(savedMdi) || {};
+    if (savedMdi) {
+      mdiCache = JSON.parse(savedMdi) || {};
+      if (mdiCache.speedometer === "\uF04CA") {
+        delete mdiCache.speedometer;
+      }
+    }
   } catch (_) {}
   let mdiFetched = {};         // icon names already requested from /api/mdi/codepoints
 
