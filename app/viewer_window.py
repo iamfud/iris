@@ -36,6 +36,12 @@ class _ViewerApi:
 
 def _run_viewer(filename):
     try:
+        from win_platform import init_dpi_awareness
+        init_dpi_awareness()
+    except Exception:
+        pass
+
+    try:
         import paths
         wv_data = paths.get_webview_data_dir("WebView2_Viewer")
         os.environ["WEBVIEW2_USER_DATA_FOLDER"] = wv_data

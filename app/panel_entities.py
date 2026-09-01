@@ -18,6 +18,22 @@ def get_core_entities() -> List[Dict[str, Any]]:
     return [
         # ── System (Status Toggles & Actions) ────────────────────
         {
+            "id": "system.lighting_sync",
+            "domain": "System",
+            "plugin": "system",
+            "button_id": "lighting_sync",
+            "state_key": "lighting_sync",
+            "name": "Lighting Sync",
+            "type": "status",
+            "icon": "lightbulb",
+            "icon_off": "lightbulb-outline",
+            "color": "#48B2E9",
+            "labels": {"on": "ACTIVE", "off": "OFF"},
+            "writable": True,
+            "default_action": "toggle_lighting_sync",
+            "description": "Toggle automatic ambient lighting & profile sync",
+        },
+        {
             "id": "system.display",
             "domain": "System",
             "plugin": "system",
@@ -118,7 +134,35 @@ def get_core_entities() -> List[Dict[str, Any]]:
             "color": "#48B2E9",
             "writable": True,
             "default_action": "screenshot",
-            "description": "Capture a screenshot of a screen region or full monitor",
+            "description": "Capture instant fullscreen screenshot (or zone crop)",
+        },
+        {
+            "id": "system.screenshot_full",
+            "domain": "System",
+            "plugin": "system",
+            "button_id": "screenshot_full",
+            "state_key": "screenshot_full",
+            "name": "Fullscreen Capture",
+            "type": "action",
+            "icon": "fullscreen",
+            "color": "#48B2E9",
+            "writable": True,
+            "default_action": "screenshot_full",
+            "description": "Silently capture active monitor/game without minimizing",
+        },
+        {
+            "id": "system.screenshot_zone",
+            "domain": "System",
+            "plugin": "system",
+            "button_id": "screenshot_zone",
+            "state_key": "screenshot_zone",
+            "name": "Snipping Tool",
+            "type": "action",
+            "icon": "crop",
+            "color": "#48B2E9",
+            "writable": True,
+            "default_action": "screenshot_zone",
+            "description": "Drag rectangular crosshairs to snip a screen zone",
         },
 
         # ── Media Controls (Momentary Actions) ───────────────────
@@ -467,6 +511,14 @@ def get_live_entity_states(plugin_button_states=None) -> Dict[str, Dict[str, Any
     try:
         from ws_bridge import _app
         if _app is not None:
+            # Lighting Sync state
+            ambient_cfg = getattr(_app, "cfg", {}).get("ambient_lighting") or {}
+            is_lighting_on = ambient_cfg.get("enabled", True) is not False
+            states["system.lighting_sync"] = {
+                "active": is_lighting_on,
+                "label": "ACTIVE" if is_lighting_on else "OFF",
+                "value": is_lighting_on,
+            }
             states["system.overlay"] = {
                 "active": bool(getattr(_app, "_overlay_shown", False)),
                 "label": "ACTIVE" if getattr(_app, "_overlay_shown", False) else "HIDDEN",

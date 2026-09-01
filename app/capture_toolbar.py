@@ -43,8 +43,10 @@ import mdi_icons
 from quick_note import open_quick_note
 from widgets import ToolTip
 import paths
+from win_platform import init_dpi_awareness
 
 log = logging.getLogger("iris.capture_toolbar")
+init_dpi_awareness()
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
 
@@ -458,6 +460,27 @@ class CaptureToolbar:
         except Exception as ex:
             log.warning("Screenshot save failed: %s", ex)
             return None
+
+    def capture_fullscreen_direct(self, app_tag=None, notify=True):
+        """Silently capture active game/monitor, save PNG + OCR, with zero focus stealing and no game minimization."""
+        tag = app_tag or self._resolve_foreground_app() or "game"
+
+        def _capture():
+            try:
+                img, monitor = vision.capture_active_monitor()
+                if img:
+                    fname = self._save_screenshot_and_ocr(img, tag)
+                    log.info("[capture_toolbar] Direct fullscreen capture completed: %s", fname)
+                    if notify:
+                        try:
+                            import winsound
+                            winsound.MessageBeep(winsound.MB_ICONASTERISK)
+                        except Exception:
+                            pass
+            except Exception as ex:
+                log.warning("[capture_toolbar] Direct fullscreen capture failed: %s", ex)
+
+        threading.Thread(target=_capture, daemon=True, name="iris-direct-fullscreen-capture").start()
 
     def _on_screenshot(self):
         """Invoke rectangular zone selector, hide toolbar, capture, then reopen toolbar with annotation editor."""

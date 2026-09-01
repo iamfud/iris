@@ -21,6 +21,9 @@ if not any(isinstance(h, RotatingFileHandler) for h in _root_logger.handlers):
 if __name__ == "__main__":
     multiprocessing.freeze_support()
 
+    from win_platform import init_dpi_awareness
+    init_dpi_awareness()
+
     import threading
     import time as _time
     import winsound
@@ -140,6 +143,26 @@ if __name__ == "__main__":
             self._stats_provider.set_manual_override(enabled)
             serial_sender.set_live("pc_disp", PC_DISP_STATS if enabled else "0")
             log.info("PC stats pin %s", "ON" if enabled else "OFF")
+
+        def _toggle_lighting_sync(self, enabled: bool = None):
+            ambient_cfg = self.cfg.setdefault("ambient_lighting", {})
+            cur = ambient_cfg.get("enabled", True) is not False
+            new_val = (not cur) if enabled is None else bool(enabled)
+            ambient_cfg["enabled"] = new_val
+            from config import save_config
+            save_config(self.cfg)
+            try:
+                from lighting_service import get_lighting_service
+                get_lighting_service().update_config(self.cfg)
+            except Exception as ex:
+                log.warning("[lighting] toggle update failed: %s", ex)
+            try:
+                from ws_bridge import broadcast
+                broadcast({"type": "config", "config": {"ambient_lighting": ambient_cfg}})
+            except Exception:
+                pass
+            log.info("Lighting sync %s", "ON" if new_val else "OFF")
+            return new_val
 
         def _toggle_overlay(self, enabled: bool = None):
             if enabled is None:

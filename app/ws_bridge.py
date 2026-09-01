@@ -2324,6 +2324,13 @@ class _RequestHandler(SimpleHTTPRequestHandler):
                 log.warning("[http] mic toggle failed: %s", e)
                 st = None
             self._send_json({"ok": st is not None, "state": st})
+        elif tile in ("lighting_sync", "lighting"):
+            try:
+                st = _app._toggle_lighting_sync()
+            except Exception as e:
+                log.warning("[http] lighting sync toggle failed: %s", e)
+                st = False
+            self._send_json({"ok": True, "state": st})
         elif tile == "settings":
             try:
                 if hasattr(_app, "_open_settings"):

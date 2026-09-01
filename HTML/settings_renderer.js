@@ -131,10 +131,13 @@ class SettingsRenderer {
 
     if (page.sections && page.sections.length > 0) {
       var isApp = _isApp();
+      var renderedIndex = 0;
       html += '<section class="settings-content">';
       page.sections.forEach(function (section) {
         if (section.app_only && !isApp) return;
-        html += self._renderSection(section, config);
+        var isOpen = (renderedIndex === 0) || (section.default_open === true);
+        html += self._renderSection(section, config, isOpen);
+        renderedIndex++;
       });
       html += "</section>";
     } else {
@@ -670,7 +673,8 @@ class SettingsRenderer {
 
   /* ── Section renderer ───────────────────────────────────────── */
 
-  _renderSection(section, config) {
+  _renderSection(section, config, isOpen) {
+    if (isOpen === undefined) isOpen = true;
     var self = this;
     var controls = (section.controls && section.controls.length) ? section.controls : [];
     var isWide = !!section.full_width || section.columns === 2;
@@ -693,10 +697,12 @@ class SettingsRenderer {
     html += '>';
     html += '<div class="settings-collapsible">';
     if (section.title) {
+      var arrow = isOpen ? '&#9660; ' : '&#9654; ';
       html += '<a href="#" class="collapse-toggle settings-section-title">' +
-        '&#9660; ' + this._esc(section.title) + "</a>";
+        arrow + this._esc(section.title) + "</a>";
     }
-    html += '<div class="collapse-content">';
+    var contentStyle = isOpen ? '' : ' style="display:none;"';
+    html += '<div class="collapse-content"' + contentStyle + '>';
     var cardClass = "settings-card";
     if (section.columns === 2) cardClass += " settings-card-cols-2";
     if (section.qr_top_right) cardClass += " settings-card-net";
@@ -1202,7 +1208,8 @@ class SettingsRenderer {
     html += '</div>';
 
     // Ambient Lighting Environment Card
-    var lightingCfg = config.ambient_lighting || { sync_theme: true, follow_daylight: true };
+    var lightingCfg = config.ambient_lighting || { enabled: true, sync_theme: true, follow_daylight: true };
+    var lightingEnabled = lightingCfg.enabled !== false;
     var syncTheme = lightingCfg.sync_theme !== false;
     var followDaylight = lightingCfg.follow_daylight !== false;
 
@@ -1213,6 +1220,12 @@ class SettingsRenderer {
     html += '</div>';
 
     html += '<div id="ambient-lighting-content" style="padding-top:8px;">';
+    html += '<div class="settings-toggle-row" style="margin-bottom:8px;">';
+    html += '<span class="settings-toggle-label">Enable Lighting Sync</span>';
+    html += '<div class="settings-toggle' + (lightingEnabled ? ' on' : '') + '" id="ambient-enabled-tog"><div class="settings-toggle-thumb"></div></div>';
+    html += '</div>';
+    html += '<span class="settings-hint" style="margin-top:-4px;margin-bottom:10px;display:block;">Master switch for automatic profile lighting and ambient synchronization.</span>';
+
     html += '<div class="settings-toggle-row" style="margin-bottom:8px;">';
     html += '<span class="settings-toggle-label">Sync Lights to Theme Color</span>';
     html += '<div class="settings-toggle' + (syncTheme ? ' on' : '') + '" id="ambient-sync-theme-tog"><div class="settings-toggle-thumb"></div></div>';
@@ -2343,10 +2356,15 @@ class SettingsRenderer {
     var items = reqs.map(function (r) {
       var icon = r.met ? "check_circle" : "cancel";
       var color = r.met ? "var(--neon-grn)" : "var(--neon-red)";
+      var link = "";
+      if (r.url) {
+        link = ' <span class="plugin-req-link material-icons-outlined" data-url="' +
+          self._esc(r.url) + '" title="Open ' + self._esc(r.name) + ' website">open_in_new</span>';
+      }
       return '<div class="plugin-req-row">' +
         '<span class="material-icons-outlined" style="color:' + color + ";font-size:18px\">" + icon + "</span>" +
         '<span class="plugin-req-name">' + self._esc(r.name) + "</span>" +
-        '<span class="plugin-req-desc">' + self._esc(r.description) + "</span>" +
+        '<span class="plugin-req-desc">' + self._esc(r.description) + "</span>" + link +
         "</div>";
     }).join("");
     return '<div class="plugin-reqs">' + items + "</div>";
@@ -2473,10 +2491,20 @@ class SettingsRenderer {
     // Ambient Lighting Toggles & Badges
     var ambientBadges = container.querySelector("#ambient-provider-badges");
     var ambientContent = container.querySelector("#ambient-lighting-content");
+    var enabledTog = container.querySelector("#ambient-enabled-tog");
     var syncTog = container.querySelector("#ambient-sync-theme-tog");
     var dayTog = container.querySelector("#ambient-daylight-tog");
 
-    var lightingConfig = config.ambient_lighting || { sync_theme: true, follow_daylight: true };
+    var lightingConfig = config.ambient_lighting || { enabled: true, sync_theme: true, follow_daylight: true };
+
+    if (enabledTog) {
+      enabledTog.addEventListener("click", function () {
+        var on = this.classList.toggle("on");
+        lightingConfig.enabled = on;
+        config.ambient_lighting = lightingConfig;
+        saveCallback({ ambient_lighting: lightingConfig });
+      });
+    }
 
     if (syncTog) {
       syncTog.addEventListener("click", function () {
@@ -2575,14 +2603,55 @@ function toggleCollapsible(link) {
   var content = link.nextElementSibling;
   if (!content) return false;
   var isHidden = content.style.display === "none";
+
+  if (link.classList.contains("settings-section-title")) {
+    var container = link.closest(".settings-content") || document.querySelector(".settings-content");
+    if (container && isHidden) {
+      // Collapse all other section titles in the same settings container
+      var allToggles = container.querySelectorAll(".collapse-toggle.settings-section-title");
+      allToggles.forEach(function (otherLink) {
+        if (otherLink !== link) {
+          var otherContent = otherLink.nextElementSibling;
+          if (otherContent && otherContent.style.display !== "none") {
+            otherContent.style.display = "none";
+            otherLink.innerHTML = "&#9654;" + otherLink.innerHTML.slice(1);
+          }
+        }
+      });
+    }
+  }
+
   content.style.display = isHidden ? "block" : "none";
   link.innerHTML = (isHidden ? "&#9660;" : "&#9654;") + link.innerHTML.slice(1);
+
+  if (isHidden && link.classList.contains("settings-section-title")) {
+    var sectionEl = link.closest(".settings-section") || link;
+    setTimeout(function () {
+      sectionEl.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 40);
+  }
+
   return false;
 }
 
 /* Delegated click handling (CSP: no inline onclick handlers). */
 document.addEventListener("click", function (e) {
   var t = e.target;
+  var reqLink = t && t.closest ? t.closest(".plugin-req-link") : null;
+  if (reqLink) {
+    e.preventDefault();
+    e.stopPropagation();
+    var url = (reqLink.getAttribute("data-url") || "").trim();
+    if (url) {
+      var base = typeof API_BASE !== "undefined" ? API_BASE : "";
+      apiFetch(base + "/api/open_url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: url }),
+      }).catch(function () {});
+    }
+    return;
+  }
   var link = t && t.closest ? t.closest(".collapse-toggle") : null;
   if (link) {
     e.preventDefault();

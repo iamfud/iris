@@ -37,8 +37,11 @@ from io import BytesIO
 
 from ctypes import wintypes
 from PIL import Image, ImageDraw, ImageGrab
+from win_platform import init_dpi_awareness
 
 log = logging.getLogger("iris.colour_picker")
+
+init_dpi_awareness()
 
 user32 = ctypes.windll.user32
 _kernel32 = ctypes.windll.kernel32

@@ -253,10 +253,15 @@ def execute_slot(slot):
                 except Exception as ex:
                     log.warning("[panel_runtime] stopwatch schedule failed: %s", ex)
             return {"ok": True}
-        if btype == "SCREENSHOT":
+        if btype == "SCREENSHOT" or btype == "SCREENSHOT_FULL":
             if app is not None and getattr(app, "_main_win", None):
                 slot_copy = dict(slot)
-                app._root.after(0, lambda: app._main_win.start_screenshot(slot_copy))
+                app._root.after(0, lambda: app._main_win.start_screenshot(slot_copy, mode="fullscreen"))
+            return {"ok": True}
+        if btype == "SCREENSHOT_ZONE":
+            if app is not None and getattr(app, "_main_win", None):
+                slot_copy = dict(slot)
+                app._root.after(0, lambda: app._main_win.start_screenshot(slot_copy, mode="zone"))
             return {"ok": True}
         if btype == "NOTE":
             if app is not None and getattr(app, "_main_win", None):
@@ -296,7 +301,28 @@ def execute_slot(slot):
             pname, bid = ent.split(".", 1)
 
         if pname == "system" or ent.startswith("system."):
-            if bid == "display" or ent == "system.display":
+            if bid == "lighting_sync" or ent == "system.lighting_sync":
+                if app and hasattr(app, "_toggle_lighting_sync"):
+                    val = app._toggle_lighting_sync()
+                    return {"ok": True, "active": val}
+                elif app and getattr(app, "cfg", None):
+                    ambient_cfg = app.cfg.setdefault("ambient_lighting", {})
+                    cur = ambient_cfg.get("enabled", True) is not False
+                    ambient_cfg["enabled"] = not cur
+                    from config import save_config
+                    save_config(app.cfg)
+                    try:
+                        from lighting_service import get_lighting_service
+                        get_lighting_service().update_config(app.cfg)
+                    except Exception:
+                        pass
+                    try:
+                        from ws_bridge import broadcast
+                        broadcast({"type": "config", "config": {"ambient_lighting": ambient_cfg}})
+                    except Exception:
+                        pass
+                    return {"ok": True, "active": not cur}
+            elif bid == "display" or ent == "system.display":
                 if app:
                     val = not bool(app.cfg.get("pc_stats_manual", False))
                     app.cfg["pc_stats_manual"] = val
@@ -332,11 +358,17 @@ def execute_slot(slot):
                 if app is not None and getattr(app, "_main_win", None):
                     app._root.after(0, app._main_win.start_colour_picker)
                 return {"ok": True}
-            elif bid == "screenshot" or ent == "system.screenshot":
+            elif bid in ("screenshot", "screenshot_full") or ent in ("system.screenshot", "system.screenshot_full"):
                 if app is not None and getattr(app, "_main_win", None):
                     slot_copy = dict(slot)
                     app._root.after(
-                        0, lambda: app._main_win.start_screenshot(slot_copy))
+                        0, lambda: app._main_win.start_screenshot(slot_copy, mode="fullscreen"))
+                return {"ok": True}
+            elif bid == "screenshot_zone" or ent == "system.screenshot_zone":
+                if app is not None and getattr(app, "_main_win", None):
+                    slot_copy = dict(slot)
+                    app._root.after(
+                        0, lambda: app._main_win.start_screenshot(slot_copy, mode="zone"))
                 return {"ok": True}
             elif bid == "note" or ent == "system.note":
                 if app is not None and getattr(app, "_main_win", None):

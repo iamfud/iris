@@ -96,7 +96,12 @@
       <button type="submit" id="go" class="go-btn">Connect</button>
     </form>
     <p class="error" id="err"></p>
-    <p class="note">Pairing only works on your local network. A paired device stays connected until you revoke it from the PC.</p>
+    <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);">
+      <button type="button" id="rescan-btn" style="width:100%;padding:11px 14px;font-size:14px;font-weight:600;color:var(--fg);background:#1E2024;border:1px solid #32353B;border-radius:10px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:8px;">
+        <span>📷</span> Re-scan QR Code
+      </button>
+      <p class="note" style="margin-top:10px;">Switched PC or IP changed? Scan the QR code on your PC screen in Iris Settings to connect immediately.</p>
+    </div>
     <p class="note" style="margin-top:14px;">
       Prefer a native app? <a href="/Iris.apk" download="Iris.apk" style="color:var(--neon);text-decoration:none;font-weight:600;display:inline-flex;align-items:center;gap:4px;">📥 Download Android Companion (Iris.apk)</a>
     </p>

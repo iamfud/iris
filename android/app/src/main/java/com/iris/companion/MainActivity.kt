@@ -102,7 +102,21 @@ class MainActivity : AppCompatActivity() {
             setAcceptThirdPartyCookies(webView, true)
         }
 
+        webView.addJavascriptInterface(IrisWebAppInterface(), "IrisAndroid")
+
         webView.webViewClient = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(
+                view: WebView,
+                request: WebResourceRequest
+            ): Boolean {
+                val url = request.url.toString()
+                if (url.startsWith("iris://rescan") || url.endsWith("/rescan")) {
+                    reScanQr()
+                    return true
+                }
+                return super.shouldOverrideUrlLoading(view, request)
+            }
+
             override fun onReceivedHttpError(
                 view: WebView,
                 request: WebResourceRequest,
@@ -130,6 +144,21 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    inner class IrisWebAppInterface {
+        @android.webkit.JavascriptInterface
+        fun rescanQr() {
+            runOnUiThread {
+                reScanQr()
+            }
+        }
+    }
+
+    fun reScanQr() {
+        prefs.edit().remove("server_url").apply()
+        CookieManager.getInstance().removeAllCookies(null)
+        launchScanner()
     }
 
     private fun autoDiscoverOrScan() {
@@ -162,9 +191,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         if (item.itemId == MENU_RESCAN) {
-            prefs.edit().remove("server_url").apply()
-            CookieManager.getInstance().removeAllCookies(null)
-            launchScanner()
+            reScanQr()
             return true
         }
         return super.onOptionsItemSelected(item)

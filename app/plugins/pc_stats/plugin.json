@@ -6,8 +6,8 @@
   "icon": "memory",
   "type": "multi",
   "requirements": [
-    {"name": "RTSS", "exe": "RTSS.exe", "description": "RivaTuner Statistics Server"},
-    {"name": "Afterburner", "exe": "MSIAfterburner.exe", "description": "MSI Afterburner"}
+    {"name": "RTSS", "exe": "RTSS.exe", "description": "RivaTuner Statistics Server", "url": "https://www.guru3d.com/download/rtss-rivatuner-statistics-server-download/"},
+    {"name": "Afterburner", "exe": "MSIAfterburner.exe", "description": "MSI Afterburner", "url": "https://www.msi.com/Landing/afterburner/graphics-cards"}
   ],
   "message_not_running": "PC Stats requires RTSS and MSI Afterburner to be running.",
   "min_api_version": "2.0",

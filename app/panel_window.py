@@ -6,8 +6,11 @@ HTML and API both load from the local HTTP bridge (same-origin) so no CORS is ne
 """
 
 import ctypes
+import json
 import logging
 import multiprocessing
+import threading
+import time
 
 log = logging.getLogger("iris.panel")
 
@@ -221,8 +224,9 @@ def is_panel_open():
 
 def open_panel(width=_DEFAULT_WIDTH, height=_DEFAULT_HEIGHT, query_params=None, page=None, tab=None, action=None, app_tag=None, viewer_file=None):
     """Open the settings panel. If already open, navigates to target page/tab/action and brings to foreground."""
-    global _proc
+    global _proc, _NAV_QUEUE
 
+    nav_targets = None
     if page or tab or action or app_tag or viewer_file:
         if query_params is None:
             query_params = {}
@@ -238,10 +242,27 @@ def open_panel(width=_DEFAULT_WIDTH, height=_DEFAULT_HEIGHT, query_params=None, 
             query_params["app"] = str(app_tag)
         if viewer_file:
             query_params["file"] = str(viewer_file)
+        nav_targets = {
+            "page": str(page or "library"),
+            "tab": str(tab or "notes"),
+            "action": action,
+            "app": app_tag,
+            "viewer_file": viewer_file,
+        }
+
+    if _NAV_QUEUE is None:
+        _NAV_QUEUE = multiprocessing.Queue()
 
     if _proc is not None and _proc.is_alive():
-        # Broadcast live navigation to connected webview
-        if page or tab or action or app_tag or viewer_file:
+        if nav_targets:
+            try:
+                # Deterministic IPC to the panel subprocess, independent of the
+                # websocket broadcast (which can drop when the WS server restarts
+                # or the webview has not connected yet).
+                _NAV_QUEUE.put(nav_targets)
+            except Exception:
+                pass
+            # Broadcast live navigation to all connected webviews
             try:
                 import ws_bridge
                 ws_bridge.broadcast({
@@ -282,7 +303,7 @@ def open_panel(width=_DEFAULT_WIDTH, height=_DEFAULT_HEIGHT, query_params=None, 
             x = y = None
 
     _proc = multiprocessing.Process(
-        target=_run, args=(w, h, x, y, query_params), daemon=True, name="panel"
+        target=_run, args=(w, h, x, y, query_params, _NAV_QUEUE), daemon=True, name="panel"
     )
     _proc.start()
     log.info("[panel] process started (pid=%d)", _proc.pid)
@@ -295,7 +316,8 @@ def close_panel():
     if _proc is not None and _proc.is_alive():
         _proc.terminate()
         _proc.join(timeout=2)
-    _proc = None
+_proc = None
+_NAV_QUEUE = None
 
 
 def _valid_size(width, height):
@@ -421,8 +443,49 @@ def _ensure_child_logger():
     root.addHandler(handler)
 
 
-def _run(width, height, x=None, y=None, query_params=None):
+def _build_nav_js(item):
+    """Build a JS snippet that navigates the webview to the target page/tab and bookmarks the URL."""
+    page = item.get("page")
+    if not page:
+        return None
+    tab = item.get("tab")
+    return "window.irisSetPage && window.irisSetPage(%s, %s);" % (
+        json.dumps(str(page)),
+        json.dumps(str(tab) if tab else ""),
+    )
+
+
+def _nav_loop(nav_queue, state, window):
+    """Consume navigation directives from the parent process and apply them in the webview."""
+    while True:
+        try:
+            item = nav_queue.get()
+        except Exception:
+            return
+        if not isinstance(item, dict):
+            continue
+        try:
+            js = _build_nav_js(item)
+            if not js:
+                continue
+            deadline = time.time() + 30
+            while not state.get("ready") and time.time() < deadline:
+                time.sleep(0.1)
+            if not state.get("ready"):
+                continue
+            window.evaluate_js(js)
+        except Exception:
+            pass
+
+
+def _run(width, height, x=None, y=None, query_params=None, nav_queue=None):
     _ensure_child_logger()
+
+    try:
+        from win_platform import init_dpi_awareness
+        init_dpi_awareness()
+    except Exception:
+        pass
 
     try:
         import os
@@ -522,6 +585,15 @@ def _run(width, height, x=None, y=None, query_params=None):
         w.events.resized += _on_resized
         w.events.shown += _on_shown
         w.events.closing += _on_closing
+
+        if nav_queue is not None:
+            threading.Thread(
+                target=_nav_loop,
+                args=(nav_queue, state, api._window),
+                daemon=True,
+                name="panel-nav",
+            ).start()
+
         webview.start(debug=False)
 
         # Fallback if closing event did not fire.

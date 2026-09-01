@@ -545,6 +545,21 @@
     }
   };
 
+  window.irisSetPage = function (page, tab) {
+    try {
+      if (page === "library" && (tab === "screenshots" || tab === "notes")) {
+        libraryTab = tab;
+      }
+      if (typeof window.navigateToPage === "function") {
+        window.navigateToPage(page);
+      }
+      const u = new URL(window.location.href);
+      u.searchParams.set("page", page);
+      if (tab) u.searchParams.set("tab", tab);
+      window.history.replaceState({}, "", u.toString());
+    } catch (_) {}
+  };
+
   // ── Hamburger menu (mobile) ─────────────────────────────────
 
   if (hamburger) {
@@ -642,14 +657,15 @@
         } else if (currentPage === "dashboard") {
           // Only rebuild dashboard when plugin availability/status cards would change.
           var statusChanged = false;
-          var names = Object.keys(next);
+          var names = Object.keys(next).filter(function(n) { return n !== "vision"; });
+          var prevNames = Object.keys(prev).filter(function(n) { return n !== "vision"; });
           for (var i = 0; i < names.length; i++) {
             var n = names[i];
             var a = (prev[n] && prev[n].available) || false;
             var b = (next[n] && next[n].available) || false;
             if (a !== b) { statusChanged = true; break; }
           }
-          if (statusChanged || Object.keys(prev).length !== names.length) {
+          if (statusChanged || prevNames.length !== names.length) {
             renderDashboard();
           }
         }
@@ -9564,7 +9580,7 @@
     const connected = deviceStatus.connected;
     const port = deviceStatus.port || "—";
 
-    const plugins = Object.keys(pluginsConfig);
+    const plugins = Object.keys(pluginsConfig).filter((p) => p !== "vision");
     const pluginNames = {};
     const pluginIcons = {};
     plugins.forEach((p) => {

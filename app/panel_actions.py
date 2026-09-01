@@ -54,7 +54,7 @@ _SLOT_KEYS = (
     "audio_input_device_id_alt", "audio_input_device_name_alt",
     "audio_primary_icon", "audio_alt_icon",
     "plugin", "button_id", "widget_type", "state_key", "labels", "colors", "icon_off", "description",
-    "screenshot_monitor",
+    "screenshot_monitor", "capture_mode",
 )
 
 

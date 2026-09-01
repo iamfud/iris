@@ -399,6 +399,7 @@ def _check_requirements(requirements):
             "name": req.get("name", "?"),
             "exe": req.get("exe", ""),
             "description": req.get("description", ""),
+            "url": req.get("url", ""),
             "met": met,
         })
         if not met:

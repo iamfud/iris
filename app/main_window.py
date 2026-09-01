@@ -1123,9 +1123,13 @@ class MainWindow:
 
     # ── Screenshot (screen grab via vision.py + iconify) ────────────────
 
-    def start_screenshot(self, slot=None, direct=True):
-        """Trigger screenshot capture. If direct=True (default for button actions), opens directly to crosshair capture."""
-        if direct:
+    def start_screenshot(self, slot=None, direct=True, mode="auto"):
+        """Trigger screenshot capture."""
+        slot_mode = (slot.get("capture_mode") if isinstance(slot, dict) else None) or mode
+        if slot_mode == "fullscreen" or (slot_mode == "auto" and direct):
+            self.start_fullscreen_screenshot(slot)
+            return
+        if slot_mode == "zone":
             self.start_direct_screenshot(slot)
             return
 
@@ -1136,6 +1140,18 @@ class MainWindow:
             self._capture_toolbar.show(slot)
         except Exception as ex:
             log.warning("Failed to open capture toolbar: %s", ex)
+
+    def start_fullscreen_screenshot(self, slot=None):
+        """Silently capture active monitor/game with zero focus disruption and no minimization."""
+        try:
+            saved = getattr(self, "_saved_foreground_hwnd", None)
+            app_tag = _get_foreground_app_name(saved) if saved else "game"
+            if self._capture_toolbar is None:
+                from capture_toolbar import CaptureToolbar
+                self._capture_toolbar = CaptureToolbar(self._root, self.app)
+            self._capture_toolbar.capture_fullscreen_direct(app_tag=app_tag, notify=True)
+        except Exception as ex:
+            log.warning("Failed to start fullscreen screenshot: %s", ex)
 
     def start_direct_screenshot(self, slot=None):
         """Invoke rectangular crosshair zone capture directly, save screenshot, run OCR, and open annotation viewer."""
@@ -1609,6 +1625,10 @@ class MainWindow:
             return
         if ent == "media.prev" or btype == "MEDIA_PREV":
             self._media_prev()
+            return
+        if ent == "system.lighting_sync":
+            if hasattr(self.app, "_toggle_lighting_sync"):
+                self.app._toggle_lighting_sync()
             return
         if ent == "system.display":
             self.app._toggle_pc_stats()

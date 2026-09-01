@@ -12,6 +12,41 @@ _PROCESS_NAMES_CACHE = set()
 _PROCESS_NAMES_CACHE_TS = 0.0
 
 
+def init_dpi_awareness():
+    """Enable Per-Monitor V2 DPI awareness on Windows so Tkinter, GDI BitBlt, and overlays use exact 1:1 physical pixels."""
+    try:
+        import ctypes
+        # Per-Monitor V2 (Windows 10 Creators Update / 1703+)
+        # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4
+        res = ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
+        if res:
+            log.debug("Per-Monitor V2 DPI awareness enabled")
+            return True
+    except Exception:
+        pass
+
+    try:
+        import ctypes
+        # Per-Monitor (Windows 8.1 / Windows 10)
+        # PROCESS_PER_MONITOR_DPI_AWARE = 2
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        log.debug("Per-Monitor DPI awareness enabled")
+        return True
+    except Exception:
+        pass
+
+    try:
+        import ctypes
+        # System DPI awareness fallback (Windows Vista+)
+        ctypes.windll.user32.SetProcessDPIAware()
+        log.debug("System DPI awareness enabled")
+        return True
+    except Exception:
+        pass
+
+    return False
+
+
 def get_running_process_names(ttl: float = 1.0) -> set[str]:
     """Return a cached set of lowercase running process executable names (e.g. {'notepad.exe', 'elitedangerous64.exe'}).
     

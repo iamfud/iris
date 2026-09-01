@@ -195,53 +195,73 @@
           ]
         },
         {
-          "title": "Network",
+          "title": "Network & Security",
           "app_only": true,
           "full_width": true,
           "qr_top_right": true,
-          "instructions": [
-            "Pairing Iris with your phone",
-            "1. Turn on Allow LAN access.",
-            "2. Make sure your phone and PC are connected to the same Wi-Fi network.",
-            "3. Scan the QR code at the top right with your phone.",
-            "4. The QR code opens the Iris pairing page on your phone.",
-            "5. Set a Panel password below, then enter it on your phone to pair the device.",
-            "iPhone / iPad: Open the pairing page in Safari. For quick access, tap Share → Add to Home Screen to install Iris as a PWA.",
-            "Android: You can use Iris in Chrome and add it to your Home Screen as a PWA, or use the Iris Android app (APK) if provided.",
-            "Your phone will remain paired until you revoke it under Manage devices.",
-            "Connection lost? Your router may have assigned the PC a new IP address through DHCP. For the most reliable connection, reserve the Iris PC's current IP address as a static/DHCP-reserved address in your router. You don't need to change anything in Iris.",
-            "If the connection drops or the address changes, simply scan the QR code again to reconnect using the current address.",
-            "Security notice: The local Iris connection uses HTTP rather than HTTPS. Your phone may therefore display a \"connection isn't secure\" warning. This is expected when connecting to Iris directly over your local network."
-          ],
           "controls": [
             {
               "type": "toggle",
               "key": "lan_access",
               "label": "Allow LAN access",
-              "description": "Allow devices on your network to reach the panel. Restart required. Remote devices must pair by entering the panel password."
+              "description": "Allow phones and tablets on your Wi-Fi network to connect to Iris."
             },
             {
               "type": "qr",
               "key": "lan_url",
               "label": "Scan to pair",
-              "description": "Scan from your phone to open the pairing page — enter your panel password there to connect."
-            },
-            {
-              "type": "apk_download",
-              "label": "Android Companion App",
-              "description": "Download and install the native Android Iris.apk directly on your phone."
+              "description": "Scan from your phone camera to open the pairing portal. Updates dynamically with your PC's IP."
             },
             {
               "type": "password",
               "key": "panel_password",
               "label": "Panel password",
-              "description": "Phones must enter this password to pair with the panel. Set it once, change it any time."
+              "description": "Required once when pairing a new device. Set once, change any time."
             },
             {
               "type": "devices",
               "label": "Paired devices",
-              "description": "Devices that have entered the panel password to pair. Revoke any you no longer trust — the phone is signed out immediately."
+              "description": "View or revoke connected phones and tablets."
             }
+          ]
+        },
+        {
+          "title": "iOS Setup (iPhone & iPad)",
+          "app_only": true,
+          "instructions": [
+            "Full-Screen Web App (PWA)",
+            "1. Scan the QR code above to open the portal.",
+            "2. Open in Safari (Required — Safari is the only browser on iOS that supports full-screen standalone PWA mode without address bars).",
+            "3. Tap the Share button ( ↑ ) and select 'Add to Home Screen'.",
+            "4. Launch Iris from your home screen and enter your Panel Password to pair."
+          ]
+        },
+        {
+          "title": "Android Setup",
+          "app_only": true,
+          "instructions": [
+            "Choose your preferred setup method:",
+            "• Preferred: Native Android App — Best performance, keep-screen-on support, and auto-reconnect.",
+            "• Alternative: Chrome PWA — Open in Chrome, tap menu ( ⋮ ) → 'Add to Home screen' or 'Install app'."
+          ],
+          "controls": [
+            {
+              "type": "apk_download",
+              "label": "Native Companion App",
+              "description": "Download and install the native Android Iris.apk directly on your phone."
+            }
+          ]
+        },
+        {
+          "title": "Connection & DHCP Tips",
+          "app_only": true,
+          "full_width": true,
+          "instructions": [
+            "Dynamic IP & Reconnection",
+            "• Live Dynamic QR: The QR code above automatically updates whenever your PC's local IP address changes.",
+            "• If Connection Drops: If your router assigns a new IP address, simply scan the QR code again — your device reconnects immediately at the new address without losing paired status.",
+            "• Set & Forget: For the most reliable connection, reserve this PC's local IP in your router's DHCP reservation settings.",
+            "• Security Notice: Iris runs on your local Wi-Fi over HTTP. Browser 'connection not secure' notices are normal for local network devices."
           ]
         }
       ]

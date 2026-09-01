@@ -29,6 +29,31 @@ DERIVED from the rotation, not tuned by eye.
   (touch-action is the intersection along the ancestor chain — a `pan-x`-only ancestor
   vetoes the box's screen-Y paging).
 
+# Session Memory — 2026-09-01
+
+## Featherweight Command Centre & Strict Core/Plugin Separation
+- **Core Philosophy & Golden Rule**:
+  - **Zero Bloat, Zero Idle Overhead, Maximum FPS**: Iris is a gamer's featherweight command centre. Background systems must NEVER steal VRAM, CPU cycles, or frame times from active games.
+  - **Gamer's Micro-Home Assistant**: A unified, lightweight entity bus (`sensor`, `toggle`, `action`) connecting games (SimConnect, Elite, DCS), peripherals (MAX7219, Phone PWA, OpenRGB), and automation with zero heavy dependencies.
+- **Strict Separation of Plugin Dev vs Core Dev**:
+  - **Core Responsibilities**:
+    - Focus-gated lifecycle management (`exe` process watcher: plugin threads automatically start when game opens and terminate/sleep when game closes $\rightarrow$ 0% idle CPU).
+    - Unified Entity Bus ingestion & distribution (merges `{ "entity_id": value }` into live telemetry stream).
+    - Multi-surface presentation (Phone PWA button deck & gauges, MAX7219 physical LED display, PC desktop overlay, reactive lighting).
+    - Ephemeral On-Demand Cloud AI / Web Search REST gateway (zero local weights, 0 MB VRAM).
+  - **Plugin Responsibilities (Pure Decoupled Adapters)**:
+    - **Declarative `plugin.yaml` (or `.json`)**: Defines plugin metadata, target `exe`, and entity list (`id`, `name`, `type: sensor|toggle|action`, `unit`, `icon`, `labels`).
+    - **10-Line `plugin.py`**: Implements basic adapter contract:
+      - `start()` / `stop()`: Connect / disconnect from external API.
+      - `poll() -> dict`: Returns flat `{ "entity_key": value }`.
+      - `on_action(action_id, value)` (optional): Handles command triggers.
+    - Zero dependencies on Iris UI, DOM, or internal routing mechanisms.
+
+## Settings Navigation & Single-Accordion Architecture
+- **Default State**: General section is expanded (`display: block`, `&#9660;`) by default. All other sections (Appearance, Network & Security, iOS, Android, Tips) render collapsed (`display: none`, `&#9654;`).
+- **Single-Accordion Behavior**: Clicking any section header collapses previously opened section(s) and expands the clicked section.
+- **Top-Window Scroll Anchor**: When a collapsed tab/section is clicked to open, it automatically and smoothly scrolls to the top of the viewport (`scrollIntoView({ behavior: 'smooth', block: 'start' })`).
+
 # Session Memory — 2026-08-31
 
 ## Web Portal 3-Widget Layout & Dual-Axis Navigation Architecture

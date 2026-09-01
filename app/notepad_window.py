@@ -172,6 +172,12 @@ def _bring_to_foreground(hwnd):
 
 def _run(width, height, x=None, y=None, app_tag="general", filename=None, initial_title=None, initial_body=None):
     try:
+        from win_platform import init_dpi_awareness
+        init_dpi_awareness()
+    except Exception:
+        pass
+
+    try:
         import paths
         wv_data = paths.get_webview_data_dir("WebView2_Notepad")
         os.environ["WEBVIEW2_USER_DATA_FOLDER"] = wv_data

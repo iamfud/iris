@@ -143,9 +143,14 @@ class LightingService:
             cfg = self._cfg or {}
             is_day = self.is_daytime()
 
-        # 1. LAYER 3: Alert Active
+        # 1. LAYER 3: Alert Active (always passes through alerts)
         if active_alert:
             self._dispatch_actions(active_alert)
+            return
+
+        # Check global ambient lighting enabled master state
+        ambient_cfg = cfg.get("ambient_lighting") or {}
+        if ambient_cfg.get("enabled", True) is False:
             return
 
         # 2. Find Profile Settings (Layer 2) or Fallback to Default (Layer 1)
@@ -165,6 +170,8 @@ class LightingService:
 
         # Compute per-plugin actions
         actions = {}
+        global_follow_day = ambient_cfg.get("follow_daylight", None)
+
         for prov in self.get_providers():
             pid = prov["id"]
             p_conf = lighting_cfg.get(pid) or {}
@@ -173,7 +180,13 @@ class LightingService:
 
             preset = p_conf.get("preset", "")
             # Handle day/night split if configured
-            if p_conf.get("follow_daylight"):
+            follow_day = p_conf.get("follow_daylight", False)
+            if global_follow_day is False:
+                follow_day = False
+            elif global_follow_day is True and ("day_preset" in p_conf or "night_preset" in p_conf):
+                follow_day = True
+
+            if follow_day:
                 if is_day:
                     preset = p_conf.get("day_preset", preset)
                 else:

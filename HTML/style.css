@@ -1530,6 +1530,26 @@ header p{
     font-size:12px;
 }
 
+.plugin-req-link{
+
+    margin-left:auto;
+
+    font-size:18px;
+
+    color:var(--fg-dim);
+
+    cursor:pointer;
+
+    transition:color .15s ease;
+
+    flex-shrink:0;
+}
+
+.plugin-req-link:hover{
+
+    color:var(--neon);
+}
+
 /* Plugin data sections */
 
 .plugin-data-card{

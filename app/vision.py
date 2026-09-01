@@ -28,8 +28,11 @@ import time
 import tkinter as tk
 
 from ctypes import wintypes
+from win_platform import init_dpi_awareness
 
 log = logging.getLogger("iris.vision")
+
+init_dpi_awareness()
 
 _MAX_SAMPLES = 4000
 
@@ -430,6 +433,21 @@ def screenshot_b64(bbox):
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
+def capture_active_monitor():
+    """Capture the physical monitor containing the cursor without stealing window focus."""
+    try:
+        user32 = ctypes.windll.user32
+        pt = wintypes.POINT()
+        user32.GetCursorPos(ctypes.byref(pt))
+        m = monitor_containing(pt.x, pt.y)
+    except Exception:
+        x, y, w, h = virtual_screen_bounds()
+        m = {"x": x, "y": y, "w": w, "h": h}
+    bbox = (m["x"], m["y"], m["x"] + m["w"], m["y"] + m["h"])
+    img = capture(bbox)
+    return img, m
+
+
 # ── Windows Native OCR ─────────────────────────────────────────
 
 _ocr_engine = None
@@ -801,14 +819,24 @@ class RegionSelector:
         self._canvas.bind("<ButtonRelease-1>", self._on_release)
         self._canvas.bind("<Escape>", self._on_escape)
         self._win.bind("<Escape>", self._on_escape)
-        self._win.focus_force()
-        self._canvas.focus_set()
+
+        # Apply WS_EX_NOACTIVATE (0x08000000) so window never steals keyboard/foreground focus from games
+        try:
+            self._win.update_idletasks()
+            hwnd = int(self._win.winfo_id())
+            user32 = ctypes.windll.user32
+            WS_EX_NOACTIVATE = 0x08000000
+            WS_EX_LAYERED = 0x00080000
+            GWL_EXSTYLE = -20
+            ex = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+            user32.SetWindowLongW(hwnd, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE | WS_EX_LAYERED)
+        except Exception:
+            pass
 
     def show(self):
         self._win.deiconify()
         self._win.attributes("-topmost", True)
         self._win.lift()
-        self._win.focus_force()
 
     def close(self, result):
         try:

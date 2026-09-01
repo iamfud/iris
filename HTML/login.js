@@ -80,5 +80,17 @@
     e.preventDefault();
     submit();
   });
+
+  var rescanBtn = document.getElementById("rescan-btn");
+  if (rescanBtn) {
+    rescanBtn.addEventListener("click", function () {
+      if (window.IrisAndroid && typeof window.IrisAndroid.rescanQr === "function") {
+        window.IrisAndroid.rescanQr();
+        return;
+      }
+      window.location.href = "iris://rescan";
+    });
+  }
+
   inp.focus();
 })();
