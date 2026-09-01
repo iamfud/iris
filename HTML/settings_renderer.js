@@ -1828,16 +1828,16 @@ class SettingsRenderer {
                   .then(function (res) { return res.ok ? res.json() : {}; })
                   .then(function (data) {
                     var token = data.http_token || "";
-                    if (token && navigator.clipboard && navigator.clipboard.writeText) {
-                      navigator.clipboard.writeText(token).then(function () {
-                        setTimeout(function () {
-                          if (navigator.clipboard.readText) {
-                            navigator.clipboard.readText().then(function (t) {
-                              if (t === token) navigator.clipboard.writeText("");
-                            }).catch(function () {});
-                          }
-                        }, 30000);
-                      }).catch(function () {});
+                    if (token) {
+                      apiFetch(self._apiBase + "/api/clipboard", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ text: token })
+                      }).catch(function () {
+                        if (navigator.clipboard && navigator.clipboard.writeText) {
+                          navigator.clipboard.writeText(token).catch(function () {});
+                        }
+                      });
                     }
                   })
                   .catch(function () {});

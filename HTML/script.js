@@ -434,6 +434,19 @@
     });
   }
 
+  function copyTextNative(text) {
+    if (!text) return Promise.resolve();
+    return apiFetch(`${API_BASE}/api/clipboard`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: text })
+    }).catch(() => {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        return navigator.clipboard.writeText(text).catch(() => {});
+      }
+    });
+  }
+
   let currentPage = "dashboard";
   let pluginState = {};
   let pollTimer = null;
@@ -4115,11 +4128,6 @@
       if (initialTitle) titleEl.value = initialTitle;
       if (initialBody) {
         bodyEl.value = initialBody;
-        try {
-          if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
-            navigator.clipboard.writeText(initialBody).catch(() => {});
-          }
-        } catch (_) {}
       }
       setTimeout(() => {
         if (bodyEl && initialBody) {
@@ -9830,7 +9838,7 @@
         copyBtn.addEventListener("click", () => {
           const text = wizardCapture ? (wizardCapture.detected_text || "") : "";
           if (!text) return;
-          navigator.clipboard.writeText(text).then(() => {
+          copyTextNative(text).then(() => {
             copyBtn.innerHTML = '<span class="material-icons-outlined" style="color:var(--neon-grn)">check</span>';
             setTimeout(() => {
               copyBtn.innerHTML = '<span class="material-icons-outlined">content_copy</span>';

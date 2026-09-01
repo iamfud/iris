@@ -1315,3 +1315,40 @@ def toggle_borderless_window(hwnd: int | None = None) -> bool:
         log.warning("[borderless] Failed to toggle borderless: %s", ex)
         return False
 
+
+def copy_to_clipboard(text):
+    """Copy text directly to the native Windows clipboard without browser prompts."""
+    if not text:
+        return False
+    try:
+        u32 = ctypes.windll.user32
+        k32 = ctypes.windll.kernel32
+        k32.GlobalAlloc.restype = wintypes.HGLOBAL
+        k32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+        k32.GlobalLock.restype = ctypes.c_void_p
+        k32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+        k32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+        u32.OpenClipboard.argtypes = [wintypes.HWND]
+        u32.OpenClipboard.restype = wintypes.BOOL
+        u32.EmptyClipboard.restype = wintypes.BOOL
+        u32.SetClipboardData.restype = wintypes.HANDLE
+        u32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+        u32.CloseClipboard.restype = wintypes.BOOL
+
+        if u32.OpenClipboard(None):
+            u32.EmptyClipboard()
+            encoded = str(text).encode("utf-16-le") + b"\x00\x00"
+            h_mem = k32.GlobalAlloc(0x0042, len(encoded))  # GMEM_MOVEABLE | GMEM_ZEROINIT
+            if h_mem:
+                ptr = k32.GlobalLock(h_mem)
+                if ptr:
+                    ctypes.memmove(ptr, encoded, len(encoded))
+                    k32.GlobalUnlock(h_mem)
+                    u32.SetClipboardData(13, h_mem)  # CF_UNICODETEXT = 13
+            u32.CloseClipboard()
+            return True
+    except Exception as ex:
+        log.warning("[win_platform] copy_to_clipboard error: %s", ex)
+    return False
+
+

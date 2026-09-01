@@ -673,10 +673,24 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             self._handle_library_save_note()
         elif self.path.startswith("/api/notepad/open"):
             self._handle_notepad_open()
+        elif self.path == "/api/clipboard":
+            self._handle_clipboard()
         elif self.path.startswith("/api/library/delete/"):
             self._handle_library_delete(self.path[len("/api/library/delete/"):])
         else:
             self.send_error(404)
+
+    def _handle_clipboard(self):
+        """Native clipboard copy without browser permission prompts."""
+        try:
+            body = self._read_json()
+            text = str(body.get("text", ""))
+            if text:
+                import win_platform
+                win_platform.copy_to_clipboard(text)
+            self._send_json({"ok": True})
+        except Exception as ex:
+            self._send_json({"ok": False, "error": str(ex)})
 
     def _handle_keyboard_devices(self):
         try:
