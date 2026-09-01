@@ -469,12 +469,14 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             pass
         super().end_headers()
 
-    def do_GET(self):
-        # Library images are the user's own local files; img tags can't carry
-        # auth headers, so serve these with host-only protection only.
-        if self.path.startswith("/api/library/image/"):
+        # Library images, media art, and CSS webfonts cannot carry custom Authorization headers,
+        # so serve these with host-only validation.
+        if self.path.startswith("/api/library/image/") or self.path.startswith("/api/mdi/font"):
             if not self._host_ok():
                 self._reject_unauthorized()
+                return
+            if self.path.startswith("/api/mdi/font"):
+                self._serve_mdi_font()
                 return
             self._handle_library_image(self.path[len("/api/library/image/"):])
             return
@@ -2101,7 +2103,15 @@ class _RequestHandler(SimpleHTTPRequestHandler):
 
     def _serve_mdi_font(self):
         """Serve the MDI webfont so the web panel renders the same icons as Tk."""
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mdi-webfont.ttf")
+        try:
+            import mdi_icons
+            path = str(mdi_icons.FONT_PATH)
+        except Exception:
+            path = ""
+        if not path or not os.path.isfile(path):
+            path = os.path.join(_HTML_DIR, "mdi-webfont.ttf")
+        if not os.path.isfile(path):
+            path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mdi-webfont.ttf")
         if not os.path.isfile(path):
             self.send_error(404)
             return
@@ -2111,6 +2121,8 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "font/ttf")
             self.send_header("Content-Length", str(len(data)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Cache-Control", "public, max-age=31536000, immutable")
             self.end_headers()
             self.wfile.write(data)
         except Exception:

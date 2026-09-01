@@ -6,8 +6,8 @@
 
 @font-face{
     font-family:"Material Design Icons";
-    src:url("/api/mdi/font") format("truetype");
-    font-display:swap;
+    src:url("mdi-webfont.ttf") format("truetype"), url("/api/mdi/font") format("truetype");
+    font-display:block;
 }
 
 .md{

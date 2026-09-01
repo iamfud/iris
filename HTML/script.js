@@ -4870,6 +4870,10 @@
   let panelSaveTimer = null;
   let panelSliderTimer = null;
   let mdiCache = {};           // mdi icon name -> unicode char (from /api/mdi/codepoints)
+  try {
+    const savedMdi = localStorage.getItem("iris_mdi_cache");
+    if (savedMdi) mdiCache = JSON.parse(savedMdi) || {};
+  } catch (_) {}
   let mdiFetched = {};         // icon names already requested from /api/mdi/codepoints
 
   function isLightColor(hex) {
@@ -4938,6 +4942,7 @@
       .then((map) => {
         if (!map) return;
         mdiCache = Object.assign({}, mdiCache, map);
+        try { localStorage.setItem("iris_mdi_cache", JSON.stringify(mdiCache)); } catch (_) {}
         applyMdiIcons(document);
       })
       .catch(() => {

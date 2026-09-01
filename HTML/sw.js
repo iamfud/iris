@@ -1,4 +1,4 @@
-const CACHE_NAME = 'iris-pwa-v115';
+const CACHE_NAME = 'iris-pwa-v116';
 const ASSETS = [
   '/',
   '/index.html',
@@ -7,6 +7,7 @@ const ASSETS = [
   '/settings_renderer.js',
   '/manifest.json',
   '/material-icons-outlined.woff2',
+  '/mdi-webfont.ttf',
   '/Iris_full.png',
   '/icon-192.png',
   '/icon-512.png',
