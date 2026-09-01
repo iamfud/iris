@@ -205,7 +205,7 @@ begin
     { Install WebView2 Runtime via Evergreen Bootstrapper only if not already present }
     if not IsWebView2Installed then
     begin
-      WizardForm.StatusLabel.Caption := 'Installing Microsoft WebView2 Runtime...';
+      WizardForm.StatusLabel.Caption := 'Installing Dependencies...';
       WizardForm.Update;
       Exec(ExpandConstant('{tmp}\iris_deps\MicrosoftEdgeWebview2Setup.exe'), '/silent /install', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     end;

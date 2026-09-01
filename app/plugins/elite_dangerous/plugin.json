@@ -258,10 +258,13 @@
         "title": "Ship Telemetry & Vitals",
         "fields": [
           { "key": "ship", "label": "Active Ship", "type": "string", "source": "state" },
-          { "key": "hull_health", "label": "Hull Integrity", "type": "percentage", "source": "state" },
-          { "key": "fuel_level", "label": "Fuel Level (t)", "type": "float", "source": "state" },
-          { "key": "fuel_capacity", "label": "Fuel Capacity (t)", "type": "float", "source": "state" },
-          { "key": "fuel_scooped", "label": "Fuel Scooped", "type": "float", "source": "state" },
+          { "key": "hull_health", "label": "Hull Integrity", "type": "percentage", "source": "state", "min": 0, "max": 100 },
+          { "key": "fuel_percent", "label": "Fuel Remaining (%)", "type": "percentage", "source": "state", "unit": "%", "min": 0, "max": 100 },
+          { "key": "fuel_level", "label": "Fuel Level (t)", "type": "float", "source": "state", "unit": "t" },
+          { "key": "fuel_main", "label": "Main Fuel Tank (t)", "type": "float", "source": "state", "unit": "t" },
+          { "key": "fuel_reservoir", "label": "Reservoir Tank (t)", "type": "float", "source": "state", "unit": "t" },
+          { "key": "fuel_capacity", "label": "Fuel Capacity (t)", "type": "float", "source": "state", "unit": "t" },
+          { "key": "fuel_scooped", "label": "Fuel Scooped (t)", "type": "float", "source": "state", "unit": "t" },
           { "key": "cargo", "label": "Cargo Count (t)", "type": "integer", "source": "state" },
           { "key": "target_ship", "label": "Targeted Ship", "type": "string", "source": "state" }
         ]

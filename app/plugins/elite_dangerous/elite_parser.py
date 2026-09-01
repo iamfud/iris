@@ -67,6 +67,8 @@ def _handle_loadgame(s, st, e):
     s["credits"] = _fmt_credits(e.get("Credits"))
     _set(s, e, "FuelLevel", "fuel_level", lambda v: f"{float(v):.1f}")
     _set(s, e, "FuelCapacity", "fuel_capacity", lambda v: f"{float(v):.1f}")
+    hull = e.get("HullHealth")
+    s["hull_health"] = f"{float(hull) * 100:.0f}%" if hull is not None else s.get("hull_health", "100%")
 
 
 def _handle_loadout(s, st, e):
@@ -77,8 +79,7 @@ def _handle_loadout(s, st, e):
     elif raw and not s.get("ship"):
         s["ship"] = raw
     hull = e.get("HullHealth")
-    if hull is not None:
-        s["hull_health"] = f"{float(hull) * 100:.0f}%"
+    s["hull_health"] = f"{float(hull) * 100:.0f}%" if hull is not None else s.get("hull_health", "100%")
     fc = e.get("FuelCapacity", {})
     if isinstance(fc, dict):
         v = fc.get("Main")

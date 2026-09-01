@@ -152,6 +152,17 @@ class EDConnector:
         status_now = EliteJournalWatcher.read_status()
         if status_now is not None:
             new_status.update(status_now)
+            if "fuel_main" in status_now:
+                fm = status_now["fuel_main"]
+                new_state["fuel_level"] = f"{float(fm):.1f}"
+                new_state["fuel_main"] = fm
+                cap = float(new_state.get("fuel_capacity") or 0.0)
+                if cap > 0:
+                    new_state["fuel_percent"] = round(min(100.0, max(0.0, (float(fm) / cap) * 100.0)), 1)
+            if "fuel_reservoir" in status_now:
+                new_state["fuel_reservoir"] = status_now["fuel_reservoir"]
+            if "shield_percent" in status_now:
+                new_state["shield_percent"] = status_now["shield_percent"]
 
         with self._lock:
             self._state = new_state
@@ -189,6 +200,17 @@ class EDConnector:
             # sparse and not written on every transition during combat, so relying
             # on it left the shield red alert not firing. Keep the flag.
             self._status.update(flags)
+            if "fuel_main" in flags:
+                fm = flags["fuel_main"]
+                self._state["fuel_level"] = f"{float(fm):.1f}"
+                self._state["fuel_main"] = fm
+                cap = float(self._state.get("fuel_capacity") or 0.0)
+                if cap > 0:
+                    self._state["fuel_percent"] = round(min(100.0, max(0.0, (float(fm) / cap) * 100.0)), 1)
+            if "fuel_reservoir" in flags:
+                self._state["fuel_reservoir"] = flags["fuel_reservoir"]
+            if "shield_percent" in flags:
+                self._state["shield_percent"] = flags["shield_percent"]
             merged = dict(self._state)
             merged.update(self._status)
 

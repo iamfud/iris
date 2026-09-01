@@ -671,6 +671,7 @@ def get_live_entity_states(plugin_button_states=None) -> Dict[str, Dict[str, Any
                         "max": fdef.get("max", 100 if fdef.get("type") == "percentage" else None),
                         "active": bool(val),
                     }
+                    states[f"{pname}:{k}"] = states[ent_id]
     except Exception:
         pass
 

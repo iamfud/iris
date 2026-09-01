@@ -7897,7 +7897,8 @@
         glyph = '<span class="md" data-md="' + esc(icon || "apps") + '"' + glyphStyle + '>' + esc(mdiChar(icon || "apps")) + '</span>';
       }
     } else {
-      glyph = '<span class="pdev-text-only"' + glyphStyle + '>' + esc(formatTileTitle(s.name || s.type || "")) + '</span>';
+      const centerTitle = (showName && (s.name || s.type)) ? (s.name || s.type) : (s.name || "");
+      glyph = centerTitle ? ('<span class="pdev-text-only"' + glyphStyle + '>' + esc(formatTileTitle(centerTitle)) + '</span>') : "";
     }
 
     return '<button type="button" class="pdev-tile' + (isGroup ? " pdev-group" : "") + extraTileClass + '"' +
@@ -9695,7 +9696,6 @@
         slot.state_key = defaultBid;
       }
       if (targetEntObj) {
-        if (!slot.name && targetEntObj.name) slot.name = targetEntObj.name;
         if (targetEntObj.plugin) slot.plugin = targetEntObj.plugin;
         if (targetEntObj.button_id) slot.button_id = targetEntObj.button_id;
         if (targetEntObj.openrgb_profile) slot.openrgb_profile = targetEntObj.openrgb_profile;
