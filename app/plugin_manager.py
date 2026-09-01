@@ -12,6 +12,7 @@ A global check runs every 60 seconds (called from main.py).
 """
 
 import importlib
+import importlib.util
 import json
 import logging
 import os
@@ -82,13 +83,15 @@ def discover_plugins(force=False):
             if os.path.isfile(mpath):
                 seen[entry] = (base, is_user)
 
-    # Put the parent of the 'plugins' package on sys.path so that
-    # `import plugins.<name>.connector` (used below) resolves in both source
-    # and frozen builds, wherever the plugins folder lives.
+    # Put the parent of the 'plugins' package and the app directory (for iris_plugin)
+    # on sys.path so that imports resolve cleanly in both source and frozen builds.
     import sys
     root = paths.plugins_root()
     if root not in sys.path:
         sys.path.insert(0, root)
+    app_dir = paths.get_app_dir()
+    if app_dir not in sys.path:
+        sys.path.insert(0, app_dir)
 
     result = []
     for entry in sorted(seen):
@@ -244,7 +247,20 @@ class OverlaysOutputProxy:
 def load_plugin(name, cfg, serial_sender=None, overlays=None):
     """Import and instantiate a plugin by name. Returns None on failure."""
     try:
-        mod = importlib.import_module(f"plugins.{name}.plugin")
+        mod = None
+        try:
+            mod = importlib.import_module(f"plugins.{name}.plugin")
+        except ModuleNotFoundError:
+            p_dir = _plugin_path(name)
+            p_file = os.path.join(p_dir, "plugin.py")
+            if os.path.isfile(p_file):
+                spec = importlib.util.spec_from_file_location(f"plugins.{name}.plugin", p_file)
+                if spec and spec.loader:
+                    mod = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(mod)
+        if mod is None:
+            log.warning("[pm] could not find plugin module for %s", name)
+            return None
         cls = getattr(mod, "Plugin", None)
         if cls is None:
             log.warning("[pm] %s has no Plugin class", name)

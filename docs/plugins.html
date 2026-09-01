@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Iris Plugin Developer Guide — Build custom third-party plugins for Iris to connect games, simulators, smart homes, and peripherals.">
+  <meta name="theme-color" content="#0C0D0F">
+  <meta property="og:title" content="Iris Plugin Developer Guide">
+  <meta property="og:description" content="Step-by-step developer tutorial and API reference for building third-party Iris plugins.">
+  <title>Iris — Plugin Developer Guide</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="icon" href="https://github.com/iamfud/iris/raw/master/Iris.ico">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a href="index.html" class="logo" aria-label="Iris home">
+        <img src="img/iris-logo.png" alt="Iris logo">
+        <span>Iris</span>
+      </a>
+      <nav aria-label="Main navigation">
+        <ul class="nav-links" id="nav-links">
+          <li><a href="index.html">Home</a></li>
+          <li><a href="setup.html">Setup Guide</a></li>
+          <li><a href="plugins.html" class="active" aria-current="page">Plugin API</a></li>
+          <li><a href="https://github.com/iamfud/iris" target="_blank" rel="noopener">GitHub</a></li>
+        </ul>
+      </nav>
+      <button class="mobile-menu-btn" aria-label="Open menu" aria-expanded="false">☰</button>
+    </div>
+  </header>
+
+  <main id="main">
+    <div class="hero">
+      <span class="hero-badge">Developer Reference</span>
+      <h1>Plugin <span class="highlight">Developer Guide</span></h1>
+      <p>Build custom adapters and integrate any game, simulator, hardware peripheral, or smart home service into the Iris command centre.</p>
+    </div>
+
+    <div class="setup-layout">
+      <!-- Table of Contents -->
+      <aside class="toc" aria-label="Table of contents">
+        <h3>On this page</h3>
+        <ul>
+          <li><a href="#quickstart">1. Quickstart Tutorial</a></li>
+          <li><a href="#directory">2. Directory Structure</a></li>
+          <li><a href="#manifest">3. Manifest (plugin.json)</a></li>
+          <li><a href="#python-class">4. Python Plugin Class</a></li>
+          <li><a href="#lifecycle">5. Lifecycle &amp; Types</a></li>
+          <li><a href="#telemetry">6. Live Telemetry &amp; Gauges</a></li>
+          <li><a href="#buttons">7. Buttons &amp; Hotkeys</a></li>
+          <li><a href="#settings">8. Settings UI Controls</a></li>
+          <li><a href="#distribution">9. Distribution</a></li>
+        </ul>
+      </aside>
+
+      <!-- Content -->
+      <div class="setup-content">
+
+        <!-- 1. Quickstart -->
+        <section class="content-block" id="quickstart">
+          <h3>1. Quickstart: Build a Plugin in 5 Minutes</h3>
+          <p>Let's build a working telemetry plugin from scratch starting with an empty folder.</p>
+          
+          <div class="steps">
+            <div class="step">
+              <div class="step-number">1</div>
+              <div class="step-content">
+                <h4>Open your plugins directory</h4>
+                <p>In Iris on your PC, go to <strong>Settings &rarr; General &rarr; Open Plugins</strong> (or open <code>%USERPROFILE%\Documents\Iris\plugins\</code> in File Explorer).</p>
+              </div>
+            </div>
+
+            <div class="step">
+              <div class="step-number">2</div>
+              <div class="step-content">
+                <h4>Create your plugin folder</h4>
+                <p>Create a new folder named <code>flight_tracker</code> with two files:</p>
+<pre><code>Documents/Iris/plugins/
+└── flight_tracker/
+    ├── plugin.json
+    └── plugin.py</code></pre>
+              </div>
+            </div>
+
+            <div class="step">
+              <div class="step-number">3</div>
+              <div class="step-content">
+                <h4>Write the manifest (<code>plugin.json</code>)</h4>
+<pre><code>{
+  "name": "flight_tracker",
+  "display_name": "Flight Tracker",
+  "version": "1.0.0",
+  "author": "Your Name",
+  "description": "Exposes aircraft telemetry to Iris button decks and gauges.",
+  "type": "service",
+  "capabilities": {
+    "status": true,
+    "live_data": true
+  },
+  "live_data": {
+    "fields": [
+      {
+        "key": "altitude",
+        "label": "Altitude",
+        "type": "number",
+        "unit": "ft",
+        "icon": "airplane-takeoff"
+      },
+      {
+        "key": "airspeed",
+        "label": "Airspeed",
+        "type": "number",
+        "unit": "kts",
+        "icon": "speedometer"
+      }
+    ]
+  }
+}</code></pre>
+              </div>
+            </div>
+
+            <div class="step">
+              <div class="step-number">4</div>
+              <div class="step-content">
+                <h4>Write the Python logic (<code>plugin.py</code>)</h4>
+<pre><code>from iris_plugin import BasePlugin
+
+class Plugin(BasePlugin):
+    name = "flight_tracker"
+
+    def __init__(self, cfg=None, *args, **kwargs):
+        super().__init__(cfg, *args, **kwargs)
+        self.altitude = 5000.0
+        self.airspeed = 140.0
+
+    def start(self):
+        print("[flight_tracker] Plugin started")
+
+    def stop(self):
+        print("[flight_tracker] Plugin stopped")
+
+    def poll(self):
+        # Read from your hardware or API here
+        return {
+            "available": True,
+            "altitude": self.altitude,
+            "airspeed": self.airspeed
+        }</code></pre>
+              </div>
+            </div>
+
+            <div class="step">
+              <div class="step-number">5</div>
+              <div class="step-content">
+                <h4>Test your plugin</h4>
+                <p>Restart Iris. On your Phone Panel or PC overlay, configure any tile on the Generic Button Deck and select <strong>Entity &rarr; Flight Tracker &rarr; Altitude</strong>. Live values and circular gauges are available immediately!</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 2. Directory Structure -->
+        <section class="content-block" id="directory">
+          <h3>2. Directory Structure</h3>
+          <p>Iris automatically scans and loads plugins from:</p>
+          <ul>
+            <li><strong>Installed app:</strong> <code>%USERPROFILE%\Documents\Iris\plugins\&lt;plugin_name&gt;\</code></li>
+            <li><strong>Portable mode:</strong> <code>&lt;Iris Root&gt;\plugins\&lt;plugin_name&gt;\</code></li>
+          </ul>
+          <p>Every plugin requires at minimum a <code>plugin.json</code> manifest and a <code>plugin.py</code> Python script.</p>
+        </section>
+
+        <!-- 3. Manifest -->
+        <section class="content-block" id="manifest">
+          <h3>3. Manifest Reference (<code>plugin.json</code>)</h3>
+          <p>The manifest tells Iris how to manage, display, and configure your plugin.</p>
+          <div class="table-wrapper">
+            <table>
+              <thead>
+                <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+              </thead>
+              <tbody>
+                <tr><td><code>name</code></td><td><code>string</code></td><td>Unique identifier. Must match the folder name (e.g. <code>openrgb</code>).</td></tr>
+                <tr><td><code>display_name</code></td><td><code>string</code></td><td>Human-readable title shown in the Iris UI.</td></tr>
+                <tr><td><code>version</code></td><td><code>string</code></td><td>Semantic version string (e.g. <code>"1.0.0"</code>).</td></tr>
+                <tr><td><code>type</code></td><td><code>string</code></td><td>Lifecycle model: <code>"app"</code> (process-gated), <code>"service"</code> (always active), or <code>"multi"</code>.</td></tr>
+                <tr><td><code>exe_default</code></td><td><code>string</code></td><td>Target process name for <code>"app"</code> type (e.g. <code>"FlightSimulator.exe"</code>).</td></tr>
+                <tr><td><code>capabilities</code></td><td><code>object</code></td><td>Toggles UI cards: <code>status</code>, <code>configuration</code>, <code>buttons</code>, <code>outputs</code>, <code>live_data</code>.</td></tr>
+                <tr><td><code>live_data.fields</code></td><td><code>array</code></td><td>List of telemetry sensor definitions exposed to the Iris Entity Bus.</td></tr>
+                <tr><td><code>buttons</code></td><td><code>array</code></td><td>Button deck and status toggle definitions.</td></tr>
+                <tr><td><code>outputs</code></td><td><code>array</code></td><td>Output targets (e.g. <code>display</code>, <code>overlay</code>).</td></tr>
+                <tr><td><code>settings</code></td><td><code>array</code></td><td>Declarative UI controls for the plugin's settings card.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- 4. Python Class -->
+        <section class="content-block" id="python-class">
+          <h3>4. Python Plugin Class Interface</h3>
+          <p>Implement the <code>Plugin</code> class (optionally subclassing <code>BasePlugin</code>):</p>
+<pre><code>from iris_plugin import BasePlugin
+
+class Plugin(BasePlugin):
+    name = "my_plugin"
+
+    def __init__(self, cfg=None, *args, **kwargs):
+        super().__init__(cfg, *args, **kwargs)
+        # Access persisted settings via self.config
+
+    def start(self) -> None:
+        """Called when enabled or when the target process starts."""
+        pass
+
+    def stop(self) -> None:
+        """Called when disabled or when the target process exits."""
+        pass
+
+    def poll(self) -> dict:
+        """Polled every 1.0s by Iris. Return a flat dict of live values."""
+        return {"available": True}
+
+    def on_button(self, button_id: str, slot_data: dict) -> bool:
+        """Called when user taps an in-game deck button."""
+        return True
+
+    def on_action(self, action_id: str) -> bool:
+        """Called when user clicks a momentary action button in settings."""
+        return True</code></pre>
+        </section>
+
+        <!-- 5. Lifecycle -->
+        <section class="content-block" id="lifecycle">
+          <h3>5. Lifecycle &amp; Execution Types</h3>
+          <div class="table-wrapper">
+            <table>
+              <thead>
+                <tr><th>Type (<code>"type"</code>)</th><th>Behavior</th><th>Ideal Use Case</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>"app"</code></td>
+                  <td><strong>Focus-Gated:</strong> Automatically starts when <code>exe_default</code> runs, stops when the process exits. Uses <strong>0% CPU and 0 MB RAM</strong> when game is closed.</td>
+                  <td>Games &amp; Simulators (MSFS, Elite Dangerous, DCS World).</td>
+                </tr>
+                <tr>
+                  <td><code>"service"</code></td>
+                  <td><strong>Always Active:</strong> Starts on Iris boot and runs continuously while enabled.</td>
+                  <td>Smart home bridges, local SDK servers (OpenRGB, Home Assistant, MQTT).</td>
+                </tr>
+                <tr>
+                  <td><code>"multi"</code></td>
+                  <td><strong>Multi-Process:</strong> Starts only when all executables in <code>requirements</code> are active.</td>
+                  <td>Toolchains (RTSS + MSI Afterburner).</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- 6. Telemetry -->
+        <section class="content-block" id="telemetry">
+          <h3>6. Live Telemetry &amp; Gauges</h3>
+          <p>Any key returned by <code>poll()</code> that matches a field defined in <code>live_data.fields</code> is automatically broadcast across Iris:</p>
+<pre><code>"live_data": {
+  "fields": [
+    { "key": "hull_health", "label": "Hull Integrity", "type": "percentage" }
+  ]
+}</code></pre>
+          <p>When <code>poll()</code> returns <code>{"hull_health": 85.5}</code>, Iris automatically registers <code>&lt;plugin&gt;.hull_health</code> for circular gauges, button tiles, and WebSocket streaming to companion phones.</p>
+        </section>
+
+        <!-- 7. Buttons -->
+        <section class="content-block" id="buttons">
+          <h3>7. Buttons &amp; In-Game Controls</h3>
+          <p>Define buttons in <code>plugin.json</code>:</p>
+<pre><code>"buttons": [
+  {
+    "id": "landing_gear",
+    "name": "Landing Gear",
+    "state_key": "gear_down",
+    "icon": "airplane-landing",
+    "icon_off": "airplane-takeoff",
+    "labels": { "on": "DOWN", "off": "UP" },
+    "default_hotkey": "G"
+  }
+]</code></pre>
+          <p>When tapped, Iris calls <code>inst.on_button("landing_gear", slot_data)</code>. If <code>on_button</code> returns <code>False</code>, Iris automatically triggers the <code>default_hotkey</code> fallback.</p>
+        </section>
+
+        <!-- 8. Settings -->
+        <section class="content-block" id="settings">
+          <h3>8. Declarative Settings UI</h3>
+          <p>Iris builds clean UI cards dynamically from your manifest — zero frontend code required:</p>
+<pre><code>"settings": [
+  {
+    "title": "Connection",
+    "controls": [
+      { "type": "text", "key": "api_host", "label": "Host Address", "default": "127.0.0.1" },
+      { "type": "toggle", "key": "auto_connect", "label": "Auto-Connect", "default": true },
+      { "type": "slider", "key": "rate", "label": "Poll Rate", "min": 1, "max": 10, "unit": "s" }
+    ]
+  }
+]</code></pre>
+          <p>Access values in Python via <code>self.config.get("api_host")</code>.</p>
+        </section>
+
+        <!-- 9. Distribution -->
+        <section class="content-block" id="distribution">
+          <h3>9. Distribution</h3>
+          <p>To share your plugin, zip the plugin folder (e.g. <code>my_plugin.zip</code>). Users extract it into their <code>Documents\Iris\plugins\</code> directory and launch Iris!</p>
+        </section>
+
+      </div>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <p>Iris &mdash; Dynamic PC Command Centre. Licensed under MIT.</p>
+      <ul class="footer-links">
+        <li><a href="index.html">Home</a></li>
+        <li><a href="setup.html">Setup Guide</a></li>
+        <li><a href="plugins.html">Plugin API</a></li>
+        <li><a href="https://github.com/iamfud/iris" target="_blank" rel="noopener">GitHub</a></li>
+      </ul>
+    </div>
+  </footer>
+</body>
+</html>
