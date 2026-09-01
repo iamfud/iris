@@ -50,6 +50,7 @@ DEFAULT_GAUGES = {"source": "pc_stats", "enabled": True}
 _SLOT_KEYS = (
     "name", "type", "icon", "color", "shortcut_path", "shortcut_args", "app_icon_path", "hotkey", "keys", "entity", "entity_id", "children", "openrgb_profile",
     "profile_id", "profile", "value", "tap_action", "show_name", "show_icon", "show_state", "use_app_icon", "show_album_art",
+    "show_progress_fill", "fill_min", "fill_max",
     "audio_input_device_id", "audio_input_device_name",
     "audio_input_device_id_alt", "audio_input_device_name_alt",
     "audio_primary_icon", "audio_alt_icon",

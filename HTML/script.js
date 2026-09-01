@@ -5331,6 +5331,7 @@
     const isActionEntity = entObj && (entObj.type === "action" || entObj.type === "shortcut") && !isOpenRGBProfile;
     const hasStateCapability = !isMediaPlayPause && !isActionEntity && (curType === "TOGGLE" || curType === "SENSOR" || (entObj && (entObj.type === "status" || entObj.type === "data" || !!entObj.state_key || !!entObj.openrgb_profile)));
     const showState = (slot.show_state !== false);
+    const showProgressFill = (slot.show_progress_fill !== false);
     const showKeys = (curType === "HOTKEY" || curType === "TOGGLE") && !isAnyMediaControl;
 
     const initColor = slot.color || "";
@@ -5577,6 +5578,11 @@
                 '<input type="checkbox" id="pe-show-state"' + (showState ? " checked" : "") + '>' +
                 '<span class="pe-toggle-label">Show State</span>' +
                 '<span class="pe-toggle-hint">Top status bar</span>' +
+              '</label>' +
+              '<label class="pe-display-toggle-row" id="pe-show-progress-fill-row">' +
+                '<input type="checkbox" id="pe-show-progress-fill"' + (showProgressFill ? " checked" : "") + '>' +
+                '<span class="pe-toggle-label">Progress Fill</span>' +
+                '<span class="pe-toggle-hint">Vertical bar for numbers</span>' +
               '</label>' +
             '</div>' +
           '</div>' +
@@ -6263,6 +6269,7 @@
       s.show_name !== false ? 1 : 0,
       s.show_icon !== false ? 1 : 0,
       s.show_state !== false ? 1 : 0,
+      s.show_progress_fill !== false ? 1 : 0,
       s.use_app_icon ? 1 : 0,
       s.show_album_art ? 1 : 0,
       s.profile_id || "",
@@ -7246,6 +7253,49 @@
     return str;
   }
 
+  function parseProgressPercentage(val, valLabel, minBound, maxBound) {
+    let num = null;
+    let isPct = false;
+
+    if (typeof val === "number" && !isNaN(val)) {
+      num = val;
+    } else if (typeof val === "string" && val.trim()) {
+      const str = val.trim();
+      if (str.includes("%")) isPct = true;
+      const match = str.match(/[-+]?[0-9]*\.?[0-9]+/);
+      if (match) num = parseFloat(match[0]);
+    }
+
+    if (num === null && typeof valLabel === "string" && valLabel.trim()) {
+      const str = valLabel.trim();
+      if (str.includes("%")) isPct = true;
+      const match = str.match(/[-+]?[0-9]*\.?[0-9]+/);
+      if (match) num = parseFloat(match[0]);
+    }
+
+    if (num === null || isNaN(num)) return null;
+
+    const min = (minBound !== undefined && minBound !== null && minBound !== "") ? parseFloat(minBound) : 0;
+    const max = (maxBound !== undefined && maxBound !== null && maxBound !== "") ? parseFloat(maxBound) : null;
+
+    let pct = 0;
+    if (isPct) {
+      pct = num;
+    } else if (max !== null && max > min) {
+      pct = ((num - min) / (max - min)) * 100;
+    } else if (num >= 0 && num <= 1.0 && (typeof val === "number" || (typeof val === "string" && val.startsWith("0.")))) {
+      pct = num * 100;
+    } else if (num >= 0 && num <= 100) {
+      pct = num;
+    } else if (num > 100) {
+      pct = Math.min(100, num);
+    } else {
+      pct = 0;
+    }
+
+    return Math.max(0, Math.min(100, pct));
+  }
+
   function panelTileHtml(s, listName, idx) {
     let icon = s.icon || "toggle-switch";
     if (icon === "application") icon = "apps";
@@ -7280,6 +7330,7 @@
     let topBar = "";
     let nameBar = "";
     let albumArtPlate = "";
+    let progressFillPlate = "";
     let extraTileClass = "";
     let extraTileStyle = "";
     let statusRing = "";
@@ -7340,6 +7391,21 @@
     const inactiveColor = colors.off || "var(--fg-dim)";
     const badgeColor = isOn ? activeColor : inactiveColor;
 
+    // Progress Bar Fill calculation for numerical values / strings
+    const entObj = entKey ? (panelEntities || []).find((e) => e.id === entKey || e.state_key === entKey) : null;
+    const progressVal = (bState.value !== undefined && bState.value !== null) ? bState.value : (s.value !== undefined ? s.value : null);
+    const progressLabel = bState.label || (typeof progressVal === "string" ? progressVal : "");
+    const slotMin = (s.fill_min !== undefined) ? s.fill_min : (entObj ? entObj.min : (bState.min !== undefined ? bState.min : 0));
+    const slotMax = (s.fill_max !== undefined) ? s.fill_max : (entObj ? entObj.max : (bState.max !== undefined ? bState.max : null));
+    const fillPct = parseProgressPercentage(progressVal, progressLabel, slotMin, slotMax);
+
+    const isProgressActive = (s.show_progress_fill !== false) && (fillPct !== null);
+    if (isProgressActive) {
+      const fillColor = s.color || activeColor || "var(--theme-color-1, #48B2E9)";
+      progressFillPlate = '<span class="pdev-progress-fill" style="--fill-pct:' + fillPct.toFixed(1) + '%; --fill-color:' + esc(fillColor) + ';"></span>';
+      extraTileClass += " has-progress-fill" + (fillPct >= 99.5 ? " has-fill-100" : "");
+    }
+
     if (isOn && !colorPlate && !albumArtPlate && !isElite) {
       extraTileStyle = ' style="border-color:' + esc(activeColor) + '; box-shadow:0 0 10px ' + esc(activeColor) + '44;"';
     } else if ((colorPlate || albumArtPlate) && !isElite) {
@@ -7351,10 +7417,13 @@
     if (isGroup) {
       topBar = '<span class="pdev-group-bar">GROUP</span>';
       extraTileClass += " has-group-bar";
-    } else if (s.entity !== "media.play_pause" && showState && (hasLiveState || labels.on || labels.off)) {
+    } else if (s.entity !== "media.play_pause" && showState && (hasLiveState || labels.on || labels.off || fillPct !== null)) {
       let lblText = bState.label;
       if (!lblText && bState.value !== undefined && bState.value !== null) {
-        lblText = (typeof bState.value === "number") ? `${bState.value} JUMPS` : String(bState.value);
+        lblText = (typeof bState.value === "number") ? `${bState.value}` : String(bState.value);
+      }
+      if (!lblText && fillPct !== null) {
+        lblText = fillPct.toFixed(0) + "%";
       }
       if (!lblText) {
         lblText = isOn ? (labels.on || "ON") : (labels.off || "OFF");
@@ -7411,6 +7480,7 @@
       ' data-action="slot" data-list="' + listName + '" data-idx="' + idx + '"' +
       ' title="' + esc(s.name || "") + '">' +
       colorPlate +
+      progressFillPlate +
       albumArtPlate +
       warnFlashOverlay +
       statusRing +
@@ -9148,6 +9218,7 @@
       const showIcon = document.getElementById("pe-show-icon") ? document.getElementById("pe-show-icon").checked : true;
       const showAlbumArt = isMediaEject && document.getElementById("pe-show-album-art") ? document.getElementById("pe-show-album-art").checked : false;
       const showState = (hasStateCapability && document.getElementById("pe-show-state")) ? document.getElementById("pe-show-state").checked : false;
+      const showProgressFill = document.getElementById("pe-show-progress-fill") ? document.getElementById("pe-show-progress-fill").checked : true;
       const selectedMdi = document.getElementById("pe-icon") ? document.getElementById("pe-icon").value.trim() : "";
 
       let finalIcon = "toggle-switch";
@@ -9186,6 +9257,7 @@
         use_app_icon: finalUseAppIcon,
         show_album_art: showAlbumArt,
         show_state: showState,
+        show_progress_fill: showProgressFill,
         icon: finalIcon,
         app_icon_path: finalAppIconPath,
         color: (document.getElementById("pe-color") ? document.getElementById("pe-color").value.trim() : ""),

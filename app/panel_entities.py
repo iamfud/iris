@@ -618,7 +618,7 @@ def get_live_entity_states(plugin_button_states=None) -> Dict[str, Dict[str, Any
     except Exception:
         pass
 
-    # Plugin states
+    # Plugin button states
     try:
         if plugin_button_states is None:
             import plugin_manager
@@ -630,6 +630,47 @@ def get_live_entity_states(plugin_button_states=None) -> Dict[str, Dict[str, Any
             ent_id = k.replace(":", ".")
             states[ent_id] = v
             states[k] = v  # legacy alias
+    except Exception:
+        pass
+
+    # Plugin live data & telemetry sensors
+    try:
+        import plugin_manager
+        for pname, inst in getattr(plugin_manager, "_instances", {}).items():
+            if not hasattr(inst, "poll"):
+                continue
+            polled = inst.poll()
+            if not isinstance(polled, dict):
+                continue
+            manifest = plugin_manager.get_manifest(pname) or {}
+            live_data = manifest.get("live_data") or {}
+            raw_fields = live_data.get("fields") or []
+            
+            field_map = {}
+            if isinstance(raw_fields, list):
+                for f in raw_fields:
+                    if isinstance(f, dict) and (f.get("key") or f.get("id")):
+                        field_map[f.get("key") or f.get("id")] = f
+            elif isinstance(raw_fields, dict):
+                field_map = raw_fields
+
+            state_data = polled.get("state") if isinstance(polled.get("state"), dict) else polled
+            for k, val in state_data.items():
+                if k in ("available", "state", "status", "layout", "fields"):
+                    continue
+                fdef = field_map.get(k) or {}
+                unit = fdef.get("unit") or ""
+                val_str = f"{val} {unit}".strip() if unit else str(val)
+                ent_id = f"{pname}.{k}"
+                if ent_id not in states:
+                    states[ent_id] = {
+                        "value": val,
+                        "label": val_str,
+                        "unit": unit,
+                        "min": fdef.get("min", 0),
+                        "max": fdef.get("max", 100 if fdef.get("type") == "percentage" else None),
+                        "active": bool(val),
+                    }
     except Exception:
         pass
 
