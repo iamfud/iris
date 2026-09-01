@@ -469,6 +469,7 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             pass
         super().end_headers()
 
+    def do_GET(self):
         # Library images, media art, and CSS webfonts cannot carry custom Authorization headers,
         # so serve these with host-only validation.
         if self.path.startswith("/api/library/image/") or self.path.startswith("/api/mdi/font"):
