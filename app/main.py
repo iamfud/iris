@@ -291,6 +291,7 @@ if __name__ == "__main__":
             HOTKEY_ID = 1
             HOTKEY_ID_DESKTOP = 2
             HOTKEY_ID_BORDERLESS = 3
+            HOTKEY_ID_PANEL = 4
 
             def _parse_hk(val, def_mods, def_vk):
                 if not val or not isinstance(val, str):
@@ -324,10 +325,12 @@ if __name__ == "__main__":
                 return (mod_flags if mod_flags else def_mods), (vk if vk else def_vk)
 
             ov_hk_str = self.cfg.get("hotkey_overlay") or "Ctrl+Alt+I"
+            pnl_hk_str = self.cfg.get("hotkey_panel") or "Ctrl+Shift+I"
             tb_hk_str = self.cfg.get("hotkey_toolbar") or "Ctrl+Alt+T"
             bl_hk_str = self.cfg.get("hotkey_borderless") or "Ctrl+Shift+B"
 
             ov_mods, ov_vk = _parse_hk(ov_hk_str, MOD_CONTROL | MOD_ALT, ord('I'))
+            pnl_mods, pnl_vk = _parse_hk(pnl_hk_str, MOD_CONTROL | MOD_SHIFT, ord('I'))
             tb_mods, tb_vk = _parse_hk(tb_hk_str, MOD_CONTROL | MOD_ALT, ord('T'))
             bl_mods, bl_vk = _parse_hk(bl_hk_str, MOD_CONTROL | MOD_SHIFT, ord('B'))
 
@@ -337,12 +340,15 @@ if __name__ == "__main__":
                 reg1 = user32.RegisterHotKey(None, HOTKEY_ID, ov_mods, ov_vk)
                 reg2 = user32.RegisterHotKey(None, HOTKEY_ID_DESKTOP, tb_mods, tb_vk)
                 reg3 = user32.RegisterHotKey(None, HOTKEY_ID_BORDERLESS, bl_mods, bl_vk)
+                reg4 = user32.RegisterHotKey(None, HOTKEY_ID_PANEL, pnl_mods, pnl_vk)
                 if not reg1:
                     log.warning("Failed to register overlay global hotkey: %s", ov_hk_str)
                 if not reg2:
                     log.warning("Failed to register toolbar global hotkey: %s", tb_hk_str)
                 if not reg3:
                     log.warning("Failed to register borderless global hotkey: %s", bl_hk_str)
+                if not reg4:
+                    log.warning("Failed to register panel global hotkey: %s", pnl_hk_str)
                 try:
                     while not self._hotkey_stop.is_set():
                         if user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1):
@@ -350,6 +356,12 @@ if __name__ == "__main__":
                                 if msg.wParam == HOTKEY_ID:
                                     fg = user32.GetForegroundWindow()
                                     self._root.after(0, lambda saved_fg=fg: self._toggle_window(saved_fg))
+                                elif msg.wParam == HOTKEY_ID_PANEL:
+                                    try:
+                                        import panel_window
+                                        self._root.after(0, panel_window.toggle_panel)
+                                    except Exception as ex:
+                                        log.warning("[hotkey] panel toggle failed: %s", ex)
                                 elif msg.wParam == HOTKEY_ID_DESKTOP:
                                     try:
                                         self._root.after(0, self._toggle_capture_toolbar)
@@ -368,12 +380,13 @@ if __name__ == "__main__":
                             ctypes.windll.kernel32.Sleep(100)
                 finally:
                     user32.UnregisterHotKey(None, HOTKEY_ID)
+                    user32.UnregisterHotKey(None, HOTKEY_ID_PANEL)
                     user32.UnregisterHotKey(None, HOTKEY_ID_DESKTOP)
                     user32.UnregisterHotKey(None, HOTKEY_ID_BORDERLESS)
 
             self._hotkey_thread = threading.Thread(target=listener, daemon=True)
             self._hotkey_thread.start()
-            log.info("Global hotkeys registered (Overlay: %s, Toolbar: %s, Borderless: %s)", ov_hk_str, tb_hk_str, bl_hk_str)
+            log.info("Global hotkeys registered (Overlay: %s, Panel: %s, Toolbar: %s, Borderless: %s)", ov_hk_str, pnl_hk_str, tb_hk_str, bl_hk_str)
 
         def _queue_defaults(self):
             for key, val in DEVICE_DEFAULTS.items():

@@ -312,12 +312,26 @@ def open_panel(width=_DEFAULT_WIDTH, height=_DEFAULT_HEIGHT, query_params=None, 
 
 def close_panel():
     """Close the panel if open."""
-    global _proc
+    global _proc, _NAV_QUEUE
     if _proc is not None and _proc.is_alive():
         _proc.terminate()
         _proc.join(timeout=2)
-_proc = None
-_NAV_QUEUE = None
+    _proc = None
+    _NAV_QUEUE = None
+
+
+def toggle_panel():
+    """Toggle the settings panel. If open and visible, close it; otherwise open it."""
+    global _proc
+    if _proc is not None and _proc.is_alive():
+        hwnds = _find_windows_for_pid(_proc.pid)
+        if hwnds:
+            close_panel()
+            log.info("[panel] toggled panel closed")
+            return
+        else:
+            close_panel()
+    open_panel()
 
 
 def _valid_size(width, height):

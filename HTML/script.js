@@ -4869,13 +4869,42 @@
   let panelViewSig = "";
   let panelSaveTimer = null;
   let panelSliderTimer = null;
-  let mdiCache = {};           // mdi icon name -> unicode char (from /api/mdi/codepoints)
+  const MDI_CACHE_VERSION = "v4";
+  const _MDI_BUILTIN = {
+    "account": "\uF0004", "airplane": "\uF001D", "airplane-landing": "\uF05D4", "airplane-takeoff": "\uF05D5",
+    "alarm": "\uF0020", "alarm-light": "\uF078F", "alarm-ring": "\uF078A", "application": "\uF08C6",
+    "apps": "\uF003B", "arrow-left": "\uF004D", "battery-charging": "\uF0084", "bell": "\uF009A",
+    "bell-off": "\uF009B", "bell-ring": "\uF009E", "bluetooth": "\uF00AF", "border-none-variant": "\uF08A4",
+    "brightness-5": "\uF00DE", "brightness-6": "\uF00DF", "brightness-7": "\uF00E0", "calculator": "\uF00EC",
+    "camera": "\uF0100", "car": "\uF010B", "cellphone": "\uF011C", "check": "\uF012C", "clock": "\uF0954",
+    "close": "\uF0156", "cog": "\uF0493", "cog-outline": "\uF08BB", "coffee": "\uF0176", "compass": "\uF018B",
+    "controller-classic": "\uF0B82", "cpu-64-bit": "\uF0EE0", "crosshairs": "\uF01A3", "desktop-mac": "\uF01C4",
+    "desktop-tower-monitor": "\uF0AAB", "door": "\uF081A", "eject": "\uF01EA", "expansion-card": "\uF08AE",
+    "fan": "\uF0210", "file": "\uF0214", "flash": "\uF0241", "folder": "\uF024B", "folder-open": "\uF0770",
+    "gamepad": "\uF0296", "gamepad-variant": "\uF0297", "harddisk": "\uF02CA", "headphones": "\uF02CB",
+    "headset": "\uF02CE", "heart": "\uF02D1", "help-circle": "\uF02D7", "home": "\uF02DC", "keyboard": "\uF030C",
+    "lamp": "\uF06B5", "layers": "\uF0328", "led-strip": "\uF07D6", "lightbulb": "\uF0335",
+    "lightning-bolt": "\uF140B", "lock": "\uF033E", "memory": "\uF035B", "microphone": "\uF036C",
+    "microphone-off": "\uF036D", "microsoft-xbox": "\uF05B9", "microsoft-xbox-controller": "\uF05BA",
+    "monitor": "\uF0379", "mouse": "\uF037D", "movie": "\uF0381", "music": "\uF075A", "palette": "\uF03D8",
+    "pause": "\uF03E4", "play": "\uF040A", "play-pause": "\uF040E", "plus": "\uF0415", "power": "\uF0425",
+    "radar": "\uF0437", "radiator": "\uF0438", "rocket-launch": "\uF14DE", "shield": "\uF0498",
+    "shield-airplane": "\uF06BB", "skip-next": "\uF04AD", "skip-previous": "\uF04AE",
+    "sony-playstation": "\uF0414", "speaker": "\uF04C3", "speedometer": "\uF04C5", "spotify": "\uF04C7",
+    "star": "\uF04CE", "stop": "\uF04DB", "sword": "\uF04E5", "sync": "\uF04E6", "target": "\uF04FE",
+    "timer": "\uF13AB", "tune": "\uF062E", "volume-high": "\uF057E", "volume-medium": "\uF0580",
+    "volume-off": "\uF0581", "wifi": "\uF05A9"
+  };
+
+  let mdiCache = Object.assign({}, _MDI_BUILTIN);
   try {
-    const savedMdi = localStorage.getItem("iris_mdi_cache");
-    if (savedMdi) {
-      mdiCache = JSON.parse(savedMdi) || {};
-      if (mdiCache.speedometer === "\uF04CA") {
-        delete mdiCache.speedometer;
+    if (localStorage.getItem("iris_mdi_cache_ver") !== MDI_CACHE_VERSION) {
+      localStorage.removeItem("iris_mdi_cache");
+      localStorage.setItem("iris_mdi_cache_ver", MDI_CACHE_VERSION);
+    } else {
+      const savedMdi = localStorage.getItem("iris_mdi_cache");
+      if (savedMdi) {
+        Object.assign(mdiCache, JSON.parse(savedMdi) || {});
       }
     }
   } catch (_) {}
