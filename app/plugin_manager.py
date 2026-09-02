@@ -639,9 +639,14 @@ def get_plugin_status(name):
         if running:
             try:
                 inst = _instances[name]
-                available = inst.poll().get("available", True) if hasattr(inst, "poll") else True
+                if hasattr(inst, "is_connected"):
+                    available = bool(inst.is_connected())
+                elif hasattr(inst, "poll"):
+                    available = bool(inst.poll().get("available", False))
+                else:
+                    available = True
             except Exception:
-                available = True
+                available = False
             if available:
                 return {
                     "status_code": "connected",

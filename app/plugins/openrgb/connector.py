@@ -109,14 +109,44 @@ class OpenRGBConnector(BaseConnector):
             self._device_count = 0
             self._active_profile = None
 
+    def is_alive(self) -> bool:
+        """Verify that the underlying TCP socket is still connected to the server."""
+        if self._client is None:
+            return False
+        try:
+            sock = getattr(getattr(self._client, "comms", None), "sock", None)
+            if not sock or sock.fileno() == -1:
+                self.disconnect()
+                return False
+            import select
+            r, _, _ = select.select([sock], [], [], 0)
+            if r:
+                # Socket is readable; peek to check if it's EOF (server closed)
+                peek = sock.recv(1, socket.MSG_PEEK)
+                if not peek:
+                    self.disconnect()
+                    return False
+            return True
+        except Exception:
+            self.disconnect()
+            return False
+
     @property
     def available(self) -> bool:
-        return self._client is not None
+        if self._client is None:
+            return False
+        return self.is_alive()
 
     def get_sdk_info(self) -> Dict[str, Any]:
         """Return SDK version and device count for status display."""
-        if not self._client:
+        if not self.available:
             self.connect()
+        if not self.available:
+            return {
+                "sdk_version": "Offline",
+                "device_count": 0,
+                "has_effects_plugin": bool(self._find_effect_profiles()),
+            }
         return {
             "sdk_version": self._sdk_version or "Offline",
             "device_count": self._device_count,
