@@ -4869,31 +4869,31 @@
   let panelViewSig = "";
   let panelSaveTimer = null;
   let panelSliderTimer = null;
-  const MDI_CACHE_VERSION = "v4";
+  const MDI_CACHE_VERSION = "v5";
   const _MDI_BUILTIN = {
-    "account": "\uF0004", "airplane": "\uF001D", "airplane-landing": "\uF05D4", "airplane-takeoff": "\uF05D5",
-    "alarm": "\uF0020", "alarm-light": "\uF078F", "alarm-ring": "\uF078A", "application": "\uF08C6",
-    "apps": "\uF003B", "arrow-left": "\uF004D", "battery-charging": "\uF0084", "bell": "\uF009A",
-    "bell-off": "\uF009B", "bell-ring": "\uF009E", "bluetooth": "\uF00AF", "border-none-variant": "\uF08A4",
-    "brightness-5": "\uF00DE", "brightness-6": "\uF00DF", "brightness-7": "\uF00E0", "calculator": "\uF00EC",
-    "camera": "\uF0100", "car": "\uF010B", "cellphone": "\uF011C", "check": "\uF012C", "clock": "\uF0954",
-    "close": "\uF0156", "cog": "\uF0493", "cog-outline": "\uF08BB", "coffee": "\uF0176", "compass": "\uF018B",
-    "controller-classic": "\uF0B82", "cpu-64-bit": "\uF0EE0", "crosshairs": "\uF01A3", "desktop-mac": "\uF01C4",
-    "desktop-tower-monitor": "\uF0AAB", "door": "\uF081A", "eject": "\uF01EA", "expansion-card": "\uF08AE",
-    "fan": "\uF0210", "file": "\uF0214", "flash": "\uF0241", "folder": "\uF024B", "folder-open": "\uF0770",
-    "gamepad": "\uF0296", "gamepad-variant": "\uF0297", "harddisk": "\uF02CA", "headphones": "\uF02CB",
-    "headset": "\uF02CE", "heart": "\uF02D1", "help-circle": "\uF02D7", "home": "\uF02DC", "keyboard": "\uF030C",
-    "lamp": "\uF06B5", "layers": "\uF0328", "led-strip": "\uF07D6", "lightbulb": "\uF0335",
-    "lightning-bolt": "\uF140B", "lock": "\uF033E", "memory": "\uF035B", "microphone": "\uF036C",
-    "microphone-off": "\uF036D", "microsoft-xbox": "\uF05B9", "microsoft-xbox-controller": "\uF05BA",
-    "monitor": "\uF0379", "mouse": "\uF037D", "movie": "\uF0381", "music": "\uF075A", "palette": "\uF03D8",
-    "pause": "\uF03E4", "play": "\uF040A", "play-pause": "\uF040E", "plus": "\uF0415", "power": "\uF0425",
-    "radar": "\uF0437", "radiator": "\uF0438", "rocket-launch": "\uF14DE", "shield": "\uF0498",
-    "shield-airplane": "\uF06BB", "skip-next": "\uF04AD", "skip-previous": "\uF04AE",
-    "sony-playstation": "\uF0414", "speaker": "\uF04C3", "speedometer": "\uF04C5", "spotify": "\uF04C7",
-    "star": "\uF04CE", "stop": "\uF04DB", "sword": "\uF04E5", "sync": "\uF04E6", "target": "\uF04FE",
-    "timer": "\uF13AB", "tune": "\uF062E", "volume-high": "\uF057E", "volume-medium": "\uF0580",
-    "volume-off": "\uF0581", "wifi": "\uF05A9"
+    "account": "\u{F0004}", "airplane": "\u{F001D}", "airplane-landing": "\u{F05D4}", "airplane-takeoff": "\u{F05D5}",
+    "alarm": "\u{F0020}", "alarm-light": "\u{F078F}", "alarm-ring": "\u{F078A}", "application": "\u{F08C6}",
+    "apps": "\u{F003B}", "arrow-left": "\u{F004D}", "battery-charging": "\u{F0084}", "bell": "\u{F009A}",
+    "bell-off": "\u{F009B}", "bell-ring": "\u{F009E}", "bluetooth": "\u{F00AF}", "border-none-variant": "\u{F08A4}",
+    "brightness-5": "\u{F00DE}", "brightness-6": "\u{F00DF}", "brightness-7": "\u{F00E0}", "calculator": "\u{F00EC}",
+    "camera": "\u{F0100}", "car": "\u{F010B}", "cellphone": "\u{F011C}", "check": "\u{F012C}", "clock": "\u{F0954}",
+    "close": "\u{F0156}", "cog": "\u{F0493}", "cog-outline": "\u{F08BB}", "coffee": "\u{F0176}", "compass": "\u{F018B}",
+    "controller-classic": "\u{F0B82}", "cpu-64-bit": "\u{F0EE0}", "crosshairs": "\u{F01A3}", "desktop-mac": "\u{F01C4}",
+    "desktop-tower-monitor": "\u{F0AAB}", "door": "\u{F081A}", "eject": "\u{F01EA}", "expansion-card": "\u{F08AE}",
+    "fan": "\u{F0210}", "file": "\u{F0214}", "flash": "\u{F0241}", "folder": "\u{F024B}", "folder-open": "\u{F0770}",
+    "gamepad": "\u{F0296}", "gamepad-variant": "\u{F0297}", "harddisk": "\u{F02CA}", "headphones": "\u{F02CB}",
+    "headset": "\u{F02CE}", "heart": "\u{F02D1}", "help-circle": "\u{F02D7}", "home": "\u{F02DC}", "keyboard": "\u{F030C}",
+    "lamp": "\u{F06B5}", "layers": "\u{F0328}", "led-strip": "\u{F07D6}", "lightbulb": "\u{F0335}",
+    "lightning-bolt": "\u{F140B}", "lock": "\u{F033E}", "memory": "\u{F035B}", "microphone": "\u{F036C}",
+    "microphone-off": "\u{F036D}", "microsoft-xbox": "\u{F05B9}", "microsoft-xbox-controller": "\u{F05BA}",
+    "monitor": "\u{F0379}", "mouse": "\u{F037D}", "movie": "\u{F0381}", "music": "\u{F075A}", "palette": "\u{F03D8}",
+    "pause": "\u{F03E4}", "play": "\u{F040A}", "play-pause": "\u{F040E}", "plus": "\u{F0415}", "power": "\u{F0425}",
+    "radar": "\u{F0437}", "radiator": "\u{F0438}", "rocket-launch": "\u{F14DE}", "shield": "\u{F0498}",
+    "shield-airplane": "\u{F06BB}", "skip-next": "\u{F04AD}", "skip-previous": "\u{F04AE}",
+    "sony-playstation": "\u{F0414}", "speaker": "\u{F04C3}", "speedometer": "\u{F04C5}", "spotify": "\u{F04C7}",
+    "star": "\u{F04CE}", "stop": "\u{F04DB}", "sword": "\u{F04E5}", "sync": "\u{F04E6}", "target": "\u{F04FE}",
+    "timer": "\u{F13AB}", "tune": "\u{F062E}", "volume-high": "\u{F057E}", "volume-medium": "\u{F0580}",
+    "volume-off": "\u{F0581}", "wifi": "\u{F05A9}"
   };
 
   let mdiCache = Object.assign({}, _MDI_BUILTIN);
@@ -4947,6 +4947,7 @@
     if (mdiCache[name]) return mdiCache[name];
     return "";
   }
+  window.mdiChar = mdiChar;
 
   function applyMdiIcons(root) {
     const scope = root || document;
@@ -6956,6 +6957,8 @@
     if (!notifCard) return;
     notifOpen = true;
     notifCard.classList.add("pv-notif-open");
+    const scrollEl = document.querySelector(".panel-view-overlay .pv-scroll");
+    if (scrollEl) scrollEl.scrollTop = 0;
   }
 
   function closeNotifDrawer() {
@@ -6970,6 +6973,8 @@
     notifCard.classList.remove("notif-theme-green", "notif-theme-red", "notif-flash-green", "notif-flash-red", "notif-flash-alert");
     const pNotif = (panelLive && panelLive.notification) || null;
     notifCard.innerHTML = notifHtml(pNotif);
+    const scrollEl = document.querySelector(".panel-view-overlay .pv-scroll");
+    if (scrollEl) scrollEl.scrollTop = 0;
   }
 
   let activeBoxPage = 1;
@@ -7130,32 +7135,6 @@
     if (theme === "alert" || theme === "red") return "alert";
     if (theme === "green") return "green";
     return "purple";
-  }
-
-  function notifCardEl() {
-    return document.querySelector(".panel-view-overlay #pv-notif");
-  }
-
-  function openNotifDrawer() {
-    const notifCard = notifCardEl();
-    if (notifCard) {
-      notifCard.classList.add("pv-notif-open");
-    }
-    const scrollEl = document.querySelector(".panel-view-overlay .pv-scroll");
-    if (scrollEl) {
-      scrollEl.scrollTop = 0;
-    }
-  }
-
-  function closeNotifDrawer() {
-    const notifCard = notifCardEl();
-    if (notifCard) {
-      notifCard.classList.remove("pv-notif-open");
-    }
-    const scrollEl = document.querySelector(".panel-view-overlay .pv-scroll");
-    if (scrollEl) {
-      scrollEl.scrollTop = 0;
-    }
   }
 
   function triggerNotificationSlide(theme, isEvent, eventData) {
@@ -9077,7 +9056,7 @@
     function syncIconClearBtn() {
       const peClear = document.getElementById("pe-icon-clear-btn");
       if (peClear && iconInput) {
-        peClear.style.display = (iconInput.value && iconInput.value !== "toggle-switch") ? "" : "";
+        peClear.style.display = (iconInput.value && iconInput.value !== "toggle-switch") ? "" : "none";
       }
     }
 

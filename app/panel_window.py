@@ -20,6 +20,7 @@ _MIN_WIDTH = 800
 _MIN_HEIGHT = 560
 
 _proc = None
+_NAV_QUEUE = None
 
 
 class _JSApi:

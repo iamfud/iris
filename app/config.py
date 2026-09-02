@@ -3,8 +3,11 @@
 import json
 import os
 import sys
+import threading
 from constants import DEFAULT_CONFIG
 import paths
+
+_save_lock = threading.Lock()
 
 
 def config_path():
@@ -34,29 +37,30 @@ def load_config():
 
 def save_config(cfg):
     path = config_path()
-    preserved = {}
-    try:
-        with open(path) as f:
-            old = json.load(f)
-        for key in old:
-            if key not in cfg:
-                preserved[key] = old[key]
-    except Exception:
-        pass
-    merged = {**DEFAULT_CONFIG, **preserved, **cfg}
-    merged.pop("ha_board", None)  # remove stale old key
-    tmp = path + ".tmp"
-    try:
-        with open(tmp, "w") as f:
-            json.dump(merged, f, indent=2)
-        os.replace(tmp, path)
+    with _save_lock:
+        preserved = {}
         try:
-            import plugin_manager
-            plugin_manager.invalidate_plugin_discovery()
+            with open(path) as f:
+                old = json.load(f)
+            for key in old:
+                if key not in cfg:
+                    preserved[key] = old[key]
         except Exception:
             pass
-    except Exception:
+        merged = {**DEFAULT_CONFIG, **preserved, **cfg}
+        merged.pop("ha_board", None)  # remove stale old key
+        tmp = path + ".tmp"
         try:
-            os.unlink(tmp)
+            with open(tmp, "w") as f:
+                json.dump(merged, f, indent=2)
+            os.replace(tmp, path)
+            try:
+                import plugin_manager
+                plugin_manager.invalidate_plugin_discovery()
+            except Exception:
+                pass
         except Exception:
-            pass
+            try:
+                os.unlink(tmp)
+            except Exception:
+                pass

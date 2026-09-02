@@ -59,6 +59,17 @@
     --scrollbar-radius: 4px;
 }
 
+/* ── Keyboard Focus Visibility (WCAG 2.4.7) ── */
+:focus-visible {
+    outline: 2px solid var(--theme-color-1, #48B2E9) !important;
+    outline-offset: 2px;
+    box-shadow: 0 0 0 4px var(--theme-glow, rgba(72, 178, 233, 0.35)) !important;
+    border-radius: var(--radius-small, 6px);
+}
+:focus:not(:focus-visible) {
+    outline: none;
+}
+
 /* ── Universal Iris Scrollbar ── */
 ::-webkit-scrollbar,
 *::-webkit-scrollbar {

@@ -284,3 +284,89 @@ Modes measure: colour % (0–100), pixel match (0/100), avg brightness (0–255)
 - Exclusive-fullscreen games may minimize when the dim overlay appears during calibration (same constraint as hotkey) — calibrate in borderless-windowed. Runtime capture unaffected.
 - DRM/protected content captures black.
 - Display-relative anchoring: moving the app to a different monitor moves the captured region off target.
+
+# Audit — 2026-09-01
+
+## Fixes Applied This Session
+- **[FIXED]** JS Unicode escapes: `_MDI_BUILTIN` in `script.js:4873-4897` — all 70 entries changed from `\uF0XXX` to `\u{F0XXX}` ES6 syntax. `MDI_CACHE_VERSION` bumped `v4` → `v5`. `sw.js` cache bumped `v118` → `v119`.
+- **[FIXED]** H4 — `syncIconClearBtn` ternary no-op (`script.js:9080`): second `""` → `"none"` so clear button hides when no icon.
+- **[FIXED]** H5 — Duplicate JS notification functions (`script.js`): deleted second copies of `notifCardEl`/`openNotifDrawer`/`closeNotifDrawer` (lost `notifOpen` flag, timer cleanup, HTML reset); merged `.pv-scroll` scroll-to-top from second copy into first.
+- **[FIXED]** H2 — Duplicate Python handlers (`ws_bridge.py`): deleted first copies of `_handle_save_plugin_config`/`_handle_save_plugin_outputs`/`_handle_plugin_action`; ported vision `_merge_vision_config()` + `plugin_manager.check_plugins()` into surviving handlers.
+- **[FIXED]** M5 — `mdiChar` not exposed to settings_renderer: added `window.mdiChar = mdiChar` after definition (`script.js`).
+- **[FIXED]** H6 — Zero `:focus-visible` styles: added global `:focus-visible` rule using `--theme-color-1` ring + `:focus:not(:focus-visible)` cleanup (`style.css` after `:root`).
+- **[FIXED]** H3 — Unbounded HTTP request body: added `_MAX_BODY_SIZE = 1MB` cap in `_read_json`, returns 413 for oversized/400 for invalid JSON (`ws_bridge.py`).
+- **[FIXED]** M1 — `save_config` read-then-write race: added `_save_lock = threading.Lock()` wrapping entire write (`config.py`).
+- **[FIXED]** M4 — `serial_comm._reader` treats timeout as fatal: added `except serial.SerialTimeoutException: continue` before generic handler (`serial_comm.py`).
+
+## Confirmed Fixed from Prior Audit (2026-07-09)
+- PowerShell command injection in `_extract_via_ps` — uses `$env:IRIS_ICON_PATH` now
+- `providers/steam.py` orphaned stub — deleted
+- `icon_browser.py` orphaned — deleted
+- Unicode escapes in `_MDI_BUILTIN` — fixed above
+
+## HIGH — Open Findings
+
+### H1. `shell=True` command execution with user args
+- **Location:** `panel_runtime.py:474`, `main_window.py:1592`
+- **Issue:** `subprocess.Popen(f'"{exe}" {raw_args}', shell=True)` — args flow from device-controlled slot actions. On LAN (`0.0.0.0` bind), any paired peer can reach this.
+- **Fix:** `shlex.split(raw_args, posix=False)` + `Popen([exe, *args], shell=False)`
+
+## MEDIUM — Open Findings
+
+| # | Location | Issue |
+|---|----------|-------|
+| M2 | `ws_bridge.py:236-241` | `CLIENTS` set mutated from asyncio thread, iterated from HTTP/main — `RuntimeError` possible. |
+| M3 | `media.py:117-123` | `MediaProvider.stop()` never closes asyncio event loop — leaks loop + WinRT session on restart. |
+| M6 | `style.css` | 21 duplicate/conflicting selector pairs — ~600 lines dead CSS. Later definitions silently override. |
+| M7 | `style.css` | z-index 3000 collisions: `#iris-notepad`, `.panel-view-overlay`, `#iris-screenshot-viewer` all at same level. |
+| M8 | `elite/plugin.py:438-445` | `stop()` never joins threads — stale threads write to serial after stop/restart. |
+| M9 | `ha/plugin.py:106-113` | `poll()` blocks 4s on HTTP reconnect when offline — stalls entire poll thread. |
+| M10 | `openrgb/connector.py:290-329` | `_set_color`/`_apply_profile` mutate `_client` outside `_lock` — race with `disconnect()`. |
+| M11 | `elite/plugin.py:159` vs `plugin_manager.py:336` | Elite defines `handle_action()` but manager calls `on_action()` — name mismatch, all declared actions (import/backup/restore binds) dead via manager. |
+| M12 | `style.css` | Missing CSS for `.settings-collapsible`, `.collapse-toggle`, `.collapse-content` used by settings_renderer. |
+
+## Prior Audit Unresolved (from 2026-07-09 and earlier)
+
+| Finding | Severity | Status |
+|---------|----------|--------|
+| HTTP port 15502 hardcoded across 12 files — no fallback | LOW | Still open |
+| Host 127.0.0.1 hardcoded | LOW | Still open |
+| Theme color literals `#48B2E9`/`#B23AF6` repeated 40+ times | LOW | Still open |
+| Hardware paths hardcoded in openrgb/elite connectors | LOW | Still open |
+| Monolithic `script.js` (10,749 lines) — 300-500ms parse hitch on mobile | MEDIUM | Still open |
+| Unpooled `threading.Thread` per automation action | MEDIUM | Still open |
+| `_APP_ICON_CACHE` and `_font_cache` grow unbounded | MEDIUM | Still open |
+| Tri-surface config race (config.json shared by Tkinter/WebView/HTTP) | MEDIUM | Partially fixed — M1 (save_config lock) applied this session |
+| PyWebView process restart instead of show()/hide() | MEDIUM | Still open |
+| 60+ `except Exception: pass` silent swallowing | LOW | Still open |
+
+## LOW — Open Findings
+
+| # | Location | Issue |
+|---|----------|-------|
+| L1 | `ws_bridge.py:2715` | Dead `poll()` branch — providers use `poll_data()`, not `poll()`. |
+| L2 | `win_platform.py:530-561` | GDI object leak in `_hicon_to_image` — no `finally` around `DeleteDC`/`ReleaseDC`. |
+| L3 | `ws_bridge.py:2880,2908` | UDP discovery + HTTP server sockets never closed on shutdown. |
+| L4 | `serial_comm.py:437-447` | Safety-critical serial lines silently dropped when queue is full. |
+| L5 | `ws_bridge.py` (mdi_font, panel_icon) | Wildcard `Access-Control-Allow-Origin: *` on icon/font endpoints while rest uses origin checks. |
+| L6 | `script.js:452,692` | `pollTimer` never cleared — leaked timer chain on teardown. |
+| L7 | `script.js:7612,10739` | Duplicate `resize`/`orientationchange` handlers — `updateViewportMode()` fires twice. |
+| L8 | `script.js:2778` | `escapeHtml()` missing single-quote escaping (inconsistent with `esc()`). |
+| L9 | `sw.js:53-60` | `respondWith(undefined)` on non-navigate cache miss — should return 503. |
+| L10 | `pc_stats/plugin.py:204-206` | `stop()` doesn't join `_loop` thread. |
+| L11 | `vision/connector.py:35-54` | `_is_exe_foreground` fails open (returns True on exception). |
+| L12 | `plugin_manager.py:301` | `poll_all()` never called — dead code. |
+| L13 | `plugin_manager.py:128` | `_manifests` not cleared on re-discovery — stale manifests linger. |
+| L14 | `style.css:10,404` | `font-display: block` — should be `swap` to prevent FOIT. |
+
+## Recommended Fix Order (next)
+1. H1 — `shell=True` shortcut execution → `shlex.split` + `Popen([exe, *args], shell=False)`
+2. M2 — Guard `CLIENTS` set with a threading.Lock
+3. M3 — Close asyncio event loop in `MediaProvider.stop()`
+4. M9 — HA `poll()` offline HTTP reconnect block (add backoff/cooldown)
+5. M8 — Elite `stop()` join threads
+6. M11 — Elite `handle_action` → `on_action` name alignment
+7. M10 — OpenRGB `_set_color`/`_apply_profile` lock guard
+8. M12 — Add CSS for `.settings-collapsible` / `.collapse-toggle` / `.collapse-content`
+9. M6/M7 — Deduplicate CSS selectors, fix z-index 3000 collisions
+10. L-series & prior-audit LOWs

@@ -423,6 +423,9 @@ class SerialSender:
                 raw = ser.readline()
                 if raw:
                     line = raw.decode("utf-8", errors="ignore").strip()
+            except serial.SerialTimeoutException:
+                # Transient read timeout — no data within 0.1s; not a fatal error
+                continue
             except Exception:
                 with self._lock:
                     if self._ser is ser:

@@ -32,6 +32,9 @@ CLIENTS = set()
 _loop = None
 _app = None
 
+# Cap incoming HTTP request bodies to prevent LAN-exposed memory-exhaustion (DoS).
+_MAX_BODY_SIZE = 1 * 1024 * 1024
+
 # per-path app icon PNG bytes (extracted once, served to the web panel fast)
 _APP_ICON_CACHE = collections.OrderedDict()
 _APP_ICON_LOCK = threading.Lock()
@@ -1248,41 +1251,6 @@ class _RequestHandler(SimpleHTTPRequestHandler):
 
         threading.Thread(target=_send, daemon=True).start()
 
-    def _handle_save_plugin_config(self, name):
-        try:
-            import plugin_manager
-            length = int(self.headers.get("Content-Length", 0))
-            body = json.loads(self.rfile.read(length)) if length else {}
-            if name == "vision":
-                body = _merge_vision_config(body)
-            plugin_manager.set_plugin_config(name, body)
-            # Trigger immediate check so exe change takes effect
-            plugin_manager.check_plugins()
-            self._send_json({"ok": True})
-        except Exception as e:
-            log.warning("[http] save plugin config failed: %s", e)
-            self.send_error(500, str(e))
-
-    def _handle_save_plugin_outputs(self, name):
-        try:
-            import plugin_manager
-            length = int(self.headers.get("Content-Length", 0))
-            body = json.loads(self.rfile.read(length)) if length else {}
-            plugin_manager.set_plugin_outputs(name, body)
-            self._send_json({"ok": True})
-        except Exception as e:
-            log.warning("[http] save plugin outputs failed: %s", e)
-            self.send_error(500, str(e))
-
-    def _handle_plugin_action(self, name, action_id):
-        try:
-            import plugin_manager
-            ok = plugin_manager.invoke_action(name, action_id)
-            self._send_json({"ok": ok})
-        except Exception as e:
-            log.warning("[http] plugin action failed: %s", e)
-            self.send_error(500, str(e))
-
     def _handle_plugins_open_folder(self):
         """Open the user plugins folder in Explorer, creating it first if needed."""
         try:
@@ -1296,7 +1264,16 @@ class _RequestHandler(SimpleHTTPRequestHandler):
 
     def _read_json(self):
         length = int(self.headers.get("Content-Length", 0))
-        return json.loads(self.rfile.read(length)) if length else {}
+        if length > _MAX_BODY_SIZE:
+            self.send_error(413, "Request entity too large")
+            return {}
+        if length:
+            try:
+                return json.loads(self.rfile.read(length))
+            except Exception:
+                self.send_error(400, "Invalid JSON body")
+                return {}
+        return {}
 
     def _handle_screenshot_latest(self):
         """Return the most recent screenshot captured by the Tk dialog."""
@@ -2508,10 +2485,14 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             self.send_error(400, str(e))
             return
         import plugin_manager
+        if name == "vision":
+            body = _merge_vision_config(body)
         pcfg = plugin_manager.get_plugin_config(name)
         if isinstance(body, dict):
             pcfg.update(body)
         plugin_manager.set_plugin_config(name, pcfg)
+        # Trigger immediate check so exe/enabled changes take effect
+        plugin_manager.check_plugins()
         self._send_json({"ok": True})
 
     def _handle_save_plugin_outputs(self, name):

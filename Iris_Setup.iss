@@ -43,7 +43,9 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 Name: "startup"; Description: "Run Iris when you sign in to Windows"; GroupDescription: "Additional shortcuts:"; Flags: checkedonce
 
 [Registry]
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueName: "Iris"; Flags: uninsdeletevalue
+; Run-at-startup is written conditionally in [Code] CurStepChanged (HKLM to survive
+; admin elevation, applying to the signed-in user). Removed here to avoid an
+; unconditional empty write that conflicts with the checkbox logic.
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{userappdata}\Iris"
@@ -217,12 +219,15 @@ begin
     if ResultCode = 3010 then
       NeedsReboot := True;
 
-    { Run Iris at startup if the task was selected }
+    { Run Iris at startup if the task was selected. Written to HKLM (CurrentVersion\Run)
+      instead of HKCU: the installer runs elevated (PrivilegesRequired=admin), so an HKCU
+      write lands in the ELEVATED admin account's hive, not the signed-in user's hive that
+      Windows reads for per-user autostart. HKLM is machine-wide and applies to the real user. }
     if WizardIsTaskSelected('startup') then
-      RegWriteStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'Iris',
+      RegWriteStringValue(HKLM, 'Software\Microsoft\Windows\CurrentVersion\Run', 'Iris',
         '"' + ExpandConstant('{app}\Iris.exe') + '"')
     else
-      RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'Iris');
+      RegDeleteValue(HKLM, 'Software\Microsoft\Windows\CurrentVersion\Run', 'Iris');
   end;
 end;
 
