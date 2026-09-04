@@ -486,14 +486,62 @@ def _is_plugin_focused(manifest, pcfg):
 
 
 def sync_plugin_themes():
-    """Check active plugins for declared themes and auto-switch / restore theme on window focus."""
+    """Latch-on-load theme engine: apply a profile theme when its game starts running.
+
+    Rules:
+    - Theme is latched when a profile's exe starts running (regardless of window focus).
+    - Theme is NOT removed on alt-tab to desktop or unthemed apps.
+    - If multiple running profiles have themes, the one whose window is currently focused
+      wins. If the foreground window belongs to no themed profile (e.g. desktop, browser),
+      the last active themed profile's theme stays latched.
+    - Theme is restored to the user's saved base only when NO themed profile is running.
+    - Per-profile flags respected: `theme_override` (CC), `lighting_theme_enabled` (OpenRGB).
+    """
     global _saved_base_theme, _active_themed_plugin
     if not _cfg or not isinstance(_cfg, dict):
         return
 
-    active_theme_candidate = None
-    candidate_plugin = None
+    # ── Collect all profiles that are both running and have a theme defined ──
+    try:
+        from panel_actions import _running_profile_exes
+        profiles = _cfg.get("panel_profiles") or []
+        running_exes = _running_profile_exes(profiles)
+    except Exception:
+        profiles = []
+        running_exes = set()
 
+    def _profile_theme(p):
+        """Return the effective theme dict for a profile (profile.theme or linked plugin manifest theme)."""
+        t = p.get("theme")
+        if t and isinstance(t, dict) and (t.get("accent") or t.get("neon")):
+            return t
+        # Fall back to linked plugin manifest theme
+        pexe = str(p.get("exe") or "").lower().replace(".exe", "").strip()
+        for name, manifest in _manifests.items():
+            mtheme = manifest.get("theme")
+            if not mtheme or not isinstance(mtheme, dict):
+                continue
+            mexe = str(manifest.get("exe_default") or "").lower().replace(".exe", "").strip()
+            if pexe and mexe and (pexe == mexe or pexe in mexe or mexe in pexe):
+                return mtheme
+        return None
+
+    running_themed = []
+    for p in profiles:
+        if not isinstance(p, dict) or not p.get("enabled", True):
+            continue
+        if p.get("id") == "__default__":
+            continue
+        pexe = str(p.get("exe") or "").lower().replace(".exe", "").strip()
+        if not pexe or pexe not in running_exes:
+            continue
+        th = _profile_theme(p)
+        if th:
+            running_themed.append((p, th))
+
+    # ── Also check legacy plugin-level themes (plugins without a profile) ──
+    # (keeps backward compat for plugin manifests that declare theme directly)
+    legacy_candidate = None
     for name, manifest in _manifests.items():
         theme_def = manifest.get("theme")
         if not theme_def or not isinstance(theme_def, dict):
@@ -503,42 +551,103 @@ def sync_plugin_themes():
             continue
         if pcfg.get("auto_theme") is False:
             continue
-
-        # Check if plugin's game/app window is actively in the foreground (focused)
-        is_focused = _is_plugin_focused(manifest, pcfg)
-
-        if is_focused:
-            active_theme_candidate = theme_def
-            candidate_plugin = name
+        exe_target = pcfg.get("exe_path") or manifest.get("exe_default") or ""
+        exe_key = str(exe_target).lower().replace(".exe", "").strip()
+        # Only pick up legacy if NOT already covered by a profile
+        covered = any(
+            str(p.get("exe") or "").lower().replace(".exe", "").strip() == exe_key
+            for p, _ in running_themed
+        )
+        if not covered and exe_key in running_exes:
+            legacy_candidate = (name, theme_def)
             break
 
-    if candidate_plugin:
-        if _active_themed_plugin != candidate_plugin:
-            # Snapshot original theme before taking over
-            if _saved_base_theme is None:
-                cur_th = _cfg.get("theme") or {}
-                _saved_base_theme = {
-                    "mode": cur_th.get("mode", "iris"),
-                    "accent": cur_th.get("accent", "#B23AF6"),
-                    "neon": cur_th.get("neon", "#48B2E9"),
-                }
-            _active_themed_plugin = candidate_plugin
-            theme_payload = {
-                "mode": active_theme_candidate.get("mode", "custom"),
-                "neon": active_theme_candidate.get("neon", "#ffaa00"),
-                "accent": active_theme_candidate.get("accent", "#ff5500")
-            }
-            _cfg["theme"] = theme_payload
-            log.info("[pm] auto-applied game theme for %s: %s", candidate_plugin, theme_payload)
-            _broadcast_theme(theme_payload)
-    else:
-        # Restore previously snapshotted theme
+    if not running_themed and legacy_candidate:
+        # Wrap legacy plugin as a synthetic profile for uniform handling
+        name, theme_def = legacy_candidate
+        synthetic = {
+            "id": f"__plugin_{name}__",
+            "exe": name,
+            "theme_override": True,
+            "lighting_theme_enabled": True,
+        }
+        running_themed.append((synthetic, theme_def))
+
+    if not running_themed:
+        # ── No themed profiles running → restore base user theme ──
         if _active_themed_plugin is not None and _saved_base_theme is not None:
-            log.info("[pm] restored base theme after %s closed: %s", _active_themed_plugin, _saved_base_theme)
+            log.info("[pm] no themed profile running — restoring base theme: %s", _saved_base_theme)
             _cfg["theme"] = dict(_saved_base_theme)
             _broadcast_theme(_saved_base_theme)
             _saved_base_theme = None
             _active_themed_plugin = None
+        return
+
+    # ── One or more themed profiles running ──
+    # Pick which one to show: if any running themed profile is currently focused, use it.
+    # Otherwise keep the currently active one (sticky latch — do NOT unload).
+    selected_profile = None
+    selected_theme = None
+
+    if len(running_themed) == 1:
+        selected_profile, selected_theme = running_themed[0]
+    else:
+        # Multiple themed profiles: try to match foreground window
+        try:
+            from panel_actions import foreground_exe
+            fg = foreground_exe()
+            fg_key = str(fg or "").lower().replace(".exe", "").strip()
+        except Exception:
+            fg_key = ""
+
+        for p, th in running_themed:
+            pexe = str(p.get("exe") or "").lower().replace(".exe", "").strip()
+            if fg_key and (pexe == fg_key or fg_key in pexe or pexe in fg_key):
+                selected_profile, selected_theme = p, th
+                break
+
+        if selected_profile is None:
+            # Foreground is not a themed profile (e.g. desktop, browser) → keep current latch
+            if _active_themed_plugin is not None:
+                # Already latched — do nothing (sticky)
+                return
+            # First time: default to the first running themed profile
+            selected_profile, selected_theme = running_themed[0]
+
+    # ── Apply theme if it changed ──
+    candidate_id = selected_profile.get("id") or selected_profile.get("exe") or ""
+    if _active_themed_plugin == candidate_id:
+        return  # Already active — nothing to do
+
+    # Snapshot user's base theme before first takeover
+    if _saved_base_theme is None:
+        cur_th = _cfg.get("theme") or {}
+        _saved_base_theme = {
+            "mode": cur_th.get("mode", "iris"),
+            "accent": cur_th.get("accent", "#B23AF6"),
+            "neon": cur_th.get("neon", "#48B2E9"),
+        }
+
+    _active_themed_plugin = candidate_id
+
+    # Control-Centre theme
+    if selected_profile.get("theme_override", True):
+        theme_payload = {
+            "mode": selected_theme.get("mode", "custom"),
+            "accent": selected_theme.get("accent", "#ff5500"),
+            "neon": selected_theme.get("neon", "#ffaa00"),
+        }
+        _cfg["theme"] = theme_payload
+        log.info("[pm] latched game theme for '%s': %s", candidate_id, theme_payload)
+        _broadcast_theme(theme_payload)
+
+    # Hardware Lighting theme
+    if selected_profile.get("lighting_theme_enabled", True):
+        try:
+            from lighting_service import get_lighting_service
+            get_lighting_service().evaluate_state(force=True)
+        except Exception as ex:
+            log.debug("[pm] lighting evaluate_state failed: %s", ex)
 
 
 def _broadcast_theme(theme_dict):

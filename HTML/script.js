@@ -5315,8 +5315,10 @@
       const isApp = !p.is_group && !!p.exe;
       const bCount = (p.board || []).length;
       const themeColors = p.theme || {};
-      const accent = themeColors.accent || "#B23AF6";
-      const neon = themeColors.neon || "#48B2E9";
+      const _cardLinkedPlg = findLinkedPluginForProfile(p);
+      const _cardPlgTheme = (_cardLinkedPlg && _cardLinkedPlg.def && _cardLinkedPlg.def.theme) ? _cardLinkedPlg.def.theme : {};
+      const accent = themeColors.accent || _cardPlgTheme.accent || "#B23AF6";
+      const neon = themeColors.neon || _cardPlgTheme.neon || "#48B2E9";
 
       cardsHtml +=
         '<div class="dash-plugin profile-card' + (isActive ? ' active-profile' : '') + '" data-prof-id="' + esc(p.id) + '">' +
@@ -5550,13 +5552,19 @@
     const board = p.board || [];
     const isGrp = !!p.is_group;
     const lightingOn = (p.lighting_enabled !== false);
+    const themeOverrideOn = (p.theme_override !== false);
+    const lightingThemeOn = (p.lighting_theme_enabled !== false);
+    const lightingAlertsOn = (p.lighting_alerts_enabled !== false);
     const themeColors = p.theme || {};
-    const accent = themeColors.accent || "#B23AF6";
-    const neon = themeColors.neon || "#48B2E9";
 
     const linkedPlg = findLinkedPluginForProfile(p);
     const plgKey = linkedPlg ? linkedPlg.key : null;
     const plgDef = linkedPlg ? linkedPlg.def : null;
+
+    // Resolve accent/neon: profile override → linked plugin manifest → Iris defaults
+    const plgTheme = (plgDef && plgDef.theme) ? plgDef.theme : {};
+    const accent = themeColors.accent || plgTheme.accent || "#B23AF6";
+    const neon = themeColors.neon || plgTheme.neon || "#48B2E9";
 
     // Build plugin-specific settings and actions if available
     let pluginSettingsHtml = "";
@@ -5646,6 +5654,7 @@
               sectionCard("Visual Theme & Lighting", "palette",
                 '<div class="settings-control">' +
                   '<label class="settings-label">Theme Colors (Accent & Neon)</label>' +
+                  '<p class="settings-hint" style="margin:2px 0 6px 0;">Set by the plugin author. Customize if you want to override the defaults.</p>' +
                   '<div style="display:flex;gap:16px;align-items:center;margin-top:6px;">' +
                     '<div style="display:flex;align-items:center;gap:8px;">' +
                       '<input type="color" id="gprof-accent" value="' + esc(accent) + '" style="cursor:pointer;width:32px;height:32px;border:none;border-radius:6px;background:none;">' +
@@ -5657,12 +5666,28 @@
                     '</div>' +
                   '</div>' +
                 '</div>' +
-                '<div class="settings-toggle-row" style="margin-top:16px;border-top:1px solid rgba(255,255,255,0.05);padding-top:14px;">' +
-                  '<div>' +
-                    '<span class="settings-toggle-label">Enable Lighting Alerts</span>' +
-                    '<p class="settings-hint" style="margin:2px 0 0 0;">Forward button warnings and alert colors directly to lighting suppliers while this profile is active.</p>' +
+                '<div style="border-top:1px solid rgba(255,255,255,0.05);margin-top:14px;padding-top:14px;">' +
+                  '<div class="settings-toggle-row">' +
+                    '<div>' +
+                      '<span class="settings-toggle-label">Apply Control Centre Theme</span>' +
+                      '<p class="settings-hint" style="margin:2px 0 0 0;">Switch the dashboard and companion screen to this profile\'s theme colours while this game is running.</p>' +
+                    '</div>' +
+                    '<div class="settings-toggle' + (themeOverrideOn ? ' on' : '') + '" id="gprof-theme-override-tog"><div class="settings-toggle-thumb"></div></div>' +
                   '</div>' +
-                  '<div class="settings-toggle' + (lightingOn ? ' on' : '') + '" id="gprof-lighting-tog"><div class="settings-toggle-thumb"></div></div>' +
+                  '<div class="settings-toggle-row" style="margin-top:12px;">' +
+                    '<div>' +
+                      '<span class="settings-toggle-label">Apply Hardware Lighting Theme</span>' +
+                      '<p class="settings-hint" style="margin:2px 0 0 0;">Push this profile\'s neon colours to compatible lighting devices (e.g. OpenRGB) while this game is running.</p>' +
+                    '</div>' +
+                    '<div class="settings-toggle' + (lightingThemeOn ? ' on' : '') + '" id="gprof-lighting-theme-tog"><div class="settings-toggle-thumb"></div></div>' +
+                  '</div>' +
+                  '<div class="settings-toggle-row" style="margin-top:12px;">' +
+                    '<div>' +
+                      '<span class="settings-toggle-label">Enable Lighting Alerts</span>' +
+                      '<p class="settings-hint" style="margin:2px 0 0 0;">Forward button warnings and alert colors to lighting devices while this profile is active.</p>' +
+                    '</div>' +
+                    '<div class="settings-toggle' + (lightingAlertsOn ? ' on' : '') + '" id="gprof-lighting-alerts-tog"><div class="settings-toggle-thumb"></div></div>' +
+                  '</div>' +
                 '</div>') +
 
               // Card 3: Plugin Specific Settings (if linked)
@@ -5761,11 +5786,29 @@
       neonInput.addEventListener("input", updateTheme);
     }
 
-    const lightTog = document.getElementById("gprof-lighting-tog");
-    if (lightTog) {
-      lightTog.addEventListener("click", () => {
-        const on = lightTog.classList.toggle("on");
-        p.lighting_enabled = on;
+    const themeOverrideTog = document.getElementById("gprof-theme-override-tog");
+    if (themeOverrideTog) {
+      themeOverrideTog.addEventListener("click", () => {
+        const on = themeOverrideTog.classList.toggle("on");
+        p.theme_override = on;
+        setPanelDirty(true);
+      });
+    }
+
+    const lightingThemeTog = document.getElementById("gprof-lighting-theme-tog");
+    if (lightingThemeTog) {
+      lightingThemeTog.addEventListener("click", () => {
+        const on = lightingThemeTog.classList.toggle("on");
+        p.lighting_theme_enabled = on;
+        setPanelDirty(true);
+      });
+    }
+
+    const lightingAlertsTog = document.getElementById("gprof-lighting-alerts-tog");
+    if (lightingAlertsTog) {
+      lightingAlertsTog.addEventListener("click", () => {
+        const on = lightingAlertsTog.classList.toggle("on");
+        p.lighting_alerts_enabled = on;
         setPanelDirty(true);
       });
     }
