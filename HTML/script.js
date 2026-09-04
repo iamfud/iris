@@ -5171,6 +5171,7 @@
       '<select class="settings-select" id="panel-profile-sel">' +
       '<option value="__default__"' + (panelProfileSel === "__default__" ? " selected" : "") + '>Default Profile</option>';
     list.forEach((p) => {
+      if (p.id === "__default__") return;
       h += '<option value="' + esc(p.id) + '"' + (panelProfileSel === p.id ? " selected" : "") + '>' +
         esc(p.name || p.id) + '</option>';
     });
@@ -7282,7 +7283,11 @@
       if (!tracking || e.touches.length !== 1) return;
       const isLand = document.documentElement.classList.contains("is-landscape");
       if (isLand) {
-        e.preventDefault();
+        const mdx = e.touches[0].clientX - startX;
+        const mdy = e.touches[0].clientY - startY;
+        if (Math.abs(mdx) > 8 || Math.abs(mdy) > 8) {
+          e.preventDefault();
+        }
       }
     }, { passive: false });
 
@@ -10653,7 +10658,7 @@
         const dayOn = dayTog ? dayTog.classList.contains("on") : true;
         const patch = {
           ambient_lighting: {
-            sync_theme: syncOn,
+            startup_mode: syncOn ? "theme" : "off",
             follow_daylight: dayOn,
             _wizard_completed: true
           }

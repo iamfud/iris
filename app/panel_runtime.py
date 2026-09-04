@@ -200,8 +200,10 @@ def live_payload(cfg, client_cv=None):
     import hashlib
     cv = hashlib.md5(json.dumps(cfg_data, sort_keys=True).encode()).hexdigest()[:12]
 
+    import constants
     payload = {
         "config_version": cv,
+        "app_version": constants.APP_VERSION,
         "hardware_connected": _hardware_connected(),
         "port": _port(),
         "gauges": _gauges(),
@@ -411,7 +413,8 @@ def execute_slot(slot):
             return plugin_manager.handle_button_action(pname, bid, slot)
 
         if btype == "HOTKEY" or slot.get("hotkey") or slot.get("keys"):
-            return {"ok": _hotkey_action(slot)}
+            if not slot.get("openrgb_profile") and not ent.startswith("openrgb.profile."):
+                return {"ok": _hotkey_action(slot)}
         return {"ok": True}
         if btype.startswith("PLUGIN:"):
             parts = btype.split(":", 2)
@@ -540,21 +543,32 @@ def _openrgb_action(slot):
                 pass
     if not profile_name:
         return False
+
     try:
         import plugin_manager
-        plugin_manager.on_tap("openrgb", "profile", profile_name)
-        return True
-    except Exception as ex:
-        log.warning("[panel_runtime] openrgb action via plugin_manager failed: %s", ex)
-        # Fallback to direct SDK call if plugin_manager not available
-        try:
-            from openrgb import OpenRGBClient
-            client = OpenRGBClient(name="Iris")
-            clean_name = profile_name.replace(" (Device)", "").replace(" (Effect)", "").strip()
-            client.load_profile(clean_name)
+        if plugin_manager.on_tap("openrgb", "profile", profile_name):
             return True
-        except Exception as ex2:
-            log.warning("[panel_runtime] openrgb fallback failed: %s", ex2)
+    except Exception as ex:
+        log.warning("[panel_runtime] openrgb on_tap failed: %s", ex)
+    # Fallback: direct SDK call
+    try:
+        from openrgb import OpenRGBClient
+        from openrgb.utils import Profile
+        client = OpenRGBClient(name="Iris")
+        clean_name = profile_name.replace(" (Device)", "").replace(" (Effect)", "").strip()
+        try:
+            # Local .orp load is reliable even when the SDK server's profile
+            # list is empty (headless service instance).
+            client.load_profile(clean_name, local=True)
+        except Exception:
+            try:
+                client.load_profile(Profile(clean_name))
+            except Exception:
+                client.load_profile(clean_name)
+        client.show()
+        return True
+    except Exception as ex2:
+        log.warning("[panel_runtime] openrgb fallback failed: %s", ex2)
     return False
 
 

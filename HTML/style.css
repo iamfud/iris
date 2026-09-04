@@ -4341,7 +4341,7 @@ html.is-landscape .panel-view-overlay .pdev-gsvg{
     -webkit-user-select:none;
     user-select:none;
     -webkit-user-drag:none;
-    touch-action:pan-x pan-y;
+    touch-action:manipulation;
     background:
         radial-gradient(100% 100% at 50% 50%, rgba(255,255,255,.03) 0%, rgba(255,255,255,0) 60%, rgba(0,0,0,.10) 100%),
         #16171a;
@@ -6955,6 +6955,26 @@ select option,
     display: flex;
     justify-content: space-between;
     align-items: center;
+}
+
+.ambient-mode {
+    transition: border-color .15s ease, background .15s ease;
+}
+.ambient-mode:hover {
+    border-color: var(--neon-text, var(--neon)) !important;
+}
+.ambient-mode.active {
+    background: rgba(72, 178, 233, .12) !important;
+    font-weight: 600;
+}
+.ambient-perapp-row .settings-input {
+    padding: 7px 10px;
+}
+.ambient-perapp-del {
+    line-height: 1;
+}
+.ambient-perapp-del:hover {
+    background: rgba(255, 107, 107, .12);
 }
 
 .theme-preview-title {

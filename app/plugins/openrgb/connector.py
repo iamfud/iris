@@ -27,11 +27,18 @@ class OpenRGBConnector(BaseConnector):
         self._device_count = 0
         self._active_profile = None
         self._has_effects_plugin = False
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._running = False
 
     def _get_configured_port(self) -> int:
-        """Read configured port from OpenRGB.json if available, default to 6742."""
+        """Return the OpenRGB SDK server port, defaulting to 6742.
+
+        OpenRGB.json stores the target under AutoStart.client as "host:port"
+        (e.g. "localhost:6742"). The AutoStart.port field is a separate GUI
+        auto-launch field that does NOT reliably hold the SDK server port
+        (it has been seen carrying 6749 while client correctly says 6742), so
+        we only trust AutoStart.client's port, and otherwise default to 6742.
+        """
         for base in (os.environ.get("APPDATA", ""), os.environ.get("LOCALAPPDATA", "")):
             if not base:
                 continue
@@ -40,9 +47,12 @@ class OpenRGBConnector(BaseConnector):
                 try:
                     with open(cfg_path, "r", encoding="utf-8") as f:
                         d = json.load(f)
-                        p_str = d.get("AutoStart", {}).get("port")
-                        if p_str:
-                            return int(p_str)
+                    client = (d.get("AutoStart") or {}).get("client") or ""
+                    if ":" in client:
+                        try:
+                            return int(client.rsplit(":", 1)[1])
+                        except ValueError:
+                            pass
                 except Exception:
                     pass
         return 6742
@@ -53,9 +63,11 @@ class OpenRGBConnector(BaseConnector):
                 return True
 
             ports_to_try = [self._get_configured_port()]
-            for fallback in (6742, 6749):
-                if fallback not in ports_to_try:
-                    ports_to_try.append(fallback)
+            # The OpenRGB SDK server always runs on the default port 6742. Never
+            # fall back to 6749: that value appears in an unrelated OpenRGB.json
+            # AutoStart field and a server on it would be a different instance.
+            if 6742 not in ports_to_try:
+                ports_to_try.append(6742)
 
             for p in ports_to_try:
                 try:
@@ -287,22 +299,43 @@ class OpenRGBConnector(BaseConnector):
         log.info(f"[openrgb] Switching to profile '{clean_name}'")
         self._active_profile = name
 
-        if not self._client:
-            self.connect()
-
-        if not self._client:
-            log.warning(f"[openrgb] Cannot apply '{clean_name}': OpenRGB SDK server is not connected. Please click 'Start Server' in OpenRGB.")
-            return
-
-        try:
+        with self._lock:
+            if not self._client:
+                self.connect()
+    
+            if not self._client:
+                log.warning(f"[openrgb] Cannot apply '{clean_name}': OpenRGB SDK server is not connected. Please click 'Start Server' in OpenRGB.")
+                return
+    
             try:
-                from openrgb.utils import Profile
-                self._client.load_profile(Profile(clean_name))
-            except Exception:
-                self._client.load_profile(clean_name)
-            log.info(f"[openrgb] Profile '{clean_name}' successfully loaded in OpenRGB")
-        except Exception as e:
-            log.warning(f"[openrgb] Failed to load profile '{clean_name}': {e}")
+                applied = False
+                try:
+                    # Prefer loading the profile from the local .orp file
+                    # (local=True reads %APPDATA%\OpenRGB\<name>.orp). The
+                    # server-side load_profile only works when the SDK server
+                    # reports a non-empty profile list, which the headless
+                    # service instance does not — so local load is the reliable
+                    # path that actually pushes colors to the LEDs.
+                    self._client.load_profile(clean_name, local=True)
+                    applied = True
+                except Exception:
+                    try:
+                        from openrgb.utils import Profile
+                        self._client.load_profile(Profile(clean_name))
+                        applied = True
+                    except Exception:
+                        self._client.load_profile(clean_name)
+                        applied = True
+                # load_profile (local or server) stages colors; show() is what
+                # pushes them to the LEDs.
+                try:
+                    self._client.show()
+                except Exception as e:
+                    log.warning(f"[openrgb] show() failed after loading '{clean_name}': {e}")
+                if applied:
+                    log.info(f"[openrgb] Profile '{clean_name}' successfully loaded in OpenRGB")
+            except Exception as e:
+                log.warning(f"[openrgb] Failed to load profile '{clean_name}': {e}")
 
     # ── Internal: Direct Color ───────────────────────────────────
 
@@ -317,16 +350,17 @@ class OpenRGBConnector(BaseConnector):
         except ValueError:
             return
 
-        if not self._client:
-            self.connect()
-
-        if self._client is not None:
-            try:
-                from openrgb.utils import RGBColor
-                self._client.set_color(RGBColor(red=r, green=g, blue=b))
-                log.info("colour #%02x%02x%02x applied via OpenRGB SDK", r, g, b)
-            except Exception as e:
-                log.warning("set_color failed: %s", e)
+        with self._lock:
+            if not self._client:
+                self.connect()
+    
+            if self._client is not None:
+                try:
+                    from openrgb.utils import RGBColor
+                    self._client.set_color(RGBColor(red=r, green=g, blue=b))
+                    log.info("colour #%02x%02x%02x applied via OpenRGB SDK", r, g, b)
+                except Exception as e:
+                    log.warning("set_color failed: %s", e)
 
 
 

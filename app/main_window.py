@@ -1715,12 +1715,18 @@ class MainWindow:
             def _apply():
                 try:
                     import plugin_manager
-                    plugin_manager.on_tap("openrgb", "profile", profile_name)
+                    if not plugin_manager.on_tap("openrgb", "profile", profile_name):
+                        raise Exception("plugin_manager.on_tap returned False")
                 except Exception:
                     try:
                         from openrgb import OpenRGBClient
                         cli = OpenRGBClient(name="Iris")
-                        cli.load_profile(profile_name)
+                        clean_name = profile_name.replace(" (Device)", "").replace(" (Effect)", "").strip()
+                        try:
+                            cli.load_profile(clean_name, local=True)
+                        except Exception:
+                            cli.load_profile(clean_name)
+                        cli.show()
                     except Exception:
                         pass
             threading.Thread(target=_apply, daemon=True).start()

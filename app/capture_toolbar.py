@@ -307,7 +307,7 @@ class CaptureToolbar:
             return "desktop"
 
     def show(self, slot=None):
-        """Display the toolbar at the exact top-centre of the active monitor (15px from top)."""
+        """Display the toolbar at the exact top-centre of the active monitor (4px from top)."""
         self._current_app_tag = self._resolve_foreground_app()
         m = _get_active_monitor_rect()
         self._current_monitor = m
@@ -321,9 +321,9 @@ class CaptureToolbar:
         w = max(180, req_w + 2)
         h = max(38, req_h + 2)
 
-        # Compute exact horizontal center and 15px from top
+        # Compute exact horizontal center and 4px from top
         center_x = int(m["x"] + (m["w"] - w) // 2)
-        target_y = int(m["y"] + 15)
+        target_y = int(m["y"] + 4)
 
         self._win.geometry(f"{w}x{h}+{center_x}+{target_y}")
         self._win.lift()

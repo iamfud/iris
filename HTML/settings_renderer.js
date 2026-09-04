@@ -137,6 +137,14 @@ class SettingsRenderer {
         var isCollapsiblePage = (pageId === "settings");
         var renderedIndex = 0;
         html += '<section class="settings-content">';
+        
+        if (pageId === "settings") {
+          var v = window.panelState && window.panelState.app_version ? window.panelState.app_version : "";
+          if (v) {
+            html += '<div style="column-span:all;text-align:right;color:var(--fg-dim);font-size:12px;margin-bottom:8px;">Iris v' + this._esc(v) + '</div>';
+          }
+        }
+        
         page.sections.forEach(function (section) {
           if (section.app_only && !isApp) return;
           var isOpen = (renderedIndex === 0);
@@ -1245,7 +1253,6 @@ class SettingsRenderer {
     // Ambient Lighting Environment Card
     var lightingCfg = config.ambient_lighting || { enabled: true, sync_theme: true, follow_daylight: true };
     var lightingEnabled = lightingCfg.enabled !== false;
-    var syncTheme = lightingCfg.sync_theme !== false;
     var followDaylight = lightingCfg.follow_daylight !== false;
 
     html += '<div class="theme-preview-box" id="ambient-lighting-box" style="margin-top:16px;">';
@@ -1262,16 +1269,48 @@ class SettingsRenderer {
     html += '<span class="settings-hint" style="margin-top:-4px;margin-bottom:10px;display:block;">Master switch for automatic profile lighting and ambient synchronization.</span>';
 
     html += '<div class="settings-toggle-row" style="margin-bottom:8px;">';
-    html += '<span class="settings-toggle-label">Sync Lights to Theme Color</span>';
-    html += '<div class="settings-toggle' + (syncTheme ? ' on' : '') + '" id="ambient-sync-theme-tog"><div class="settings-toggle-thumb"></div></div>';
-    html += '</div>';
-    html += '<span class="settings-hint" style="margin-top:-4px;margin-bottom:10px;display:block;">Automatically derives the highest luminance colour from your active theme for PC LEDs and room lighting.</span>';
-
-    html += '<div class="settings-toggle-row" style="margin-bottom:8px;">';
     html += '<span class="settings-toggle-label">Observe Daylight Cycle</span>';
     html += '<div class="settings-toggle' + (followDaylight ? ' on' : '') + '" id="ambient-daylight-tog"><div class="settings-toggle-thumb"></div></div>';
     html += '</div>';
-    html += '<span class="settings-hint" style="margin-top:-4px;display:block;">During daylight hours (07:30–19:30), ceiling and room lights turn OFF while OpenRGB PC lights remain illuminated in theme colour.</span>';
+    html += '<span class="settings-hint" style="margin-top:-4px;margin-bottom:12px;display:block;">During daylight hours (07:30–19:30), ceiling and room lights turn OFF while OpenRGB PC lights remain illuminated in theme colour.</span>';
+
+    // OpenRGB startup behaviour
+    var startupMode = lightingCfg.startup_mode || (lightingCfg.sync_theme !== false ? 'theme' : 'off');
+    var startupProfile = lightingCfg.startup_profile || '';
+    html += '<div class="settings-field" style="margin-top:4px;">';
+    html += '<label class="settings-label">PC LED Startup Behaviour</label>';
+    html += '<span class="settings-hint" style="margin-top:-2px;margin-bottom:8px;display:block;">Applied once when Iris starts, then left alone. Lighting never auto-switches when you change apps.</span>';
+    html += '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px;">';
+    var modes = [['theme','Highest-luminance theme colour'],['profile','A specific OpenRGB profile'],['off','Nothing']];
+    for (var mi=0; mi<modes.length; mi++) {
+      var m = modes[mi][0], ml = modes[mi][1];
+      html += '<div class="ambient-mode' + (startupMode===m?' active':'') + '" data-mode="' + m + '" style="flex:1;min-width:130px;cursor:pointer;border:1px solid var(--border);border-radius:8px;padding:8px 10px;text-align:center;font-size:11px;background:var(--bg-control, #1A1C20);' + (startupMode===m?'border-color:var(--neon-text);':'') + '">' + this._esc(ml) + '</div>';
+    }
+    html += '</div>';
+    html += '<div class="ambient-profile-row" id="ambient-profile-row" style="display:' + (startupMode==='profile'?'flex':'none') + ';align-items:center;gap:8px;margin-bottom:4px;">';
+    html += '<input type="text" class="settings-input" id="ambient-startup-profile" list="ambient-profile-list" placeholder="Profile name (e.g. Red)" value="' + this._esc(startupProfile) + '" style="flex:1;min-width:0;">';
+    html += '<datalist id="ambient-profile-list"></datalist>';
+    html += '<span class="settings-hint" style="flex-shrink:0;">Load this OpenRGB profile at startup.</span>';
+    html += '</div>';
+    html += '</div>';
+
+    // Per-app lighting
+    var perApp = lightingCfg.per_app || [];
+    html += '<div class="settings-field" style="margin-top:10px;">';
+    html += '<label class="settings-label">Lighting While an App is Running</label>';
+    html += '<span class="settings-hint" style="margin-top:-2px;margin-bottom:8px;display:block;">Load a profile while a game/app process is running, and revert to the startup behaviour when it exits (not focus-based).</span>';
+    html += '<div id="ambient-perapp-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px;">';
+    if (perApp.length === 0) {
+      html += '<span class="settings-hint" id="ambient-perapp-empty" style="color:var(--fg-dim);">No per-app lighting configured.</span>';
+    }
+    for (var pi=0; pi<perApp.length; pi++) {
+      var pa = perApp[pi] || {};
+      html += this._renderPerAppRow(pa, pi);
+    }
+    html += '</div>';
+    html += '<button type="button" class="settings-btn" id="ambient-perapp-add" style="width:100%;padding:6px 10px;">+ Add App</button>';
+    html += '</div>';
+
     html += '</div>';
     html += '</div>';
 
@@ -1282,6 +1321,15 @@ class SettingsRenderer {
     html += '</button>';
     html += '</div>';
 
+    html += '</div>';
+    return html;
+  }
+
+  _renderPerAppRow(pa, idx) {
+    var html = '<div class="ambient-perapp-row" data-idx="' + idx + '" style="display:flex;align-items:center;gap:8px;">';
+    html += '<input type="text" class="settings-input ambient-perapp-exe" placeholder="exe name, e.g. EliteDangerous64.exe" value="' + this._esc(pa.exe || '') + '" style="flex:1.2;min-width:0;">';
+    html += '<input type="text" class="settings-input ambient-perapp-profile" list="ambient-profile-list" placeholder="profile name" value="' + this._esc(pa.profile || '') + '" style="flex:1;min-width:0;">';
+    html += '<button type="button" class="settings-btn ambient-perapp-del" style="flex-shrink:0;padding:4px 8px;color:var(--danger,#ff6b6b);">✕</button>';
     html += '</div>';
     return html;
   }
@@ -2527,7 +2575,6 @@ class SettingsRenderer {
     var ambientBadges = container.querySelector("#ambient-provider-badges");
     var ambientContent = container.querySelector("#ambient-lighting-content");
     var enabledTog = container.querySelector("#ambient-enabled-tog");
-    var syncTog = container.querySelector("#ambient-sync-theme-tog");
     var dayTog = container.querySelector("#ambient-daylight-tog");
 
     var lightingConfig = config.ambient_lighting || { enabled: true, sync_theme: true, follow_daylight: true };
@@ -2541,21 +2588,95 @@ class SettingsRenderer {
       });
     }
 
-    if (syncTog) {
-      syncTog.addEventListener("click", function () {
-        var on = this.classList.toggle("on");
-        lightingConfig.sync_theme = on;
-        config.ambient_lighting = lightingConfig;
-        saveCallback({ ambient_lighting: lightingConfig });
-      });
-    }
-
     if (dayTog) {
       dayTog.addEventListener("click", function () {
         var on = this.classList.toggle("on");
         lightingConfig.follow_daylight = on;
         config.ambient_lighting = lightingConfig;
         saveCallback({ ambient_lighting: lightingConfig });
+      });
+    }
+
+    // Startup behaviour mode selector
+    var modeEls = container.querySelectorAll(".ambient-mode");
+    var profileRow = container.querySelector("#ambient-profile-row");
+    var profileInput = container.querySelector("#ambient-startup-profile");
+    function syncModeUI(mode) {
+      lightingConfig.startup_mode = mode;
+      var prVisible = mode === "profile";
+      if (profileRow) profileRow.style.display = prVisible ? "flex" : "none";
+      Array.prototype.forEach.call(modeEls, function (el) {
+        var active = el.getAttribute("data-mode") === mode;
+        el.classList.toggle("active", active);
+        el.style.borderColor = active ? "var(--neon-text)" : "";
+      });
+    }
+    Array.prototype.forEach.call(modeEls, function (el) {
+      el.addEventListener("click", function () {
+        var mode = this.getAttribute("data-mode");
+        syncModeUI(mode);
+        config.ambient_lighting = lightingConfig;
+        saveCallback({ ambient_lighting: lightingConfig });
+      });
+    });
+    if (profileInput) {
+      profileInput.addEventListener("input", function () {
+        lightingConfig.startup_profile = this.value;
+        config.ambient_lighting = lightingConfig;
+        if (self._saveTimers["ambient-startup-profile"]) clearTimeout(self._saveTimers["ambient-startup-profile"]);
+        self._saveTimers["ambient-startup-profile"] = setTimeout(function () {
+          saveCallback({ ambient_lighting: lightingConfig });
+        }, 350);
+      });
+    }
+
+    // Per-app lighting rows
+    var perAppList = container.querySelector("#ambient-perapp-list");
+    function savePerApp() {
+      var rows = perAppList ? perAppList.querySelectorAll(".ambient-perapp-row") : [];
+      var arr = [];
+      Array.prototype.forEach.call(rows, function (row) {
+        var exe = row.querySelector(".ambient-perapp-exe").value.trim();
+        var profile = row.querySelector(".ambient-perapp-profile").value.trim();
+        if (exe || profile) arr.push({ exe: exe, profile: profile, plugin: "openrgb", enabled: true });
+      });
+      lightingConfig.per_app = arr;
+      config.ambient_lighting = lightingConfig;
+      saveCallback({ ambient_lighting: lightingConfig });
+    }
+    if (perAppList) {
+      perAppList.addEventListener("input", function () {
+        if (self._saveTimers["ambient-perapp"]) clearTimeout(self._saveTimers["ambient-perapp"]);
+        self._saveTimers["ambient-perapp"] = setTimeout(savePerApp, 350);
+      });
+      perAppList.addEventListener("click", function (ev) {
+        var btn = ev.target.closest(".ambient-perapp-del");
+        if (!btn) return;
+        var row = btn.closest(".ambient-perapp-row");
+        if (row) row.remove();
+        savePerApp();
+        var rows = container.querySelectorAll(".ambient-perapp-row");
+        if (rows.length === 0) {
+          var empty = container.querySelector("#ambient-perapp-empty");
+          if (!empty) {
+            var span = document.createElement("span");
+            span.className = "settings-hint";
+            span.id = "ambient-perapp-empty";
+            span.style.color = "var(--fg-dim)";
+            span.textContent = "No per-app lighting configured.";
+            perAppList.appendChild(span);
+          }
+        }
+      });
+    }
+    var addBtn = container.querySelector("#ambient-perapp-add");
+    if (addBtn) {
+      addBtn.addEventListener("click", function () {
+        var empty = container.querySelector("#ambient-perapp-empty");
+        if (empty) empty.remove();
+        if (perAppList) perAppList.insertAdjacentHTML("beforeend", self._renderPerAppRow({}, -1));
+        if (self._saveTimers["ambient-perapp"]) clearTimeout(self._saveTimers["ambient-perapp"]);
+        self._saveTimers["ambient-perapp"] = setTimeout(savePerApp, 100);
       });
     }
 
@@ -2582,6 +2703,21 @@ class SettingsRenderer {
           ambientContent.innerHTML = '<div style="padding:8px 0;font-size:12px;color:var(--fg-dim);">' +
             'No lighting plugins installed. Install <strong>OpenRGB</strong> for PC LEDs or <strong>Home Assistant</strong> for smart ceiling/room lights in <a href="#" onclick="if(window.navigateToPage)window.navigateToPage(\'plugins\');return false;" style="color:var(--neon-text);text-decoration:underline;">Plugins</a>.' +
             '</div>';
+        }
+
+        // Fill OpenRGB profile datalist for the startup-profile + per-app inputs
+        var profileList = container.querySelector("#ambient-profile-list");
+        if (profileList) {
+          var profSet = {};
+          providers.forEach(function (p) {
+            if (p.presets) p.presets.forEach(function (pr) {
+              var id = pr.id || pr.name;
+              if (id && id !== "__theme__") profSet[id] = true;
+            });
+          });
+          profileList.innerHTML = Object.keys(profSet).map(function (k) {
+            return '<option value="' + self._esc(k) + '"></option>';
+          }).join("");
         }
       })
       .catch(function () {});

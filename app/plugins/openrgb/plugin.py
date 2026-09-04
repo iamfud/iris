@@ -36,9 +36,15 @@ class Plugin:
         if not preset_id:
             return
         if preset_id == "__theme__":
-            cfg = self._cfg or {}
-            theme = cfg.get("theme") or {}
-            color = theme.get("neon") or theme.get("accent") or "#48B2E9"
+            # Highest-luminance colour of the active theme (neon cyan vs accent
+            # purple) — the "neon or neon 2 depending on luminance" choice.
+            try:
+                from desktop_theme import get_current_theme_colors
+                color = get_current_theme_colors().get("bright_neon_hex") or "#48B2E9"
+            except Exception:
+                cfg = self._cfg or {}
+                theme = cfg.get("theme") or {}
+                color = theme.get("neon") or theme.get("accent") or "#48B2E9"
             self._connector._set_color(color)
         elif preset_id.startswith("#"):
             self._connector._set_color(preset_id)
