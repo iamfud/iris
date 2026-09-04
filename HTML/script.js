@@ -150,11 +150,14 @@
     // Calculate perceived luminance of Neon 1 and Neon 2 (0.0 = dark, 1.0 = light)
     const lum1 = (0.299 * r1 + 0.587 * g1 + 0.114 * b1) / 255;
     const lum2 = (0.299 * r2 + 0.587 * g2 + 0.114 * b2) / 255;
-    const badgeFg = lum1 > 0.52 ? "#000000" : "#ffffff";
 
     // Low luminance Neon 1 fallback: replace with Neon 2 if Neon 1 is dark (< 0.42) and Neon 2 is brighter
     const neonBright = (lum1 < 0.42 && lum2 > lum1) ? c2 : c1;
     const neonText = (lum1 < 0.42 && lum2 > lum1) ? c2 : c1;
+
+    // Compute contrast foreground color for badges and primary buttons against the active bright neon
+    const lumBright = (neonBright === c2) ? lum2 : lum1;
+    const badgeFg = lumBright > 0.52 ? "#000000" : "#ffffff";
 
     const bgCard = `linear-gradient(135deg, rgba(${Math.round(14 + r1 * 0.05)}, ${Math.round(16 + g1 * 0.05)}, ${Math.round(20 + b1 * 0.05)}, 0.9) 0%, rgba(${Math.round(10 + r1 * 0.03)}, ${Math.round(12 + g1 * 0.03)}, ${Math.round(16 + b1 * 0.03)}, 0.95) 100%)`;
 
@@ -513,7 +516,7 @@
       item.classList.add("active");
       const page = item.getAttribute("data-page");
       if (page) {
-        if (page === "panel") {
+        if (page === "profiles" || page === "panel") {
           if (IS_MOBILE && !IS_APP) {
             portalAutoPanel = true;
             fetchPanel();
@@ -521,7 +524,10 @@
             closeNav();
             return;
           }
-          currentPage = "panel";
+          if (page === "profiles") {
+            profilesViewMode = "list";
+          }
+          currentPage = page;
           selectedPlugin = null;
           portalAutoPanel = false;
           panelViewMode = false;
@@ -753,14 +759,14 @@
 
   function updateNavForDevice() {
     const isMobile = (window.matchMedia && window.matchMedia("(max-width: 768px)").matches) || isIOS || isAndroid;
-    const panelLabel = document.getElementById("panel-nav-label") || document.querySelector('.nav-item[data-page="panel"] .label');
+    const panelLabel = document.getElementById("profiles-nav-label") || document.getElementById("panel-nav-label") || document.querySelector('.nav-item[data-page="profiles"] .label') || document.querySelector('.nav-item[data-page="panel"] .label');
     const visionNav = document.querySelector('.nav-item[data-page="vision"]');
 
     if (isMobile && !IS_APP) {
       if (panelLabel) panelLabel.textContent = "Panel";
       if (visionNav) visionNav.style.display = "none";
     } else {
-      if (panelLabel) panelLabel.textContent = "Panel Editor";
+      if (panelLabel) panelLabel.textContent = "Profiles";
       if (visionNav) visionNav.style.display = "";
     }
   }
@@ -851,6 +857,8 @@
         renderVision();
       } else if (currentPage === "automations") {
         renderAutomations();
+      } else if (currentPage === "profiles") {
+        renderProfilesPage();
       } else if (currentPage === "panel") {
         renderPanel();
       } else {
@@ -1621,10 +1629,7 @@
         <section class="content vision-content">
           <div class="vision-toolbar">
             <span class="vision-toolbar-title">Active Rules</span>
-            <button class="settings-btn settings-btn-primary" id="auto-new-btn">
-              <span class="material-icons-outlined">add</span>
-              New Automation
-            </button>
+            <button class="settings-btn" id="auto-new-btn">+ New Automation</button>
           </div>
 
           ${!automationsDisclaimerAck ? `
@@ -4968,6 +4973,23 @@
     });
   }
 
+  function preloadBoardIcons(items) {
+    if (!items || !items.length) return;
+    const names = [];
+    function walk(list) {
+      (list || []).forEach((s) => {
+        if (!s) return;
+        if (s.icon && !s.icon.includes(".") && !s.icon.includes("/") && !s.icon.includes("\\")) names.push(s.icon);
+        if (s.icon_off && !s.icon_off.includes(".") && !s.icon_off.includes("/") && !s.icon_off.includes("\\")) names.push(s.icon_off);
+        if (s.audio_primary_icon && !s.audio_primary_icon.includes(".")) names.push(s.audio_primary_icon);
+        if (s.audio_alt_icon && !s.audio_alt_icon.includes(".")) names.push(s.audio_alt_icon);
+        if (s.children && s.children.length) walk(s.children);
+      });
+    }
+    walk(items);
+    if (names.length) mdiPreload(names);
+  }
+
   function mdiPreload(names) {
     const missing = (names || []).filter((n) => n && !mdiCache[n] && !mdiFetched[n]);
     if (!missing.length) return;
@@ -5010,12 +5032,21 @@
           hardware_connected: !!data.hardware_connected,
           panel_profiles: data.panel_profiles || [],
         };
+        // Universal dynamic icon preload: scan board, utility, and all profile boards
+        preloadBoardIcons(panelDraft.panel_board);
+        preloadBoardIcons(panelDraft.panel_utility);
+        (panelDraft.panel_profiles || []).forEach((p) => {
+          if (p && p.board) preloadBoardIcons(p.board);
+          if (p && p.utility) preloadBoardIcons(p.utility);
+        });
         panelDirty = false;
         panelEdit = null;
         if (portalAutoPanel || panelViewMode) {
           portalAutoPanel = false;
           openPanelView();
-        } else {
+        } else if (currentPage === "profiles") {
+          renderProfilesPage();
+        } else if (currentPage === "panel") {
           renderPanel();
         }
       })
@@ -5028,7 +5059,9 @@
         if (portalAutoPanel || panelViewMode) {
           portalAutoPanel = false;
           openPanelView();
-        } else {
+        } else if (currentPage === "profiles") {
+          renderProfilesPage();
+        } else if (currentPage === "panel") {
           renderPanel();
         }
       })
@@ -5196,137 +5229,6 @@
     } catch (_) {}
   }
 
-  function renderProfileModal() {
-    const isDef = (panelProfileSel === "__default__");
-    let p = panelProfileCurrent().profile;
-    if (isDef) {
-      const list = (panelDraft && panelDraft.panel_profiles) || [];
-      p = list.find((x) => x.id === "__default__") || { id: "__default__", name: "Default Profile", enabled: true, is_group: true };
-    }
-    if (!p) return "";
-    const on = p.enabled !== false;
-    const isGrp = isDef ? true : (p.is_group === true || (!p.exe && p.exe !== undefined));
-    const pLighting = p.lighting || {};
-
-    let lightingRowsHtml = "";
-    if (lightingProvidersData.length > 0) {
-      lightingProvidersData.forEach((prov) => {
-        const pid = prov.id;
-        const pName = prov.name || pid;
-        const conf = pLighting[pid] || {};
-        const presets = prov.presets || [];
-        const isConnected = prov.connected;
-        const statusBadge = isConnected
-          ? '<span style="color:var(--neon-grn);font-size:11px;font-weight:600;">● Active</span>'
-          : '<span style="color:var(--fg-dim);font-size:11px;">(Offline)</span>';
-
-        if (prov.supports_day_off) {
-          // Provider with Day / Night support (e.g. Home Assistant)
-          const followDay = conf.follow_daylight !== false;
-          const curDayPreset = conf.day_preset || "";
-          const curNightPreset = conf.night_preset || conf.preset || "";
-
-          lightingRowsHtml += '<div style="background:rgba(255,255,255,0.02);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:10px;">' +
-            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">' +
-              '<span class="settings-label" style="margin:0;font-weight:700;">' + esc(pName) + '</span>' +
-              statusBadge +
-            '</div>';
-
-          if (!isDef) {
-            lightingRowsHtml += '<div class="settings-control" style="margin-bottom:6px;">' +
-              '<label class="settings-label" style="font-size:11px;">Active Preset</label>' +
-              '<select class="settings-select prof-light-sel" data-prov="' + esc(pid) + '" data-field="preset">' +
-                '<option value="inherit"' + (!conf.preset || conf.preset === "inherit" ? " selected" : "") + '>Inherit Default Baseline</option>';
-            presets.forEach((pr) => {
-              lightingRowsHtml += '<option value="' + esc(pr.id) + '"' + (conf.preset === pr.id ? " selected" : "") + '>' + esc(pr.name || pr.id) + '</option>';
-            });
-            lightingRowsHtml += '</select></div>';
-          } else {
-            lightingRowsHtml += '<div class="settings-toggle-row" style="margin-bottom:8px;">' +
-              '<span class="settings-toggle-label" style="font-size:12px;">Observe Daylight Cycle</span>' +
-              '<div class="settings-toggle prof-light-day-tog' + (followDay ? ' on' : '') + '" data-prov="' + esc(pid) + '"><div class="settings-toggle-thumb"></div></div>' +
-            '</div>' +
-            '<div class="settings-control" style="margin-bottom:6px;">' +
-              '<label class="settings-label" style="font-size:11px;">Daytime Preset (07:30–19:30)</label>' +
-              '<select class="settings-select prof-light-sel" data-prov="' + esc(pid) + '" data-field="day_preset">' +
-                '<option value="">(None / No Action)</option>';
-            presets.forEach((pr) => {
-              lightingRowsHtml += '<option value="' + esc(pr.id) + '"' + (curDayPreset === pr.id ? " selected" : "") + '>' + esc(pr.name || pr.id) + '</option>';
-            });
-            lightingRowsHtml += '</select></div>' +
-            '<div class="settings-control">' +
-              '<label class="settings-label" style="font-size:11px;">Nighttime Preset (19:30–07:30)</label>' +
-              '<select class="settings-select prof-light-sel" data-prov="' + esc(pid) + '" data-field="night_preset">' +
-                '<option value="">(None / No Action)</option>';
-            presets.forEach((pr) => {
-              lightingRowsHtml += '<option value="' + esc(pr.id) + '"' + (curNightPreset === pr.id ? " selected" : "") + '>' + esc(pr.name || pr.id) + '</option>';
-            });
-            lightingRowsHtml += '</select></div>';
-          }
-          lightingRowsHtml += '</div>';
-        } else {
-          // Standard Provider (e.g. OpenRGB)
-          const curPreset = conf.preset || "";
-          lightingRowsHtml += '<div style="background:rgba(255,255,255,0.02);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:10px;">' +
-            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">' +
-              '<span class="settings-label" style="margin:0;font-weight:700;">' + esc(pName) + '</span>' +
-              statusBadge +
-            '</div>' +
-            '<div class="settings-control">' +
-              '<select class="settings-select prof-light-sel" data-prov="' + esc(pid) + '" data-field="preset">';
-          if (!isDef) {
-            lightingRowsHtml += '<option value="inherit"' + (!curPreset || curPreset === "inherit" ? " selected" : "") + '>Inherit Default Baseline</option>';
-          } else {
-            lightingRowsHtml += '<option value="">(None / No Action)</option>';
-          }
-          presets.forEach((pr) => {
-            lightingRowsHtml += '<option value="' + esc(pr.id) + '"' + (curPreset === pr.id ? " selected" : "") + '>' + esc(pr.name || pr.id) + '</option>';
-          });
-          lightingRowsHtml += '</select></div></div>';
-        }
-      });
-    } else {
-      lightingRowsHtml = '<div style="font-size:12px;color:var(--fg-dim);padding:6px 0;">No lighting plugins active. Install OpenRGB or Home Assistant in Plugins.</div>';
-    }
-
-    return '<div class="panel-modal-backdrop" id="panel-profile-modal">' +
-      '<div class="panel-modal" style="max-width:540px;">' +
-      '<div class="panel-modal-header">' +
-        '<h3>' + (isDef ? 'Default Profile & Lighting' : 'Profile Settings') + '</h3>' +
-        '<span class="panel-modal-subtitle">' + (isDef ? 'Configure base ambient lighting and device defaults' : 'Configure focus switching and profile ambient overrides') + '</span>' +
-      '</div>' +
-      (!isDef ? ('<div class="settings-control"><label class="settings-label">Profile name</label>' +
-      '<input type="text" class="settings-input" id="profile-name" value="' + esc(p.name || "") + '"></div>' +
-      '<div class="settings-toggle-row" id="profile-group-row">' +
-        '<span class="settings-toggle-label">Group Profile (No linked app)</span>' +
-        '<div class="settings-toggle' + (isGrp ? " on" : "") + '" id="profile-group-tog"><div class="settings-toggle-thumb"></div></div>' +
-      '</div>' +
-      '<span class="settings-hint" style="margin-top:-4px; margin-bottom:6px;">Group profiles are activated by a panel button. App profiles switch on focus.</span>' +
-      '<div class="settings-control" id="profile-exe-wrap">' +
-        '<label class="settings-toggle-label" style="display:block; margin-bottom:6px;">App Executable</label>' +
-        '<div class="settings-picker-row">' +
-          '<input type="text" class="settings-input" id="profile-exe" placeholder="e.g. EliteDangerous64.exe" value="' + esc(p.exe || "") + '"' + (isGrp ? " disabled" : "") + '>' +
-          '<button type="button" class="settings-btn" id="profile-pick"' + (isGrp ? " disabled" : "") + '>Pick\u2026</button>' +
-        '</div>' +
-      '</div>' +
-      '<div class="settings-toggle-row' + (isGrp ? " disabled" : "") + '" id="profile-tog-row">' +
-        '<span class="settings-toggle-label">Auto Switch on Focus</span>' +
-        '<div class="settings-toggle' + (on ? " on" : "") + '" id="profile-tog"><div class="settings-toggle-thumb"></div></div>' +
-      '</div>' +
-      '<span class="settings-hint" style="margin-top:-4px; margin-bottom:6px;">Automatically switches to this profile when the application gains focus (with built-in anti-spam cooldown).</span>') : '') +
-      '<div class="settings-control" style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px;">' +
-        '<label class="settings-label" style="display:block;margin-bottom:8px;font-size:12px;font-weight:700;color:var(--neon-text);">Ambient Lighting Presets</label>' +
-        lightingRowsHtml +
-      '</div>' +
-      '<div class="panel-modal-actions">' +
-      (!isDef ? '<button type="button" class="settings-btn settings-btn-danger" id="profile-delete">Delete</button>' : '') +
-      '<div style="flex:1"></div>' +
-      '<button type="button" class="settings-btn" id="profile-cancel">Cancel</button>' +
-      '<button type="button" class="settings-btn settings-btn-primary" id="profile-save">Save Settings</button>' +
-      '</div>' +
-      '</div></div>';
-  }
-
   function customConfirm(message, onYes) {
     const backdrop = document.createElement("div");
     backdrop.className = "panel-modal-backdrop";
@@ -5347,6 +5249,724 @@
     backdrop.addEventListener("click", (ev) => { if (ev.target === backdrop) close(false); });
     backdrop.querySelector("#confirm-cancel").addEventListener("click", () => close(false));
     backdrop.querySelector("#confirm-ok").addEventListener("click", () => close(true));
+  }
+
+  // ── Profiles Mission Control & Focused Editors ─────────────
+
+  let profilesViewMode = "list"; // "list" or "edit"
+
+  function renderProfilesPage() {
+    if (!panelDraft) {
+      main.innerHTML =
+        '<header>' +
+          '<div class="header-left">' +
+            '<button class="hamburger" id="hamburger" aria-label="Menu">' +
+              '<span class="material-icons-outlined">menu</span>' +
+            '</button>' +
+            '<div><h1>Profiles</h1></div>' +
+          '</div>' +
+        '</header>' +
+        '<section class="settings-content"><p class="settings-placeholder">Loading…</p></section>';
+      rebindHamburger();
+      return;
+    }
+
+    if (profilesViewMode === "edit") {
+      if (panelProfileSel === "__default__") {
+        renderDefaultProfileEditor();
+      } else {
+        renderGameProfileEditor();
+      }
+    } else {
+      renderProfilesList();
+    }
+  }
+
+  function renderProfilesList() {
+    const list = (panelDraft && panelDraft.panel_profiles) || [];
+    const defaultBoard = (panelDraft && panelDraft.panel_board) || [];
+    const activeProfId = (panelLive && panelLive.active_profile) || "__default__";
+
+    let cardsHtml = '';
+
+    // 1. Default Profile Card (Global Baseline)
+    const isDefActive = activeProfId === "__default__";
+    cardsHtml +=
+      '<div class="dash-plugin profile-card' + (isDefActive ? ' active-profile' : '') + '" data-prof-id="__default__">' +
+        '<div class="dash-plugin-icon">' +
+          '<span class="material-icons-outlined">home</span>' +
+        '</div>' +
+        '<div class="dash-plugin-info" style="flex:1;">' +
+          '<div style="display:flex;align-items:center;gap:8px;">' +
+            '<span class="dash-plugin-name">Default Profile</span>' +
+            '<span class="profile-card-badge profile-badge-default">' + (isDefActive ? '● Active' : 'Default') + '</span>' +
+          '</div>' +
+          '<span class="dash-plugin-status" style="color:var(--fg-dim);">' +
+            'Global System Baseline · ' + defaultBoard.length + ' buttons' +
+          '</span>' +
+        '</div>' +
+        '<span class="material-icons-outlined plugin-tile-arrow" style="margin-left:auto">chevron_right</span>' +
+      '</div>';
+
+    // 2. Custom Game & App Profiles
+    list.forEach((p) => {
+      if (!p || p.id === "__default__") return;
+      const isActive = activeProfId === p.id;
+      const isApp = !p.is_group && !!p.exe;
+      const bCount = (p.board || []).length;
+      const themeColors = p.theme || {};
+      const accent = themeColors.accent || "#B23AF6";
+      const neon = themeColors.neon || "#48B2E9";
+
+      cardsHtml +=
+        '<div class="dash-plugin profile-card' + (isActive ? ' active-profile' : '') + '" data-prof-id="' + esc(p.id) + '">' +
+          '<div class="dash-plugin-icon">' +
+            '<span class="material-icons-outlined">' + (isApp ? 'sports_esports' : 'folder') + '</span>' +
+          '</div>' +
+          '<div class="dash-plugin-info" style="flex:1;min-width:0;">' +
+            '<div style="display:flex;align-items:center;gap:8px;">' +
+              '<span class="dash-plugin-name" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(p.name || p.id) + '</span>' +
+              '<span class="profile-card-badge ' + (isApp ? 'profile-badge-app' : 'profile-badge-group') + '">' +
+                (isActive ? '● Active' : (isApp ? 'App Bound' : 'Group')) +
+              '</span>' +
+            '</div>' +
+            '<div class="dash-plugin-status" style="display:flex;align-items:center;gap:8px;color:var(--fg-dim);font-size:12px;">' +
+              '<span>' + (isApp ? esc(p.exe) : 'Group Deck') + ' · ' + bCount + ' btn' + (bCount === 1 ? '' : 's') + '</span>' +
+              '<span class="profile-swatch-pair" style="margin-left:2px;" title="Theme: ' + esc(accent) + ' / ' + esc(neon) + '">' +
+                '<span class="profile-swatch-dot" style="background:' + esc(accent) + '"></span>' +
+                '<span class="profile-swatch-dot" style="background:' + esc(neon) + '"></span>' +
+              '</span>' +
+            '</div>' +
+          '</div>' +
+          '<div style="display:flex;align-items:center;gap:4px;margin-left:auto;flex-shrink:0;">' +
+            '<button type="button" class="back-btn prof-card-del" data-prof-id="' + esc(p.id) + '" title="Delete profile" style="margin:0;padding:6px;color:var(--fg-dim);">' +
+              '<span class="material-icons-outlined" style="font-size:18px;">delete_outline</span>' +
+            '</button>' +
+            '<span class="material-icons-outlined plugin-tile-arrow">chevron_right</span>' +
+          '</div>' +
+        '</div>';
+    });
+
+    let html =
+      '<header>' +
+        '<div class="header-left">' +
+          '<button class="hamburger" id="hamburger" aria-label="Menu">' +
+            '<span class="material-icons-outlined">menu</span>' +
+          '</button>' +
+          '<div>' +
+            '<h1>Profiles</h1>' +
+          '</div>' +
+        '</div>' +
+        '<button type="button" class="settings-btn settings-btn-primary" id="prof-add-new">+ New Profile</button>' +
+      '</header>' +
+      '<section class="settings-content profiles-page">' +
+        '<div class="profiles-grid">' +
+          cardsHtml +
+        '</div>' +
+      '</section>';
+
+    main.innerHTML = html;
+    rebindHamburger();
+
+    const addBtn = document.getElementById("prof-add-new");
+    if (addBtn) {
+      addBtn.addEventListener("click", () => {
+        if (!panelDraft.panel_profiles) panelDraft.panel_profiles = [];
+        const newId = uniqueProfileId();
+        const p = {
+          id: newId,
+          name: "New Profile",
+          exe: "",
+          is_group: false,
+          enabled: true,
+          lighting_enabled: true,
+          board: []
+        };
+        panelDraft.panel_profiles.push(p);
+        panelProfileSel = newId;
+        profilesViewMode = "edit";
+        setPanelDirty(true);
+        renderProfilesPage();
+      });
+    }
+
+    document.querySelectorAll(".profile-card").forEach((card) => {
+      card.addEventListener("click", (e) => {
+        if (e.target.closest("button")) return;
+        panelProfileSel = card.getAttribute("data-prof-id");
+        profilesViewMode = "edit";
+        renderProfilesPage();
+      });
+    });
+
+    document.querySelectorAll(".prof-card-del").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const id = btn.getAttribute("data-prof-id");
+        const list = panelDraft.panel_profiles || [];
+        const p = list.find((x) => x.id === id);
+        if (!p) return;
+        customConfirm('Delete Profile "' + (p.name || p.id) + '"? This cannot be undone.', () => {
+          panelDraft.panel_profiles = list.filter((x) => x.id !== id);
+          if (panelProfileSel === id) panelProfileSel = "__default__";
+          setPanelDirty(true);
+          renderProfilesPage();
+        });
+      });
+    });
+  }
+
+  // ── Default Profile Editor (Global Fixtures & Default Board) ──
+
+  function renderDefaultProfileEditor() {
+    const hwOn = !!panelDraft.hardware_connected;
+    const board = (panelDraft && panelDraft.panel_board) || [];
+    const util = (panelDraft && panelDraft.panel_utility) || [];
+
+    let html =
+      '<header>' +
+        '<div class="header-left">' +
+          '<button class="hamburger" id="hamburger" aria-label="Menu">' +
+            '<span class="material-icons-outlined">menu</span>' +
+          '</button>' +
+          '<div>' +
+            '<h1>Default Profile</h1>' +
+            '<p>Global system shell & baseline button deck</p>' +
+          '</div>' +
+        '</div>' +
+        '<button type="button" class="done-btn" id="prof-back-to-list">Back to Profiles</button>' +
+      '</header>' +
+      '<section class="settings-content profiles-page">' +
+        '<div class="profile-editor-container">' +
+          '<div class="profile-editor-header-bar">' +
+            '<span class="profile-back-link" id="prof-back-link"><span class="material-icons-outlined" style="font-size:16px;">arrow_back</span> All Profiles</span>' +
+          '</div>' +
+
+          '<div class="profile-two-col-layout">' +
+            // ── Column 1: Global Shell & Widgets, Sliders ───────
+            '<div class="profile-col">' +
+              // Card 1: Global Shell & Widgets Toggle
+              sectionCard("Global Shell & Widgets", "speed",
+                targetToggleRow("Gauges (CPU · GPU · FPS)", "gauges") +
+                targetToggleRow("Sliders (Audio / Display)", "sliders") +
+                targetToggleRow("Utility Row", "utility") +
+                '<p class="settings-hint" style="margin-top:8px;">Controls which hardware widgets render on your companion display / phone panel across all profiles.</p>') +
+
+              // Card 2: Persistent Sliders Setup
+              sectionCard("Sliders Configuration", "tune",
+                toggleRow("App volume", sliderOn("app_volume"), "panel-tog-vol") +
+                toggleRow("Master volume", sliderOn("master_volume"), "panel-tog-mvol") +
+                toggleRow("App mixer", sliderOn("app_mixer"), "panel-tog-mix") +
+                (hwOn ? toggleRow("Display brightness", sliderOn("brightness"), "panel-tog-bri") : "")) +
+            '</div>' +
+
+            // ── Column 2: Button Deck (Top) & Utility Row ────────
+            '<div class="profile-col">' +
+              // Card 3: Default Button Box Deck (Top of Col 2)
+              sectionCard("Default Button Deck", "apps",
+                '<p class="settings-hint" style="margin-bottom:12px;">Active when no game profile is running.</p>' +
+                renderBoardEditor(board, [])) +
+
+              // Card 4: Persistent 2-Row Utility / Core Dock
+              sectionCard("Persistent Utility Row", "grid_view",
+                '<p class="settings-hint" style="margin-bottom:12px;">Persistent custom actions at the base of the panel.</p>' +
+                renderUtilityEditor(util)) +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+        (panelEdit ? renderActionModal() : '') +
+      '</section>';
+
+    main.innerHTML = html;
+    rebindHamburger();
+    wireDefaultProfileEditor();
+    paintPanelRanges(main);
+  }
+
+  function wireDefaultProfileEditor() {
+    const backBtn = document.getElementById("prof-back-to-list");
+    if (backBtn) {
+      backBtn.addEventListener("click", () => {
+        profilesViewMode = "list";
+        renderProfilesPage();
+      });
+    }
+    const backLink = document.getElementById("prof-back-link");
+    if (backLink) {
+      backLink.addEventListener("click", () => {
+        profilesViewMode = "list";
+        renderProfilesPage();
+      });
+    }
+
+    function bindTog(id, fn) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener("click", () => fn(!el.classList.contains("on")));
+    }
+    document.querySelectorAll(".panel-target-chk").forEach((chk) => {
+      chk.addEventListener("change", () => {
+        const sectionId = chk.getAttribute("data-section");
+        const target = chk.getAttribute("data-target");
+        setLayoutTargetOn(sectionId, target, chk.checked);
+      });
+    });
+
+    bindTog("panel-tog-vol", (on) => setSliderOn("app_volume", on));
+    bindTog("panel-tog-mvol", (on) => setSliderOn("master_volume", on));
+    bindTog("panel-tog-mix", (on) => setSliderOn("app_mixer", on));
+    bindTog("panel-tog-bri", (on) => setSliderOn("brightness", on));
+
+    wireBoardSlots();
+    wireUtilitySlots();
+    wireActionModal();
+  }
+
+  // Helper to match a profile to its underlying plugin adapter
+  function findLinkedPluginForProfile(p) {
+    if (!p || !pluginsConfig) return null;
+    const profExe = (p.exe || "").toLowerCase().replace(".exe", "");
+    const profName = (p.name || p.id || "").toLowerCase();
+    for (const [pluginKey, pluginDef] of Object.entries(pluginsConfig)) {
+      const plgExe = (pluginDef.exe_default || pluginDef.exe_path || "").toLowerCase().replace(".exe", "");
+      const plgName = (pluginDef.display_name || pluginKey).toLowerCase();
+      if ((profExe && plgExe && (profExe.includes(plgExe) || plgExe.includes(profExe))) ||
+          (profName && plgName && (profName.includes(plgName) || plgName.includes(profName)))) {
+        return { key: pluginKey, def: pluginDef };
+      }
+    }
+    return null;
+  }
+
+  function renderGameProfileEditor() {
+    const current = panelProfileCurrent();
+    const p = current.profile;
+    if (!p) {
+      profilesViewMode = "list";
+      renderProfilesPage();
+      return;
+    }
+
+    const board = p.board || [];
+    const isGrp = !!p.is_group;
+    const lightingOn = (p.lighting_enabled !== false);
+    const themeColors = p.theme || {};
+    const accent = themeColors.accent || "#B23AF6";
+    const neon = themeColors.neon || "#48B2E9";
+
+    const linkedPlg = findLinkedPluginForProfile(p);
+    const plgKey = linkedPlg ? linkedPlg.key : null;
+    const plgDef = linkedPlg ? linkedPlg.def : null;
+
+    // Build plugin-specific settings and actions if available
+    let pluginSettingsHtml = "";
+    if (plgDef && settingsRenderer) {
+      if (plgDef.actions && plgDef.actions.length) {
+        let actBtns = '<div class="plugin-actions-row" style="margin-bottom:12px;">';
+        plgDef.actions.forEach((a) => {
+          actBtns += '<button type="button" class="settings-btn plugin-action-btn prof-plg-action-btn" data-plugin="' + esc(plgKey) + '" data-action-id="' + esc(a.id) + '">';
+          if (a.icon) actBtns += '<span class="material-icons-outlined" style="font-size:16px;">' + esc(a.icon) + '</span> ';
+          actBtns += esc(a.label || a.id) + '</button>';
+        });
+        actBtns += '</div>';
+        pluginSettingsHtml += actBtns;
+      }
+      if (plgDef.settings && plgDef.settings.length) {
+        plgDef.settings.forEach((sGroup) => {
+          (sGroup.controls || []).forEach((ctrl) => {
+            const curVal = (plgDef.config && plgDef.config[ctrl.key] !== undefined) ? plgDef.config[ctrl.key] : (ctrl.default || "");
+            const vals = {};
+            vals[ctrl.key] = curVal;
+            pluginSettingsHtml += settingsRenderer._renderControl(ctrl, vals, pluginState[plgKey]);
+          });
+        });
+      }
+    }
+
+    // Build bottom telemetry & diagnostics tables if available
+    let telemetryHtml = "";
+    if (plgKey && settingsRenderer && plgDef && plgDef.capabilities && plgDef.capabilities.live_data) {
+      const liveCards = settingsRenderer._getPluginLiveDataCardList(plgKey, plgDef, pluginSnapshots[plgKey], pluginState[plgKey]);
+      if (liveCards && liveCards.length) {
+        telemetryHtml =
+          '<div class="profile-telemetry-section">' +
+            '<div class="settings-section-title" style="margin-bottom:14px;display:flex;align-items:center;gap:8px;">' +
+              '<span class="material-icons-outlined" style="font-size:18px;">analytics</span>' +
+              '<span>Live Entities & Telemetry (' + esc(plgDef.display_name || plgKey) + ')</span>' +
+            '</div>' +
+            '<div class="plugin-masonry-container">' +
+              liveCards.map((c) => c.html).join("") +
+            '</div>' +
+          '</div>';
+      }
+    }
+
+    let html =
+      '<header>' +
+        '<div class="header-left">' +
+          '<button class="hamburger" id="hamburger" aria-label="Menu">' +
+            '<span class="material-icons-outlined">menu</span>' +
+          '</button>' +
+          '<div>' +
+            '<h1>' + esc(p.name || p.id) + '</h1>' +
+            '<p>Configure trigger, visual theme, lighting, and buttons' + (plgDef ? ' · ' + esc(plgDef.display_name) + ' linked' : '') + '</p>' +
+          '</div>' +
+        '</div>' +
+        '<button type="button" class="done-btn" id="prof-back-to-list">Back to Profiles</button>' +
+      '</header>' +
+      '<section class="settings-content profiles-page">' +
+        '<div class="profile-editor-container">' +
+          '<div class="profile-editor-header-bar">' +
+            '<span class="profile-back-link" id="prof-back-link"><span class="material-icons-outlined" style="font-size:16px;">arrow_back</span> All Profiles</span>' +
+          '</div>' +
+
+          '<div class="profile-two-col-layout">' +
+            // ── Left Column: Config & Settings ─────────────────
+            '<div class="profile-col">' +
+              // Card 1: Identity & Process Trigger
+              sectionCard("Identity & Trigger", "sports_esports",
+                '<div class="settings-control">' +
+                  '<label class="settings-label">Profile Name</label>' +
+                  '<input type="text" class="settings-input" id="gprof-name" value="' + esc(p.name || "") + '">' +
+                '</div>' +
+                '<div class="settings-toggle-row">' +
+                  '<span class="settings-toggle-label">Group Profile (No linked app)</span>' +
+                  '<div class="settings-toggle' + (isGrp ? ' on' : '') + '" id="gprof-group-tog"><div class="settings-toggle-thumb"></div></div>' +
+                '</div>' +
+                '<div class="settings-control" id="gprof-exe-wrap" style="' + (isGrp ? 'display:none;' : '') + '">' +
+                  '<label class="settings-label">Game Executable (.exe)</label>' +
+                  '<div class="settings-picker-wrap">' +
+                    '<input type="text" class="settings-input" id="gprof-exe" placeholder="e.g. EliteDangerous64.exe" value="' + esc(p.exe || "") + '">' +
+                    '<button type="button" class="settings-picker-btn" id="gprof-pick"><span class="material-icons-outlined">folder_open</span></button>' +
+                  '</div>' +
+                  '<span class="settings-hint">Iris automatically switches to this profile when this game launches (governor model).</span>' +
+                '</div>') +
+
+              // Card 2: Visual Theme & Lighting
+              sectionCard("Visual Theme & Lighting", "palette",
+                '<div class="settings-control">' +
+                  '<label class="settings-label">Theme Colors (Accent & Neon)</label>' +
+                  '<div style="display:flex;gap:16px;align-items:center;margin-top:6px;">' +
+                    '<div style="display:flex;align-items:center;gap:8px;">' +
+                      '<input type="color" id="gprof-accent" value="' + esc(accent) + '" style="cursor:pointer;width:32px;height:32px;border:none;border-radius:6px;background:none;">' +
+                      '<span class="settings-hint">Accent</span>' +
+                    '</div>' +
+                    '<div style="display:flex;align-items:center;gap:8px;">' +
+                      '<input type="color" id="gprof-neon" value="' + esc(neon) + '" style="cursor:pointer;width:32px;height:32px;border:none;border-radius:6px;background:none;">' +
+                      '<span class="settings-hint">Neon</span>' +
+                    '</div>' +
+                  '</div>' +
+                '</div>' +
+                '<div class="settings-toggle-row" style="margin-top:16px;border-top:1px solid rgba(255,255,255,0.05);padding-top:14px;">' +
+                  '<div>' +
+                    '<span class="settings-toggle-label">Enable Lighting Alerts</span>' +
+                    '<p class="settings-hint" style="margin:2px 0 0 0;">Forward button warnings and alert colors directly to lighting suppliers while this profile is active.</p>' +
+                  '</div>' +
+                  '<div class="settings-toggle' + (lightingOn ? ' on' : '') + '" id="gprof-lighting-tog"><div class="settings-toggle-thumb"></div></div>' +
+                '</div>') +
+
+              // Card 3: Plugin Specific Settings (if linked)
+              (pluginSettingsHtml ? sectionCard((plgDef.display_name || "Game") + " Settings", "tune", pluginSettingsHtml) : '') +
+            '</div>' +
+
+            // ── Right Column: Button Box Deck (Elite Dangerous presentation) ──
+            '<div class="profile-col">' +
+              sectionCard("Button Deck", "apps",
+                '<p class="settings-hint" style="margin-bottom:14px;">Buttons displayed on companion screen when this profile is active. Click to configure or drag to reorder.</p>' +
+                renderBoardEditor(board, [])) +
+            '</div>' +
+          '</div>' +
+
+          // ── Bottom: Live Telemetry & Entities Table ──
+          telemetryHtml +
+        '</div>' +
+        (panelEdit ? renderActionModal() : '') +
+      '</section>';
+
+    main.innerHTML = html;
+    rebindHamburger();
+    wireGameProfileEditor();
+  }
+
+  function wireGameProfileEditor() {
+    const current = panelProfileCurrent();
+    const p = current.profile;
+    if (!p) return;
+
+    const backBtn = document.getElementById("prof-back-to-list");
+    if (backBtn) {
+      backBtn.addEventListener("click", () => {
+        profilesViewMode = "list";
+        renderProfilesPage();
+      });
+    }
+    const backLink = document.getElementById("prof-back-link");
+    if (backLink) {
+      backLink.addEventListener("click", () => {
+        profilesViewMode = "list";
+        renderProfilesPage();
+      });
+    }
+
+    const nameInput = document.getElementById("gprof-name");
+    if (nameInput) {
+      nameInput.addEventListener("input", () => {
+        p.name = nameInput.value.trim();
+        setPanelDirty(true);
+      });
+    }
+
+    const grpTog = document.getElementById("gprof-group-tog");
+    if (grpTog) {
+      grpTog.addEventListener("click", () => {
+        const on = grpTog.classList.toggle("on");
+        p.is_group = on;
+        const exeWrap = document.getElementById("gprof-exe-wrap");
+        if (exeWrap) exeWrap.style.display = on ? "none" : "";
+        setPanelDirty(true);
+      });
+    }
+
+    const exeInput = document.getElementById("gprof-exe");
+    if (exeInput) {
+      exeInput.addEventListener("input", () => {
+        p.exe = exeInput.value.trim();
+        setPanelDirty(true);
+      });
+    }
+
+    const pickBtn = document.getElementById("gprof-pick");
+    if (pickBtn) {
+      pickBtn.addEventListener("click", () => {
+        browseExe((path) => {
+          if (!path) return;
+          const fileName = path.split(/[\\/]/).pop();
+          p.exe = fileName;
+          if (exeInput) exeInput.value = fileName;
+          setPanelDirty(true);
+        });
+      });
+    }
+
+    const accentInput = document.getElementById("gprof-accent");
+    const neonInput = document.getElementById("gprof-neon");
+    if (accentInput && neonInput) {
+      const updateTheme = () => {
+        if (!p.theme) p.theme = {};
+        p.theme.accent = accentInput.value;
+        p.theme.neon = neonInput.value;
+        setPanelDirty(true);
+      };
+      accentInput.addEventListener("input", updateTheme);
+      neonInput.addEventListener("input", updateTheme);
+    }
+
+    const lightTog = document.getElementById("gprof-lighting-tog");
+    if (lightTog) {
+      lightTog.addEventListener("click", () => {
+        const on = lightTog.classList.toggle("on");
+        p.lighting_enabled = on;
+        setPanelDirty(true);
+      });
+    }
+
+    // Wire linked plugin action buttons if present
+    document.querySelectorAll(".prof-plg-action-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const plg = btn.dataset.plugin;
+        const actId = btn.dataset.actionId;
+        if (!plg || !actId) return;
+        btn.disabled = true;
+        apiFetch(`${API_BASE}/api/plugins/${encodeURIComponent(plg)}/action`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action_id: actId })
+        }).then((r) => r.json()).then((res) => {
+          btn.disabled = false;
+        }).catch(() => { btn.disabled = false; });
+      });
+    });
+
+    wireBoardSlots();
+    wireActionModal();
+  }
+
+  // ── Helper: Wire Board Slots & Utility Slots for Editors ─────
+
+  function wireBoardSlots() {
+    let slotDragSource = null;
+
+    document.querySelectorAll(".panel-slot-list").forEach((listEl) => {
+      const pathStr = listEl.getAttribute("data-path") || "";
+      const path = pathStr ? pathStr.split(",").map((x) => parseInt(x, 10)) : [];
+
+      const addBtn = listEl.querySelector(".panel-add-btn");
+      if (addBtn) {
+        addBtn.addEventListener("click", () => {
+          panelEdit = { scope: "board", index: -1, path: path };
+          renderProfilesPage();
+        });
+      }
+
+      const tiles = listEl.querySelectorAll(".panel-slot-tile");
+      tiles.forEach((tile) => {
+        const idx = parseInt(tile.getAttribute("data-i") || "-1", 10);
+        let isDragging = false;
+
+        tile.addEventListener("click", (e) => {
+          if (isDragging) { isDragging = false; return; }
+          if (e.target.closest(".panel-slot-drag-handle")) return;
+          panelEdit = { scope: "board", index: idx, path: path };
+          renderProfilesPage();
+        });
+
+        tile.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            panelEdit = { scope: "board", index: idx, path: path };
+            renderProfilesPage();
+          }
+        });
+
+        tile.addEventListener("dragstart", (e) => {
+          isDragging = true;
+          slotDragSource = { path: pathStr, index: idx };
+          tile.classList.add("is-dragging");
+          if (e.dataTransfer) {
+            e.dataTransfer.effectAllowed = "move";
+            e.dataTransfer.setData("text/plain", String(idx));
+          }
+        });
+
+        tile.addEventListener("dragover", (e) => {
+          if (!slotDragSource || slotDragSource.path !== pathStr) return;
+          e.preventDefault();
+          if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+          const rect = tile.getBoundingClientRect();
+          const isAfter = (e.clientX >= rect.left + rect.width / 2);
+          if (isAfter) {
+            tile.classList.add("drop-after");
+            tile.classList.remove("drop-before");
+          } else {
+            tile.classList.add("drop-before");
+            tile.classList.remove("drop-after");
+          }
+        });
+
+        tile.addEventListener("dragleave", () => {
+          tile.classList.remove("drop-before", "drop-after");
+        });
+
+        tile.addEventListener("drop", (e) => {
+          e.preventDefault();
+          tile.classList.remove("drop-before", "drop-after");
+          if (!slotDragSource || slotDragSource.path !== pathStr) return;
+          const fromIdx = slotDragSource.index;
+          if (fromIdx === idx) return;
+
+          const rect = tile.getBoundingClientRect();
+          const isAfter = (e.clientX >= rect.left + rect.width / 2);
+          const list = boardAtPath(path);
+
+          const item = list.splice(fromIdx, 1)[0];
+          let insertAt = idx;
+          if (fromIdx < idx) {
+            insertAt = isAfter ? idx : idx - 1;
+          } else {
+            insertAt = isAfter ? idx + 1 : idx;
+          }
+          insertAt = Math.max(0, Math.min(insertAt, list.length));
+          list.splice(insertAt, 0, item);
+          setPanelDirty(true);
+          renderProfilesPage();
+        });
+
+        tile.addEventListener("dragend", () => {
+          isDragging = false;
+          slotDragSource = null;
+          tile.classList.remove("is-dragging");
+          document.querySelectorAll(".panel-slot-tile").forEach((t) => {
+            t.classList.remove("is-dragging", "drop-before", "drop-after");
+          });
+        });
+
+        // Touch drag-and-drop support for mobile touch screens (exact implementation)
+        const handle = tile.querySelector(".panel-slot-drag-handle");
+        if (handle) {
+          let touchActive = false;
+          let currentTargetTile = null;
+          let lastIsAfter = false;
+
+          handle.addEventListener("touchstart", () => {
+            touchActive = true;
+            slotDragSource = { path: pathStr, index: idx };
+            tile.classList.add("is-dragging");
+          }, { passive: true });
+
+          handle.addEventListener("touchmove", (e) => {
+            if (!touchActive || !slotDragSource) return;
+            const touch = e.touches[0];
+            if (!touch) return;
+            const elUnder = document.elementFromPoint(touch.clientX, touch.clientY);
+            const targetTile = elUnder ? elUnder.closest(".panel-slot-tile") : null;
+
+            document.querySelectorAll(".panel-slot-tile").forEach((t) => {
+              if (t !== tile) t.classList.remove("drop-before", "drop-after");
+            });
+
+            if (targetTile && targetTile !== tile && targetTile.getAttribute("data-path") === pathStr) {
+              currentTargetTile = targetTile;
+              const rect = targetTile.getBoundingClientRect();
+              lastIsAfter = (touch.clientX >= rect.left + rect.width / 2);
+              if (lastIsAfter) targetTile.classList.add("drop-after");
+              else targetTile.classList.add("drop-before");
+            } else {
+              currentTargetTile = null;
+            }
+          }, { passive: true });
+
+          const endTouch = () => {
+            if (!touchActive) return;
+            touchActive = false;
+            tile.classList.remove("is-dragging");
+            if (currentTargetTile && slotDragSource && slotDragSource.path === pathStr) {
+              const fromIdx = slotDragSource.index;
+              const toIdx = parseInt(currentTargetTile.getAttribute("data-i") || "-1", 10);
+              if (fromIdx !== toIdx && toIdx >= 0) {
+                const list = boardAtPath(path);
+                const item = list.splice(fromIdx, 1)[0];
+                let insertAt = toIdx;
+                if (fromIdx < toIdx) {
+                  insertAt = lastIsAfter ? toIdx : toIdx - 1;
+                } else {
+                  insertAt = lastIsAfter ? toIdx + 1 : toIdx;
+                }
+                insertAt = Math.max(0, Math.min(insertAt, list.length));
+                list.splice(insertAt, 0, item);
+                setPanelDirty(true);
+                renderProfilesPage();
+              }
+            }
+            slotDragSource = null;
+            document.querySelectorAll(".panel-slot-tile").forEach((t) => {
+              t.classList.remove("is-dragging", "drop-before", "drop-after");
+            });
+          };
+
+          handle.addEventListener("touchend", endTouch);
+          handle.addEventListener("touchcancel", endTouch);
+        }
+      });
+    });
+  }
+
+  function wireUtilitySlots() {
+    document.querySelectorAll(".panel-util-tile").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        panelEdit = { scope: "utility", index: parseInt(btn.getAttribute("data-i"), 10), path: [] };
+        renderProfilesPage();
+      });
+    });
   }
 
   let panelPreviewPage = 0;
@@ -5509,6 +6129,8 @@
     const prof = panelProfileCurrent();
     const curBoard = board || (prof && prof.board) || [];
     const curUtil = util || (cfg && cfg.panel_utility) || (panelDraft && panelDraft.panel_utility) || [];
+    preloadBoardIcons(curBoard);
+    preloadBoardIcons(curUtil);
 
     const gaugesHtml = gOn
       ? '<div class="prev-gauges">' +
@@ -5578,6 +6200,7 @@
   }
 
   function renderBoardEditor(list, path) {
+    preloadBoardIcons(list);
     const tokQs = sessionTokenQuery();
     let h = '<div class="panel-slot-list" data-path="' + path.join(",") + '">';
     const PAGE = Math.max(4, (typeof getPanelLayoutSpec === "function" && getPanelLayoutSpec().pageSize) || 12);
@@ -5614,15 +6237,27 @@
         } else if (slotIcon) {
           thumb = '<span class="md" data-md="' + esc(slotIcon) + '">' + esc(mdiChar(slotIcon)) + '</span>';
         }
-        h += '<div class="panel-slot-tile" draggable="true" data-act="edit" data-i="' + idx + '" data-path="' + path.join(",") + '" role="button" tabindex="0">' +
-          '<div class="panel-slot-top">' +
-            '<div class="panel-slot-drag-handle" title="Drag to reorder"><span class="material-icons-outlined">drag_indicator</span></div>' +
-            '<div class="panel-slot-thumb">' + thumb + '</div>' +
-          '</div>' +
-          '<div class="panel-slot-info">' +
-            '<span class="panel-slot-name">' + esc(slotName || "(unnamed)") + '</span>' +
-            '<span class="panel-slot-type">' + esc(actionLabel(slot.type)) + '</span>' +
-          '</div>' +
+        let stateBadge = slot.type ? actionLabel(slot.type) : "";
+        if (slot.labels && slot.labels.on) stateBadge = slot.labels.on;
+        let tileStyle = "";
+        if (slot.color) {
+          if (slot.color.startsWith("#")) {
+            tileStyle = ' style="background: radial-gradient(100% 100% at 50% 50%, rgba(255,255,255,.08) 0%, rgba(0,0,0,.2) 100%), ' + esc(slot.color) + '; border-color: ' + esc(slot.color) + ';"';
+            if (isLightColor(slot.color) && slotIcon && !thumb.includes("panel-slot-thumb-img") && !thumb.includes("panel-slot-thumb-brand")) {
+              thumb = '<span class="md" data-md="' + esc(slotIcon) + '" style="color:#0a0a0a;">' + esc(mdiChar(slotIcon)) + '</span>';
+            }
+          } else if (slot.color === "RAINBOW") {
+            tileStyle = ' style="background: linear-gradient(135deg, #ff0000, #ff7f00, #ffff00, #00ff00, #0000ff, #8b00ff); border-color: rgba(255,255,255,0.4);"';
+            if (slotIcon && !thumb.includes("panel-slot-thumb-img") && !thumb.includes("panel-slot-thumb-brand")) {
+              thumb = '<span class="md" data-md="' + esc(slotIcon) + '" style="color:#0a0a0a;">' + esc(mdiChar(slotIcon)) + '</span>';
+            }
+          }
+        }
+        h += '<div class="panel-slot-tile elite-style" draggable="true" data-act="edit" data-i="' + idx + '" data-path="' + path.join(",") + '" role="button" tabindex="0"' + tileStyle + '>' +
+          '<div class="panel-slot-drag-handle" title="Drag to reorder"><span class="material-icons-outlined" style="font-size:14px;">drag_indicator</span></div>' +
+          (stateBadge ? '<span class="panel-slot-badge">' + esc(stateBadge) + '</span>' : '') +
+          '<div class="panel-slot-thumb">' + thumb + '</div>' +
+          '<span class="panel-slot-name-bar">' + esc(slotName || "(unnamed)") + '</span>' +
           '</div>';
         if (slot.type === "GROUP" && slot.children && slot.children.length) {
           h += '<div class="panel-slot-children">' + renderBoardEditor(slot.children, path.concat([idx])) + '</div>';
@@ -7411,6 +8046,8 @@
       ? ((panelNav[panelNav.length - 1].children && panelNav[panelNav.length - 1].children.length) ? panelNav[panelNav.length - 1].children : currentBoard())
       : currentBoard();
     const util = cfg.panel_utility || [];
+    preloadBoardIcons(board);
+    preloadBoardIcons(util);
     const gauges = data.gauges || {};
     const volume = data.volume || {};
 
@@ -9696,18 +10333,25 @@
       });
     }
 
-    document.getElementById("pe-cancel").addEventListener("click", () => {
+    const finishModalEdit = () => {
       panelEdit = null;
-      renderPanel();
+      if (currentPage === "profiles") {
+        renderProfilesPage();
+      } else {
+        renderPanel();
+      }
+    };
+
+    document.getElementById("pe-cancel").addEventListener("click", () => {
+      finishModalEdit();
     });
     const moveSlot = (delta) => {
       const list = boardAtPath(panelEdit.path || []);
       const j = panelEdit.index + delta;
       if (j < 0 || j >= list.length) return;
       const t = list[panelEdit.index]; list[panelEdit.index] = list[j]; list[j] = t;
-      panelEdit = null;
       setPanelDirty(true);
-      renderPanel();
+      finishModalEdit();
     };
     const upBtn = document.getElementById("pe-up");
     if (upBtn) upBtn.addEventListener("click", () => moveSlot(-1));
@@ -9717,9 +10361,8 @@
     if (delBtn) delBtn.addEventListener("click", () => {
       const list = boardAtPath(panelEdit.path || []);
       list.splice(panelEdit.index, 1);
-      panelEdit = null;
       setPanelDirty(true);
-      renderPanel();
+      finishModalEdit();
     });
     document.getElementById("pe-save").addEventListener("click", () => {
       const t = document.getElementById("pe-type").value;
@@ -9849,9 +10492,8 @@
           list[panelEdit.index] = slot;
         }
       }
-      panelEdit = null;
       setPanelDirty(true);
-      renderPanel();
+      finishModalEdit();
     });
   }
 
@@ -10252,8 +10894,25 @@
 
     main.querySelectorAll(".dash-plugin").forEach((el) => {
       el.addEventListener("click", () => {
-        selectedPlugin = el.dataset.name;
-        currentPage = "plugins";
+        const plgName = el.dataset.name;
+        // Check if there is a profile matching this plugin
+        const profilesList = (panelDraft && panelDraft.panel_profiles) || [];
+        const match = profilesList.find((prof) => {
+          const profExe = (prof.exe || "").toLowerCase().replace(".exe", "");
+          const profName = (prof.name || prof.id || "").toLowerCase();
+          const targetKey = plgName.toLowerCase();
+          return profExe.includes(targetKey) || targetKey.includes(profExe) ||
+                 profName.includes(targetKey) || targetKey.includes(profName);
+        });
+
+        if (match) {
+          panelProfileSel = match.id;
+          profilesViewMode = "edit";
+          currentPage = "profiles";
+        } else {
+          selectedPlugin = plgName;
+          currentPage = "plugins";
+        }
         fetchConfig();
         renderPage();
       });
