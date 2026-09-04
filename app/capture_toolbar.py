@@ -194,19 +194,21 @@ class CaptureToolbar:
         # Fetch live theme colors from central theme engine
         t_colors = get_current_theme_colors()
         bg_surface = t_colors["theme_bg_hex"]
-        neon_rgb = t_colors["neon_rgb"]
+        icon_rgb = t_colors["bright_neon_rgb"]
 
         # Master floating container matching the solid window surface
         self._bar_frame = tk.Frame(self._win, bg=bg_surface)
         self._bar_frame.pack(fill="both", expand=True, padx=0, pady=0)
 
-        # MDI Icon Renderers (Vector Glyphs rendered with live theme Neon RGB)
-        self._icon_shot = mdi_icons.render_tk("crop-free", 18, neon_rgb)
-        self._icon_ocr = mdi_icons.render_tk("text-box-search-outline", 18, neon_rgb)
-        self._icon_note = mdi_icons.render_tk("note-edit-outline", 18, neon_rgb)
-        self._icon_lib = mdi_icons.render_tk("folder-image", 18, neon_rgb)
-        self._icon_eyedrop = mdi_icons.render_tk("eyedropper-variant", 18, neon_rgb)
-        self._icon_close = mdi_icons.render_tk("close", 14, (150, 165, 180))
+        # MDI Icon Renderers (Vector Glyphs rendered with the neon-luminance
+        # detected colour — highest-luminance of neon vs accent, per
+        # get_current_theme_colors' bright_neon_rgb)
+        self._icon_shot = mdi_icons.render_tk("crop-free", 18, icon_rgb)
+        self._icon_ocr = mdi_icons.render_tk("text-box-search-outline", 18, icon_rgb)
+        self._icon_note = mdi_icons.render_tk("note-edit-outline", 18, icon_rgb)
+        self._icon_lib = mdi_icons.render_tk("folder-image", 18, icon_rgb)
+        self._icon_eyedrop = mdi_icons.render_tk("eyedropper-variant", 18, icon_rgb)
+        self._icon_close = mdi_icons.render_tk("close", 14, icon_rgb)
 
         def _make_square_btn(parent, icon, command, tip_text):
             """Create an exact 32x32 pixel rounded square icon button."""
