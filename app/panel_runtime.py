@@ -183,6 +183,7 @@ def live_payload(cfg, client_cv=None):
     cfg_data = {
         "panel_board": board,
         "panel_utility": cfg.get("panel_utility") or [],
+        "panel_core": cfg.get("panel_core") or [],
         "panel_sliders": cfg.get("panel_sliders") or [],
         "panel_layout": cfg.get("panel_layout") or [
             {"id": "gauges", "enabled": True, "local": True, "remote": True},
@@ -239,6 +240,74 @@ def execute_slot(slot):
         if btype == "GROUP":
             _open_path(slot.get("shortcut_path"), slot.get("shortcut_args"))
             return {"ok": True, "nav": True}
+        if btype == "CORE":
+            core_act = str(slot.get("core_action") or "").strip()
+            if core_act in ("screenshot", "screenshot_full"):
+                if app is not None and getattr(app, "_main_win", None):
+                    slot_copy = dict(slot)
+                    app._root.after(0, lambda: app._main_win.start_screenshot(slot_copy, mode="fullscreen"))
+                return {"ok": True}
+            if core_act == "screenshot_zone":
+                if app is not None and getattr(app, "_main_win", None):
+                    slot_copy = dict(slot)
+                    app._root.after(0, lambda: app._main_win.start_screenshot(slot_copy, mode="zone"))
+                return {"ok": True}
+            if core_act == "note":
+                if app is not None and getattr(app, "_main_win", None):
+                    app._root.after(0, app._main_win.start_quick_note)
+                return {"ok": True}
+            if core_act == "colour_picker":
+                if app is not None and getattr(app, "_main_win", None):
+                    app._root.after(0, app._main_win.start_colour_picker)
+                return {"ok": True}
+            if core_act == "borderless_toggle":
+                try:
+                    from win_platform import toggle_borderless_window
+                    return {"ok": True, "borderless": toggle_borderless_window()}
+                except Exception as ex:
+                    log.warning("[panel_runtime] borderless toggle (core) failed: %s", ex)
+                    return {"ok": False}
+            if core_act == "stopwatch":
+                if app is not None and hasattr(app, "_toggle_stopwatch"):
+                    app._root.after(0, app._toggle_stopwatch)
+                return {"ok": True}
+            if core_act == "countdown":
+                if app is not None and hasattr(app, "_toggle_countdown"):
+                    app._root.after(0, app._toggle_countdown)
+                return {"ok": True}
+            if core_act == "toolbar":
+                if app is not None and hasattr(app, "_toggle_capture_toolbar"):
+                    app._root.after(0, app._toggle_capture_toolbar)
+                return {"ok": True}
+            if core_act in ("lighting", "lighting_sync"):
+                if app and hasattr(app, "_toggle_lighting_sync"):
+                    val = app._toggle_lighting_sync()
+                    return {"ok": True, "active": val}
+                return {"ok": True}
+            if core_act == "settings":
+                if app and hasattr(app, "_open_settings"):
+                    app._open_settings()
+                return {"ok": True}
+            if core_act in ("display",):
+                if app:
+                    val = not bool(app.cfg.get("pc_stats_manual", False))
+                    try:
+                        app._toggle_pc_stats(val)
+                    except Exception:
+                        pass
+                return {"ok": True}
+            if core_act in ("overlay",):
+                if app and hasattr(app, "_toggle_overlay"):
+                    if hasattr(app, "_root"):
+                        app._root.after(0, app._toggle_overlay)
+                    else:
+                        app._toggle_overlay()
+                return {"ok": True}
+            if core_act in ("mic", "mic_mute"):
+                from win_platform import toggle_mic_mute
+                st = toggle_mic_mute()
+                return {"ok": True, "state": st}
+            # Unknown core_action — fall through
         if btype == "SHORTCUT":
             _open_path(slot.get("shortcut_path"), slot.get("shortcut_args"))
             return {"ok": True}

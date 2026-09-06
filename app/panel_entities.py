@@ -134,21 +134,7 @@ def get_core_entities() -> List[Dict[str, Any]]:
             "color": "#48B2E9",
             "writable": True,
             "default_action": "screenshot",
-            "description": "Capture instant fullscreen screenshot (or zone crop)",
-        },
-        {
-            "id": "system.screenshot_full",
-            "domain": "System",
-            "plugin": "system",
-            "button_id": "screenshot_full",
-            "state_key": "screenshot_full",
-            "name": "Fullscreen Capture",
-            "type": "action",
-            "icon": "fullscreen",
-            "color": "#48B2E9",
-            "writable": True,
-            "default_action": "screenshot_full",
-            "description": "Silently capture active monitor/game without minimizing",
+            "description": "Capture an instant fullscreen screenshot",
         },
         {
             "id": "system.screenshot_zone",
@@ -327,6 +313,11 @@ def get_plugin_entities() -> List[Dict[str, Any]]:
                     "default_hotkey": btn.get("default_hotkey") or "",
                     "state_key": btn.get("state_key") or bid,
                     "description": btn.get("description") or "",
+                    "display_mode": btn.get("display_mode", ""),
+                    "max_key": btn.get("max_key", ""),
+                    "unit": btn.get("unit", ""),
+                    "min": btn.get("min", 0),
+                    "max": btn.get("max", None),
                 })
 
             # 2. Momentary Actions defined in manifest

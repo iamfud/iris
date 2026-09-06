@@ -55,19 +55,31 @@ _STATUS_FLAGS = {
     0x80000000: "srv_high_beam",
 }
 
+_STATUS_FLAGS2 = {
+    0x00000001: "on_foot",
+    0x00000002: "taxi",
+    0x00000004: "multicrew",
+    0x00000008: "on_foot_in_station",
+    0x00000010: "on_foot_on_planet",
+}
+
 
 def _parse_status_flags(data):
     if isinstance(data, int):
         flags_int = data
+        flags2_int = 0
         data_dict = {}
     elif isinstance(data, dict):
         flags_int = data.get("Flags", 0)
+        flags2_int = data.get("Flags2", 0)
         data_dict = data
     else:
         flags_int = 0
+        flags2_int = 0
         data_dict = {}
 
     res = {name: bool(flags_int & bit) for bit, name in _STATUS_FLAGS.items()}
+    res.update({name: bool(flags2_int & bit) for bit, name in _STATUS_FLAGS2.items()})
 
     # Extract live numeric telemetry values if present in Status.json
     if "ShieldPercent" in data_dict:
@@ -94,6 +106,56 @@ def _parse_status_flags(data):
         res["gui_focus"] = int(data_dict["GuiFocus"])
     if "Pips" in data_dict and isinstance(data_dict["Pips"], list):
         res["pips"] = data_dict["Pips"]
+    if "Heat" in data_dict:
+        try:
+            res["heat_level"] = round(float(data_dict["Heat"]) / 100.0, 2)
+        except Exception:
+            pass
+    if "Latitude" in data_dict:
+        try:
+            res["latitude"] = float(data_dict["Latitude"])
+        except Exception:
+            pass
+    if "Longitude" in data_dict:
+        try:
+            res["longitude"] = float(data_dict["Longitude"])
+        except Exception:
+            pass
+    if "Heading" in data_dict:
+        try:
+            res["heading"] = int(data_dict["Heading"])
+        except Exception:
+            pass
+    if "Altitude" in data_dict:
+        try:
+            res["altitude"] = round(float(data_dict["Altitude"]), 1)
+        except Exception:
+            pass
+    if "Oxygen" in data_dict:
+        try:
+            res["oxygen"] = round(float(data_dict["Oxygen"]) / 100.0, 2)
+        except Exception:
+            pass
+    if "Health" in data_dict:
+        try:
+            res["health"] = round(float(data_dict["Health"]) / 100.0, 2)
+        except Exception:
+            pass
+    if "Temperature" in data_dict:
+        try:
+            res["temperature"] = round(float(data_dict["Temperature"]), 1)
+        except Exception:
+            pass
+    if "Backpack" in data_dict and isinstance(data_dict["Backpack"], dict):
+        try:
+            res["backpack_value"] = round(float(data_dict["Backpack"].get("Value", 0.0)), 0)
+        except Exception:
+            pass
+    if "Cargo" in data_dict and isinstance(data_dict["Cargo"], dict):
+        try:
+            res["cargo_value"] = round(float(data_dict["Cargo"].get("Value", 0.0)), 0)
+        except Exception:
+            pass
 
     return res
 

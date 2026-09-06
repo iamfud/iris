@@ -12,7 +12,7 @@
   <link rel="shortcut icon" href="icon.png?v=4">
   <link rel="apple-touch-icon" sizes="180x180" href="icon-180.png?v=4">
   <link rel="manifest" href="manifest.json?v=4">
-  <link rel="stylesheet" href="style.css?v=315">
+  <link rel="stylesheet" href="style.css?v=318">
   <script>
     window.onerror = function (msg, url, line, col, error) {
       console.error("[Iris Fatal UI Error]", msg, url, line, col, error);
@@ -35,9 +35,9 @@
           <span class="material-icons-outlined">dashboard</span>
           <span class="label">Dashboard</span>
         </button>
-        <button type="button" class="nav-item" data-page="features">
-          <span class="material-icons-outlined">memory</span>
-          <span class="label">Companion Device</span>
+        <button type="button" class="nav-item" data-page="hardware">
+          <span class="material-icons-outlined">hub</span>
+          <span class="label">Hardware Plugins</span>
         </button>
         <button type="button" class="nav-item" data-page="alarms">
           <span class="material-icons-outlined">alarm</span>
@@ -95,16 +95,17 @@
   <!-- ── Screensaver Overlay ────────────────────────────────────── -->
   <div id="iris-screensaver" role="status" aria-label="Screen saver active" aria-hidden="true">
     <div class="ssv-clean-lock">
-      <div class="ssv-clean-logo">
-        <img src="Iris_full.png" alt="Iris" class="ssv-clean-img">
+      <div class="ssv-clock-wrap">
+        <span class="ssv-clock-time" id="ssv-clock-time">--:--</span>
+        <span class="ssv-clock-ampm" id="ssv-clock-ampm"></span>
       </div>
-      <div class="ssv-clean-title">IRIS</div>
+      <div class="ssv-clock-date" id="ssv-clock-date"></div>
       <div class="ssv-clean-sub">TOUCH TO UNLOCK</div>
     </div>
   </div>
 
   <script src="settings_renderer.js?v=112"></script>
-  <script src="script.js?v=403"></script>
+  <script src="script.js?v=415"></script>
   <noscript style="display:flex;align-items:center;justify-content:center;height:100vh;background:#0C0D0F;color:#e8eaed;font-family:Inter,sans-serif">
     <p style="text-align:center;padding:24px">Iris requires JavaScript. Please enable it in your browser.</p>
   </noscript>

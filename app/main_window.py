@@ -453,6 +453,7 @@ class MainWindow:
             self._tile_cache.clear()
             self._build_tiles()
             self._render_utility_row()
+            self._render_core_row()
             self._render_buttons()
             self._reflow_panel()
         except Exception as e:
@@ -634,8 +635,13 @@ class MainWindow:
 
     def set_overlay_state(self, on):
         self._overlay_on = on
-        ov = self._ov_tiles
-        self._btn_overlay.config(image=ov[2] if on else ov[0])
+        try:
+            ov = getattr(self, "_ov_tiles", None)
+            btn = getattr(self, "_btn_overlay", None)
+            if ov and btn and btn.winfo_exists():
+                btn.config(image=ov[2] if on else ov[0])
+        except Exception:
+            pass
 
     def set_saved_foreground(self, hwnd):
         self._saved_foreground_hwnd = hwnd
@@ -644,7 +650,7 @@ class MainWindow:
         self._render_buttons()
 
     def rebuild_panel(self):
-        """Re-apply panel config (buttons + utility) after settings save."""
+        """Re-apply panel config (buttons + utility + core) after settings save."""
         try:
             from panel_actions import ensure_panel_defaults
             ensure_panel_defaults(self.app.cfg)
@@ -653,6 +659,7 @@ class MainWindow:
         self._btn_nav = []
         self._render_buttons()
         self._render_utility_row()
+        self._render_core_row()
         self._reflow_panel()
 
     def _render_utility_row(self):
@@ -695,8 +702,138 @@ class MainWindow:
             if name:
                 ToolTip(btn, name)
 
+    def _render_core_row(self):
+        """Build the 4 core tiles from panel_core config. Fully dynamic — replaces hardcoded tiles."""
+        frame = getattr(self, "_core_frame", None)
+        if frame is None:
+            return
+        for w in frame.winfo_children():
+            w.destroy()
+        self._core_tile_refs = []
+        self._btn_overlay = None
+        self._btn_mic = None
+        self._btn_display = None
+        self._ov_tiles = None
+        _T, _GAP = 40, 10
+        from panel_actions import default_core, DEFAULT_CORE
+        slots = self.app.cfg.get("panel_core") or default_core()
+        theme_bg = self._get_theme_colors()[4]
+        _prs_fill_base = self._adjust_hex(BG_CARD, -20)
+
+        for i in range(4):
+            slot = slots[i] if i < len(slots) else {"type": "EMPTY", "icon": "border-none-variant"}
+            if slot.get("type") == "EMPTY":
+                continue
+            core_act = slot.get("core_action", "")
+            if not core_act:
+                # Fallback for legacy / plain CORE slots without explicit core_action
+                core_act = ["display", "overlay", "mic", "settings"][i]
+
+            # Icon
+            icon = slot.get("icon") or (DEFAULT_CORE[i]["icon"] if i < len(DEFAULT_CORE) else "star-circle")
+
+            # Background fill
+            fill = slot.get("color") or BG_CARD
+            if not fill or fill == "RAINBOW":
+                fill = BG_CARD
+            _hov_fill = self._adjust_hex(fill, 20)
+            _prs_fill = self._adjust_hex(fill, -20)
+
+            app_icon = slot.get("app_icon_path")
+            if not app_icon and slot.get("use_app_icon"):
+                app_icon = (self.app.cfg.get("media_player_path") or "").strip() or None
+
+            # Mic slot gets special two-state image set
+            if core_act in ("mic", "mic_mute"):
+                mic_un = self._make_tile_photo("microphone", fill, icon_scale=0.52)
+                mic_un_h = self._make_tile_photo("microphone", _hov_fill, icon_scale=0.52)
+                mic_mut = self._make_tile_photo("microphone-off", fill, NEON, (72, 178, 233), icon_scale=0.52)
+                mic_mut_h = self._make_tile_photo("microphone-off", _hov_fill, NEON, (72, 178, 233), icon_scale=0.52)
+                prs_un = self._make_tile_photo("microphone", _prs_fill, icon_scale=0.52)
+                prs_mut = self._make_tile_photo("microphone-off", _prs_fill, NEON, (72, 178, 233), icon_scale=0.52)
+                self._core_tile_refs.extend([mic_un, mic_un_h, mic_mut, mic_mut_h, prs_un, prs_mut])
+                # t_set[0]=normal-off, [1]=hover-off, [2]=normal-on, [3]=hover-on
+                t_set = [mic_un, mic_un_h, mic_mut, mic_mut_h]
+                prs_off, prs_on = prs_un, prs_mut
+            else:
+                t_set = [
+                    self._make_tile_photo(icon, fill, icon_scale=0.52, app_icon_path=app_icon),
+                    self._make_tile_photo(icon, _hov_fill, icon_scale=0.52, app_icon_path=app_icon),
+                    self._make_tile_photo(icon, fill, NEON, (72, 178, 233), icon_scale=0.52, app_icon_path=app_icon),
+                    self._make_tile_photo(icon, _hov_fill, NEON, (72, 178, 233), icon_scale=0.52, app_icon_path=app_icon),
+                ]
+                prs_off = self._make_tile_photo(icon, _prs_fill, icon_scale=0.52, app_icon_path=app_icon)
+                prs_on = self._make_tile_photo(icon, _prs_fill, NEON, (72, 178, 233), icon_scale=0.52, app_icon_path=app_icon)
+                self._core_tile_refs.extend(t_set + [prs_off, prs_on])
+
+            # Initial active state
+            is_active = self._is_core_active(core_act, slot)
+            initial_img = t_set[2] if is_active else t_set[0]
+
+            btn = tk.Label(frame, image=initial_img, bg=theme_bg, cursor="hand2",
+                           padx=0, pady=0, borderwidth=0)
+            btn.place(x=i * (_T + _GAP), y=0)
+
+            # Store well-known references for state sync
+            if core_act in ("overlay",) or slot.get("entity") == "system.overlay":
+                self._btn_overlay = btn
+                self._ov_tiles = t_set
+            elif core_act in ("display",) or slot.get("entity") == "system.display":
+                self._btn_display = btn
+            elif core_act in ("mic", "mic_mute") or slot.get("entity") == "system.mic_mute":
+                self._btn_mic = btn
+
+            def _make_binds(b=btn, ts=t_set, poff=prs_off, pon=prs_on, act=core_act, s=slot):
+                def _enter(e):
+                    active = self._is_core_active(act, s)
+                    b.config(image=ts[3] if active else ts[1])
+                def _leave(e):
+                    active = self._is_core_active(act, s)
+                    b.config(image=ts[2] if active else ts[0])
+                def _press(e):
+                    active = self._is_core_active(act, s)
+                    b.config(image=pon if active else poff)
+                def _release(e):
+                    self._on_button_action(s)
+                    self._root.after(80, self._sync_core_tiles)
+                b.bind("<Enter>", _enter)
+                b.bind("<Leave>", _leave)
+                b.bind("<ButtonPress-1>", _press)
+                b.bind("<ButtonRelease-1>", _release)
+            _make_binds()
+
+            name = slot.get("name") or core_act.replace("_", " ").title()
+            if name:
+                ToolTip(btn, name)
+
+    def _is_core_active(self, act, slot):
+        """Return True if the core action's toggle state is currently ON."""
+        ent = slot.get("entity", "")
+        if act == "display" or ent == "system.display":
+            return bool(getattr(self, "_pc_display_on", False))
+        if act == "overlay" or ent == "system.overlay":
+            return bool(getattr(self, "_overlay_on", False))
+        if act in ("mic", "mic_mute") or ent == "system.mic_mute":
+            return bool(getattr(self, "_mic_muted", False))
+        return False
+
+    def _sync_core_tiles(self):
+        """Update all dynamic core tile images to reflect current toggle states."""
+        try:
+            ov = getattr(self, "_ov_tiles", None)
+            btn_ov = getattr(self, "_btn_overlay", None)
+            if ov and btn_ov:
+                try:
+                    if btn_ov.winfo_exists():
+                        btn_ov.config(image=ov[2] if self._overlay_on else ov[0])
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
     @staticmethod
     def _place_or_forget(widget, show, **kw):
+
         if widget is None:
             return
         if show:
@@ -1156,6 +1293,10 @@ class MainWindow:
     def start_direct_screenshot(self, slot=None):
         """Invoke rectangular crosshair zone capture directly, save screenshot, run OCR, and open annotation viewer."""
         try:
+            # Clear any prior screenshot so a polling phone never sees a stale image
+            # (phone/PC clock skew would otherwise make a previous capture look 'newer').
+            if self.app is not None and getattr(self.app, "screenshot_last", None) is not None:
+                self.app.screenshot_last = None
             saved = getattr(self, "_saved_foreground_hwnd", None)
             app_tag = _get_foreground_app_name(saved) if saved else "desktop"
 
@@ -1266,33 +1407,33 @@ class MainWindow:
 
         self._screenshot_lbl.place(x=6, y=22, width=178, height=_pv_h)
 
-        # Capture buttons — 3 across: Area | Fullscreen | Done
+        # Capture buttons — 3 across: Screenshot (fullscreen) | Snipping Tool | Done
         _btn_h, _btn_gap = 26, 4
         _btn_y0 = 6
         _total_w = _W - 2 * _btn_y0  # usable width
-        _area_w = 48
         _done_w = 48
-        _full_w = _total_w - _area_w - _done_w - 2 * _btn_gap
-        area_btn = RoundedButton(
-            frm, text="Area", style="sec",
-            command=self._screenshot_grab_area,
-            font=("Segoe UI", 8, "bold"))
-        area_btn.place(x=_btn_y0, y=btn_y, width=_area_w, height=_btn_h)
-
+        _snip_w = 64
+        _full_w = _total_w - _snip_w - _done_w - 2 * _btn_gap
         full_btn = RoundedButton(
-            frm, text="Fullscreen", style="sec",
+            frm, text="Screenshot", style="sec",
             command=self._screenshot_grab_full,
             font=("Segoe UI", 8, "bold"))
-        full_btn.place(x=_btn_y0 + _area_w + _btn_gap, y=btn_y, width=_full_w, height=_btn_h)
+        full_btn.place(x=_btn_y0, y=btn_y, width=_full_w, height=_btn_h)
+
+        snip_btn = RoundedButton(
+            frm, text="Snipping Tool", style="sec",
+            command=self._screenshot_grab_area,
+            font=("Segoe UI", 8, "bold"))
+        snip_btn.place(x=_btn_y0 + _full_w + _btn_gap, y=btn_y, width=_snip_w, height=_btn_h)
 
         bright_neon = self._get_theme_colors()[8]
         done_btn = RoundedButton(
             frm, text="Done", style="prim", bg=bright_neon,
             command=self._finish_screenshot,
             font=("Segoe UI", 8, "bold"))
-        done_btn.place(x=_btn_y0 + _area_w + _btn_gap + _full_w + _btn_gap, y=btn_y, width=_done_w, height=_btn_h)
+        done_btn.place(x=_btn_y0 + _full_w + _btn_gap + _snip_w + _btn_gap, y=btn_y, width=_done_w, height=_btn_h)
 
-        for w in (area_btn, full_btn, done_btn):
+        for w in (full_btn, snip_btn, done_btn):
             w.bind("<MouseWheel>", self._on_btn_wheel)
 
     def _screenshot_grab_full(self):
@@ -1613,6 +1754,60 @@ class MainWindow:
             self.btn_nav_push(slot)
             return
 
+        if btype == "CORE":
+            core_act = slot.get("core_action", "").strip()
+            if core_act == "display":
+                self._pc_display_on = not self._pc_display_on
+                self.app._toggle_pc_stats(self._pc_display_on)
+                return
+            elif core_act == "overlay":
+                self._overlay_on = not self._overlay_on
+                self.app._toggle_overlay(self._overlay_on)
+                return
+            elif core_act in ("mic", "mic_mute"):
+                from win_platform import toggle_mic_mute
+                res = toggle_mic_mute()
+                if res is not None:
+                    self._mic_muted = res
+                return
+            elif core_act == "settings":
+                self.app._open_settings()
+                return
+            elif core_act == "toolbar":
+                if hasattr(self.app, "_toggle_capture_toolbar"):
+                    self.app._toggle_capture_toolbar()
+                return
+            elif core_act in ("lighting", "lighting_sync"):
+                if hasattr(self.app, "_toggle_lighting_sync"):
+                    self.app._toggle_lighting_sync()
+                return
+            elif core_act == "colour_picker":
+                self.start_colour_picker()
+                return
+            elif core_act in ("screenshot", "screenshot_full"):
+                self.start_screenshot(slot, mode="fullscreen")
+                return
+            elif core_act == "screenshot_zone":
+                self.start_screenshot(slot, mode="zone")
+                return
+            elif core_act == "note":
+                self.start_quick_note()
+                return
+            elif core_act == "borderless_toggle":
+                from win_platform import toggle_borderless_window
+                toggle_borderless_window()
+                return
+            elif core_act == "stopwatch":
+                if hasattr(self.app, "_toggle_stopwatch"):
+                    self.app._toggle_stopwatch()
+                return
+            elif core_act == "countdown":
+                if hasattr(self.app, "_toggle_countdown"):
+                    self.app._toggle_countdown()
+                return
+            # Unknown core_action — fall through to entity dispatch below
+
+
         ent = slot.get("entity", "").strip()
         if ent == "media.player" or ent == "media.eject" or btype == "MEDIA_EJECT":
             self._media_eject()
@@ -1653,6 +1848,10 @@ class MainWindow:
             self.start_quick_note()
             return
 
+        if btype == "OPENRGB" or slot.get("openrgb_profile") or ent.startswith("openrgb.") or slot.get("plugin") == "openrgb":
+            self._do_openrgb_action(slot)
+            return
+
         if btype == "SHORTCUT":
             path = slot.get("shortcut_path", "").strip()
             s_args = slot.get("shortcut_args", "").strip()
@@ -1663,8 +1862,6 @@ class MainWindow:
                 ).start()
         elif btype == "REST":
             self._do_rest_action(slot)
-        elif btype == "OPENRGB":
-            self._do_openrgb_action(slot)
         elif btype == "HOTKEY":
             self._do_hotkey_action(slot)
         elif btype == "AUDIO OUTPUT":
@@ -1684,6 +1881,12 @@ class MainWindow:
                     on_tap(pname, cid, val)
                 except Exception as ex:
                     log.warning("PLUGIN tap failed: %s", ex)
+        elif slot.get("plugin") or "." in ent:
+            try:
+                from panel_runtime import execute_slot
+                threading.Thread(target=lambda: execute_slot(slot), daemon=True).start()
+            except Exception as ex:
+                log.warning("Plugin execute_slot failed: %s", ex)
 
     def _do_rest_action(self, slot):
         entity = slot.get("entity_id", "").strip()
@@ -1709,29 +1912,18 @@ class MainWindow:
         threading.Thread(target=_call, daemon=True).start()
 
     def _do_openrgb_action(self, slot):
-        profile_name = slot.get("openrgb_profile", "").strip()
-        if profile_name:
-            import threading
-            def _apply():
-                try:
-                    import plugin_manager
-                    if not plugin_manager.on_tap("openrgb", "profile", profile_name):
-                        raise Exception("plugin_manager.on_tap returned False")
-                except Exception:
-                    try:
-                        from openrgb import OpenRGBClient
-                        cli = OpenRGBClient(name="Iris")
-                        clean_name = profile_name.replace(" (Device)", "").replace(" (Effect)", "").strip()
-                        try:
-                            cli.load_profile(clean_name, local=True)
-                        except Exception:
-                            cli.load_profile(clean_name)
-                        cli.show()
-                    except Exception:
-                        pass
-            threading.Thread(target=_apply, daemon=True).start()
-            return
-        self._show_openrgb_picker()
+        import threading
+        def _apply():
+            try:
+                from panel_runtime import _openrgb_action
+                if _openrgb_action(slot):
+                    return
+            except Exception as ex:
+                log.warning("openrgb action via panel_runtime failed: %s", ex)
+            profile_name = (slot.get("openrgb_profile") or "").strip()
+            if not profile_name:
+                self._root.after(0, self._show_openrgb_picker)
+        threading.Thread(target=_apply, daemon=True).start()
 
     def _show_openrgb_picker(self):
         import math, colorsys, io, base64
@@ -2386,116 +2578,26 @@ class MainWindow:
         self._sep_core = tk.Frame(self._win, bg=BG_CARD, height=1)
         self._core_frame = tk.Frame(self._win, bg=BG, width=_TOTAL, height=_T)
         self._core_frame.pack_propagate(False)
-        _tile_frame = self._core_frame
 
+        # Initialise toggle state before rendering so _is_core_active is correct
         self._pc_display_on = self.app.cfg.get("pc_stats_manual", False)
         self._overlay_on = False
         self._mic_muted = False
+        self._btn_overlay = None
+        self._btn_display = None
+        self._btn_mic = None
+        self._ov_tiles = None
+        self._core_tile_refs = []
 
-        # ── Pressed tile helpers ──
-        _prs_fill = self._adjust_hex(BG_CARD, -20)
-
-        # ── Tile 0: PC stats display toggle ──
-        t0 = self._make_tile_set("monitor", icon_scale=0.52)
-        prs0_off = self._make_tile_photo("monitor", _prs_fill, icon_scale=0.52)
-        prs0_on  = self._make_tile_photo("monitor", _prs_fill, NEON, (72, 178, 233), icon_scale=0.52)
-        self._tile_refs.extend([prs0_off, prs0_on])
-        self._btn_display = tk.Label(_tile_frame, image=t0[0], bg=BG, cursor="hand2",
-                                     padx=0, pady=0, borderwidth=0)
-        self._btn_display.place(x=0, y=0)
-
-        def _enter0(e):
-            self._btn_display.config(image=t0[3] if self._pc_display_on else t0[1])
-        def _leave0(e):
-            self._btn_display.config(image=t0[2] if self._pc_display_on else t0[0])
-        def _press0(e):
-            self._btn_display.config(image=prs0_on if self._pc_display_on else prs0_off)
-        def _release0(e):
-            self._pc_display_on = not self._pc_display_on
-            self._btn_display.config(image=t0[2] if self._pc_display_on else t0[0])
-            self.app._toggle_pc_stats(self._pc_display_on)
-        self._btn_display.bind("<Enter>", _enter0)
-        self._btn_display.bind("<Leave>", _leave0)
-        self._btn_display.bind("<ButtonPress-1>", _press0)
-        self._btn_display.bind("<ButtonRelease-1>", _release0)
+        self._render_core_row()
 
         if self._pc_display_on:
             self.app._toggle_pc_stats(True)
 
-        # ── Tile 1: PC stats overlay toggle ──
-        t1 = self._make_tile_set("speedometer", icon_scale=0.52)
-        self._ov_tiles = t1
-        prs1_off = self._make_tile_photo("speedometer", _prs_fill, icon_scale=0.52)
-        prs1_on  = self._make_tile_photo("speedometer", _prs_fill, NEON, (72, 178, 233), icon_scale=0.52)
-        self._tile_refs.extend([prs1_off, prs1_on])
-        self._btn_overlay = tk.Label(_tile_frame, image=t1[0], bg=BG, cursor="hand2",
-                                     padx=0, pady=0, borderwidth=0)
-        self._btn_overlay.place(x=1 * (_T + _GAP), y=0)
-
-        def _enter1(e):
-            self._btn_overlay.config(image=t1[3] if self._overlay_on else t1[1])
-        def _leave1(e):
-            self._btn_overlay.config(image=t1[2] if self._overlay_on else t1[0])
-        def _press1(e):
-            self._btn_overlay.config(image=prs1_on if self._overlay_on else prs1_off)
-        def _release1(e):
-            self._overlay_on = not self._overlay_on
-            self._btn_overlay.config(image=t1[2] if self._overlay_on else t1[0])
-            self.app._toggle_overlay(self._overlay_on)
-        self._btn_overlay.bind("<Enter>", _enter1)
-        self._btn_overlay.bind("<Leave>", _leave1)
-        self._btn_overlay.bind("<ButtonPress-1>", _press1)
-        self._btn_overlay.bind("<ButtonRelease-1>", _release1)
-
-        # ── Tile 2: Microphone mute toggle ──
-        _mic_unmuted = self._make_tile_photo("microphone", BG_CARD, icon_scale=0.52)
-        _mic_unmuted_hov = self._make_tile_photo("microphone", "#353535", icon_scale=0.52)
-        _mic_muted_ph = self._make_tile_photo("microphone-off", BG_CARD, NEON, (72, 178, 233), icon_scale=0.52)
-        _mic_muted_hov = self._make_tile_photo("microphone-off", "#353535", NEON, (72, 178, 233), icon_scale=0.52)
-        _mic_prs_unmuted = self._make_tile_photo("microphone", _prs_fill, icon_scale=0.52)
-        _mic_prs_muted = self._make_tile_photo("microphone-off", _prs_fill, NEON, (72, 178, 233), icon_scale=0.52)
-        self._tile_refs.extend([_mic_unmuted, _mic_unmuted_hov, _mic_muted_ph, _mic_muted_hov,
-                                _mic_prs_unmuted, _mic_prs_muted])
-        self._btn_mic = tk.Label(_tile_frame, image=_mic_unmuted, bg=BG, cursor="hand2",
-                                 padx=0, pady=0, borderwidth=0)
-        self._btn_mic.place(x=2 * (_T + _GAP), y=0)
-
-        def _enter_mic(e):
-            self._btn_mic.config(image=_mic_muted_hov if self._mic_muted else _mic_unmuted_hov)
-        def _leave_mic(e):
-            self._btn_mic.config(image=_mic_muted_ph if self._mic_muted else _mic_unmuted)
-        def _press_mic(e):
-            self._btn_mic.config(image=_mic_prs_muted if self._mic_muted else _mic_prs_unmuted)
-        def _release_mic(e):
-            from win_platform import toggle_mic_mute
-            result = toggle_mic_mute()
-            if result is not None:
-                self._mic_muted = result
-            self._btn_mic.config(image=_mic_muted_ph if self._mic_muted else _mic_unmuted)
-        self._btn_mic.bind("<Enter>", _enter_mic)
-        self._btn_mic.bind("<Leave>", _leave_mic)
-        self._btn_mic.bind("<ButtonPress-1>", _press_mic)
-        self._btn_mic.bind("<ButtonRelease-1>", _release_mic)
-
-        # ── Tile 3: Settings ──
-        t3 = self._make_tile_set("cog", icon_scale=0.52)
-        prs3 = self._make_tile_photo("cog", _prs_fill, icon_scale=0.52)
-        self._tile_refs.append(prs3)
-        self._btn_settings = tk.Label(_tile_frame, image=t3[0], bg=BG, cursor="hand2",
-                                       padx=0, pady=0, borderwidth=0)
-        self._btn_settings.place(x=3 * (_T + _GAP), y=0)
-        self._btn_settings.bind("<Enter>", lambda e: self._btn_settings.config(image=t3[1]))
-        self._btn_settings.bind("<Leave>", lambda e: self._btn_settings.config(image=t3[0]))
-        self._btn_settings.bind("<ButtonPress-1>", lambda e: self._btn_settings.config(image=prs3))
-        self._btn_settings.bind("<ButtonRelease-1>", lambda e: (
-            self._btn_settings.config(image=t3[0]),
-            self.app._open_settings(),
-        ))
-
     def _on_gauge_click(self, e):
         if not self._overlay_on:
             self._overlay_on = True
-            self._btn_overlay.config(image=self._ov_tiles[2])
+            self.set_overlay_state(True)
             self.app._toggle_overlay(True)
         if not self._pin_pinned:
             self.hide()

@@ -204,6 +204,7 @@ class CaptureToolbar:
         # detected colour — highest-luminance of neon vs accent, per
         # get_current_theme_colors' bright_neon_rgb)
         self._icon_shot = mdi_icons.render_tk("crop-free", 18, icon_rgb)
+        self._icon_full = mdi_icons.render_tk("camera", 18, icon_rgb)
         self._icon_ocr = mdi_icons.render_tk("text-box-search-outline", 18, icon_rgb)
         self._icon_note = mdi_icons.render_tk("note-edit-outline", 18, icon_rgb)
         self._icon_lib = mdi_icons.render_tk("folder-image", 18, icon_rgb)
@@ -233,23 +234,27 @@ class CaptureToolbar:
             ToolTip(btn, tip_text)
             return btn
 
-        # 1. Screenshot Square Button (32x32)
-        self._btn_shot = _make_square_btn(self._bar_frame, self._icon_shot, self._on_screenshot, "Screenshot")
-        self._btn_shot.pack(side="left", padx=(6, 2), pady=5)
+        # 1. Fullscreen Screenshot Square Button (32x32)
+        self._btn_full = _make_square_btn(self._bar_frame, self._icon_full, self._on_fullscreen, "Screenshot")
+        self._btn_full.pack(side="left", padx=(6, 2), pady=5)
 
-        # 2. OCR Text Square Button (32x32)
+        # 2. Snipping Tool Square Button (32x32) — rectangular zone capture
+        self._btn_shot = _make_square_btn(self._bar_frame, self._icon_shot, self._on_screenshot, "Snipping Tool")
+        self._btn_shot.pack(side="left", padx=2, pady=5)
+
+        # 3. OCR Text Square Button (32x32)
         self._btn_ocr = _make_square_btn(self._bar_frame, self._icon_ocr, self._on_ocr, "OCR Text")
         self._btn_ocr.pack(side="left", padx=2, pady=5)
 
-        # 3. New Note Square Button (32x32)
+        # 4. New Note Square Button (32x32)
         self._btn_note = _make_square_btn(self._bar_frame, self._icon_note, self._on_note, "Quick Note")
         self._btn_note.pack(side="left", padx=2, pady=5)
 
-        # 4. Library Square Button (32x32)
+        # 5. Library Square Button (32x32)
         self._btn_lib = _make_square_btn(self._bar_frame, self._icon_lib, self._on_library, "Library")
         self._btn_lib.pack(side="left", padx=2, pady=5)
 
-        # 5. Color Picker (Eyedropper) Square Button (32x32)
+        # 6. Color Picker (Eyedropper) Square Button (32x32)
         self._btn_eyedrop = _make_square_btn(self._bar_frame, self._icon_eyedrop, self._on_color_picker, "Color Picker")
         self._btn_eyedrop.pack(side="left", padx=2, pady=5)
 
@@ -404,6 +409,7 @@ class CaptureToolbar:
 
     def _save_screenshot_and_ocr(self, img, app_tag):
         """Persist screenshot to disk and trigger background OCR + sidecar generation."""
+        shot_data = None
         try:
             folder = self._library_folder()
             ts_str = time.strftime("%Y%m%d_%H%M%S")
@@ -417,20 +423,25 @@ class CaptureToolbar:
                 buf = io.BytesIO()
                 img.save(buf, format="JPEG", quality=65, optimize=True)
                 b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+                shot_data = {
+                    "img": b64,
+                    "fmt": "jpeg",
+                    "w": img.width,
+                    "h": img.height,
+                    "ts": time.time(),
+                }
                 if self.app is not None:
-                    self.app.screenshot_last = {
-                        "img": b64,
-                        "fmt": "jpeg",
-                        "w": img.width,
-                        "h": img.height,
-                        "ts": time.time(),
-                    }
+                    self.app.screenshot_seq = getattr(self.app, "screenshot_seq", 0) + 1
+                    shot_data["seq"] = self.app.screenshot_seq
+                    self.app.screenshot_last = shot_data
             except Exception:
                 pass
 
             try:
                 import ws_bridge
                 ws_bridge.broadcast({"type": "library_update"})
+                if shot_data:
+                    ws_bridge.broadcast({"type": "screenshot_ready", **shot_data})
             except Exception:
                 pass
 
@@ -463,9 +474,16 @@ class CaptureToolbar:
             log.warning("Screenshot save failed: %s", ex)
             return None
 
+    def _clear_screenshot_last(self):
+        """Clear the last screenshot so a polling phone never sees a stale capture
+        (phone/PC clock skew would otherwise make a previous screenshot look 'newer')."""
+        if self.app is not None and getattr(self.app, "screenshot_last", None) is not None:
+            self.app.screenshot_last = None
+
     def capture_fullscreen_direct(self, app_tag=None, notify=True):
         """Silently capture active game/monitor, save PNG + OCR, with zero focus stealing and no game minimization."""
         tag = app_tag or self._resolve_foreground_app() or "game"
+        self._clear_screenshot_last()
 
         def _capture():
             try:
@@ -473,6 +491,12 @@ class CaptureToolbar:
                 if img:
                     fname = self._save_screenshot_and_ocr(img, tag)
                     log.info("[capture_toolbar] Direct fullscreen capture completed: %s", fname)
+                    if fname:
+                        try:
+                            import viewer_window
+                            viewer_window.open_viewer(fname)
+                        except Exception as ex:
+                            log.warning("Failed to open screenshot annotation editor: %s", ex)
                     if notify:
                         try:
                             import winsound
@@ -484,9 +508,16 @@ class CaptureToolbar:
 
         threading.Thread(target=_capture, daemon=True, name="iris-direct-fullscreen-capture").start()
 
+    def _on_fullscreen(self):
+        """Silent fullscreen capture of the active monitor. Shared pipeline (save + OCR +
+        app.screenshot_last + library_update) so the result appears on phone and desktop."""
+        app_tag = self._current_app_tag or "desktop"
+        self.capture_fullscreen_direct(app_tag=app_tag, notify=True)
+
     def _on_screenshot(self):
         """Invoke rectangular zone selector, hide toolbar, capture, then reopen toolbar with annotation editor."""
         self.hide()
+        self._clear_screenshot_last()
         app_tag = self._current_app_tag or "desktop"
 
         def _capture():

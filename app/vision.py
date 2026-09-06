@@ -820,25 +820,24 @@ class RegionSelector:
         self._canvas.bind("<Escape>", self._on_escape)
         self._win.bind("<Escape>", self._on_escape)
 
-        # Apply WS_EX_NOACTIVATE (0x08000000) so window never steals keyboard/foreground focus from games
-        try:
-            self._win.update_idletasks()
-            hwnd = int(self._win.winfo_id())
-            user32 = ctypes.windll.user32
-            WS_EX_NOACTIVATE = 0x08000000
-            WS_EX_LAYERED = 0x00080000
-            GWL_EXSTYLE = -20
-            ex = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-            user32.SetWindowLongW(hwnd, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE | WS_EX_LAYERED)
-        except Exception:
-            pass
+        self._win.focus_force()
+        self._canvas.focus_set()
 
     def show(self):
         self._win.deiconify()
         self._win.attributes("-topmost", True)
         self._win.lift()
+        self._win.focus_force()
+        try:
+            self._win.grab_set()
+        except Exception:
+            pass
 
     def close(self, result):
+        try:
+            self._win.grab_release()
+        except Exception:
+            pass
         try:
             self._win.destroy()
         except Exception:

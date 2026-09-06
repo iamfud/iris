@@ -34,6 +34,31 @@ class _ViewerApi:
                 pass
 
 
+def _clean_stale_caches(wv_dir: str):
+    """Purge stale or corrupt shader caches and old crash dumps that cause black screen hangs."""
+    try:
+        import os
+        import shutil
+        eb = os.path.join(wv_dir, "EBWebView")
+        if not os.path.isdir(eb):
+            return
+        for sub in ("GPUPersistentCache", "ShaderCache", "GrShaderCache", os.path.join("Default", "GPUCache")):
+            target = os.path.join(eb, sub)
+            if os.path.isdir(target):
+                shutil.rmtree(target, ignore_errors=True)
+        crash_dir = os.path.join(eb, "Crashpad", "reports")
+        if os.path.isdir(crash_dir):
+            for f in os.listdir(crash_dir):
+                fp = os.path.join(crash_dir, f)
+                if os.path.isfile(fp):
+                    try:
+                        os.remove(fp)
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
+
 def _run_viewer(filename):
     try:
         from win_platform import init_dpi_awareness
@@ -42,9 +67,15 @@ def _run_viewer(filename):
         pass
 
     try:
+        import os
         import paths
         wv_data = paths.get_webview_data_dir("WebView2_Viewer")
         os.environ["WEBVIEW2_USER_DATA_FOLDER"] = wv_data
+        _clean_stale_caches(wv_data)
+        safe_args = "--disable-gpu-compositing --disable-direct-composition"
+        existing = os.environ.get("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "")
+        if safe_args not in existing:
+            os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = f"{existing} {safe_args}".strip()
     except Exception:
         pass
 
@@ -54,8 +85,9 @@ def _run_viewer(filename):
         print("[viewer_window] pywebview not installed")
         return
 
+    import time
     api = _ViewerApi()
-    q = urllib.parse.urlencode({"view": "viewer", "file": filename})
+    q = urllib.parse.urlencode({"view": "viewer", "file": filename, "_t": int(time.time())})
     url = f"http://127.0.0.1:15502/index.html?{q}"
 
     w = webview.create_window(

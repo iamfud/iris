@@ -182,6 +182,12 @@ html{
     padding: 4px 6px !important;
 }
 
+[data-theme="ios"] .pdev-tile .pdev-num-glyph {
+    font-size: 32px !important;
+    font-weight: 800 !important;
+    line-height: 1 !important;
+}
+
 [data-theme="ios"] .pdev-core-tile .md,
 [data-theme="ios"] .pdev-core-tile .material-icons-outlined {
     font-size: 36px !important;
@@ -2545,6 +2551,10 @@ header p{
     font-size: 8px;
     padding: 2px;
 }
+.prev-screen .pdev-tile .pdev-num-glyph {
+    font-size: 13px;
+    line-height: 1;
+}
 
 .prev-sliders {
     display: flex;
@@ -4221,14 +4231,17 @@ html.is-landscape .panel-view-overlay .pv-util .pdev-tile > .md,
 html.is-landscape .panel-view-overlay .pv-util .pdev-tile > .pdev-iapp,
 html.is-landscape .panel-view-overlay .pv-util .pdev-tile > .pdev-ibrand,
 html.is-landscape .panel-view-overlay .pv-util .pdev-tile > .pdev-text-only,
+html.is-landscape .panel-view-overlay .pv-util .pdev-tile > .pdev-num-glyph,
 html.is-landscape .panel-view-overlay .pv-core .pdev-tile > .md,
 html.is-landscape .panel-view-overlay .pv-core .pdev-tile > .pdev-iapp,
 html.is-landscape .panel-view-overlay .pv-core .pdev-tile > .pdev-ibrand,
 html.is-landscape .panel-view-overlay .pv-core .pdev-tile > .pdev-text-only,
+html.is-landscape .panel-view-overlay .pv-core .pdev-tile > .pdev-num-glyph,
 html.is-landscape .panel-view-overlay .pv-box .pdev-tile > .md,
 html.is-landscape .panel-view-overlay .pv-box .pdev-tile > .pdev-iapp,
 html.is-landscape .panel-view-overlay .pv-box .pdev-tile > .pdev-ibrand,
-html.is-landscape .panel-view-overlay .pv-box .pdev-tile > .pdev-text-only {
+html.is-landscape .panel-view-overlay .pv-box .pdev-tile > .pdev-text-only,
+html.is-landscape .panel-view-overlay .pv-box .pdev-tile > .pdev-num-glyph {
     transform:rotate(90deg);
 }
 
@@ -4455,12 +4468,52 @@ html.is-oled .panel-view-overlay .pdev-tile{
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 18px;
+  gap: 12px;
   text-align: center;
   opacity: 0;
   transform: translate(0px, 0px);
-  transition: opacity 1.2s cubic-bezier(0.4, 0, 0.2, 1), transform 1.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: opacity 1.2s cubic-bezier(0.4, 0, 0.2, 1), transform 2.5s ease-in-out;
   will-change: opacity, transform;
+}
+
+.ssv-clock-wrap {
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 8px;
+}
+
+.ssv-clock-time {
+  font-size: 4.5rem;
+  font-size: clamp(3.8rem, 14vw, 6.2rem);
+  font-weight: 200;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  background: var(--theme-gradient-h, linear-gradient(90deg, #48B2E9, #B23AF6));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 0 24px var(--theme-glow, rgba(72, 178, 233, 0.35)));
+}
+
+.ssv-clock-ampm {
+  font-size: 0.9rem;
+  font-weight: 600;
+  letter-spacing: 0.15rem;
+  color: var(--text-secondary, #94a3b8);
+  opacity: 0.75;
+  text-transform: uppercase;
+  margin-left: 2px;
+}
+
+.ssv-clock-date {
+  font-size: 0.85rem;
+  font-weight: 500;
+  letter-spacing: 0.25rem;
+  text-indent: 0.25rem;
+  color: var(--text-secondary, #94a3b8);
+  opacity: 0.85;
+  text-transform: uppercase;
 }
 
 .ssv-clean-logo {
@@ -4489,13 +4542,14 @@ html.is-oled .panel-view-overlay .pdev-tile{
 }
 
 .ssv-clean-sub {
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   font-weight: 600;
   letter-spacing: 0.3rem;
   text-indent: 0.3rem;
-  color: var(--text-secondary, #94a3b8);
-  opacity: 0.7;
+  color: var(--fg-dim, #666666);
+  opacity: 0.6;
   text-transform: uppercase;
+  margin-top: 4px;
 }
 
 
@@ -6216,6 +6270,32 @@ select option,
     pointer-events: none;
 }
 
+.pdev-tile .pdev-num-glyph {
+    position: relative;
+    z-index: 3;
+    font-size: 26px;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    color: var(--fg, #ffffff);
+    text-align: center;
+    line-height: 1;
+    letter-spacing: -0.5px;
+    pointer-events: none;
+}
+
+.pdev-tile.has-name-bar .pdev-num-glyph {
+    margin-bottom: 6px;
+}
+
+.pdev-tile.has-group-bar .pdev-num-glyph {
+    margin-top: 6px;
+}
+
+.pdev-tile.has-group-bar.has-name-bar .pdev-num-glyph {
+    margin-top: 4px;
+    margin-bottom: 4px;
+}
+
 .pdev-tile.has-name-bar .md{
     margin-bottom: 8px;
 }
@@ -6247,7 +6327,8 @@ select option,
 /* Auto-contrast luminance overrides for light buttons / filled progress bars */
 .pdev-tile.pdev-tile-light .md,
 .pdev-tile.pdev-tile-light .material-icons-outlined,
-.pdev-tile.pdev-tile-light .pdev-text-only {
+.pdev-tile.pdev-tile-light .pdev-text-only,
+.pdev-tile.pdev-tile-light .pdev-num-glyph {
     color: #0a0a0a !important;
     text-shadow: 0 1px 1px rgba(255, 255, 255, 0.45);
 }
@@ -6359,7 +6440,8 @@ select option,
 }
 
 .pdev-tile.has-album-art .md,
-.pdev-tile.has-album-art .pdev-text-only {
+.pdev-tile.has-album-art .pdev-text-only,
+.pdev-tile.has-album-art .pdev-num-glyph {
     position: relative;
     z-index: 2;
     filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.85));

@@ -160,6 +160,34 @@ def get_manifest(name):
     return _manifests.get(name, {})
 
 
+def is_hardware_plugin(name, manifest=None):
+    """Return True if the plugin is a hardware addon/plugin.
+
+    Plugins declare themselves as hardware plugins by specifying in plugin.json:
+      "hardware_plugin": true
+    or
+      "type": "hardware"
+    or
+      "category": "hardware"
+    or
+      "capabilities": {"hardware": true, "lighting_provider": true, ...}
+
+    Built-in hardware integrations (ha, openrgb, matrix_display) are also recognized.
+    """
+    if name in ("ha", "openrgb", "matrix_display"):
+        return True
+    if manifest is None:
+        manifest = get_manifest(name) or {}
+    if manifest.get("hardware_plugin") or manifest.get("hardware") or manifest.get("category") == "hardware":
+        return True
+    if manifest.get("type") == "hardware":
+        return True
+    caps = manifest.get("capabilities") or {}
+    if caps.get("hardware") or caps.get("lighting_provider"):
+        return True
+    return False
+
+
 def refresh_settings(name):
     """Re-merge connector get_settings() into the cached manifest.
 
@@ -449,6 +477,11 @@ def _stop_plugin(name):
         log.warning("[pm] %s stop failed: %s", name, e)
     del _instances[name]
     log.info("[pm] stopped %s", name)
+    try:
+        import warning_state
+        warning_state.clear_plugin_warnings(name)
+    except Exception:
+        pass
     sync_plugin_themes()
 
 
@@ -527,6 +560,7 @@ def sync_plugin_themes():
         return None
 
     running_themed = []
+    covered_exes = set()
     for p in profiles:
         if not isinstance(p, dict) or not p.get("enabled", True):
             continue
@@ -535,9 +569,14 @@ def sync_plugin_themes():
         pexe = str(p.get("exe") or "").lower().replace(".exe", "").strip()
         if not pexe or pexe not in running_exes:
             continue
+        # A profile qualifies if it has a theme, OR if either feature toggle is on.
+        # Don't use the theme dict as a gate — the CC/lighting flags are independent.
         th = _profile_theme(p)
-        if th:
-            running_themed.append((p, th))
+        wants_cc = p.get("theme_override", True)
+        wants_lighting = p.get("lighting_theme_enabled", True)
+        if th or wants_cc or wants_lighting:
+            running_themed.append((p, th or {}))
+            covered_exes.add(pexe)
 
     # ── Also check legacy plugin-level themes (plugins without a profile) ──
     # (keeps backward compat for plugin manifests that declare theme directly)
@@ -553,12 +592,8 @@ def sync_plugin_themes():
             continue
         exe_target = pcfg.get("exe_path") or manifest.get("exe_default") or ""
         exe_key = str(exe_target).lower().replace(".exe", "").strip()
-        # Only pick up legacy if NOT already covered by a profile
-        covered = any(
-            str(p.get("exe") or "").lower().replace(".exe", "").strip() == exe_key
-            for p, _ in running_themed
-        )
-        if not covered and exe_key in running_exes:
+        # Only pick up legacy if NOT already covered by a real profile
+        if exe_key not in covered_exes and exe_key in running_exes:
             legacy_candidate = (name, theme_def)
             break
 
@@ -630,16 +665,20 @@ def sync_plugin_themes():
 
     _active_themed_plugin = candidate_id
 
-    # Control-Centre theme
+    # Control-Centre theme — re-resolve at apply time so manifest fallback works
+    # even when selected_theme was stored as {} (no custom colours on the profile).
     if selected_profile.get("theme_override", True):
-        theme_payload = {
-            "mode": selected_theme.get("mode", "custom"),
-            "accent": selected_theme.get("accent", "#ff5500"),
-            "neon": selected_theme.get("neon", "#ffaa00"),
-        }
-        _cfg["theme"] = theme_payload
-        log.info("[pm] latched game theme for '%s': %s", candidate_id, theme_payload)
-        _broadcast_theme(theme_payload)
+        resolved_theme = selected_theme if (selected_theme.get("accent") or selected_theme.get("neon")) \
+            else _profile_theme(selected_profile)
+        if resolved_theme:
+            theme_payload = {
+                "mode": resolved_theme.get("mode", "custom"),
+                "accent": resolved_theme.get("accent", "#ff5500"),
+                "neon": resolved_theme.get("neon", "#ffaa00"),
+            }
+            _cfg["theme"] = theme_payload
+            log.info("[pm] latched game theme for '%s': %s", candidate_id, theme_payload)
+            _broadcast_theme(theme_payload)
 
     # Hardware Lighting theme
     if selected_profile.get("lighting_theme_enabled", True):
@@ -948,12 +987,37 @@ def get_plugin_button_states():
             labels = btn.get("labels") or {}
             is_on, lbl, val_raw = _parse_button_state_value(val, labels)
 
-            states[f"{pname}:{bid}"] = {
+            # Support dynamic max bounds via max_key or static max
+            b_max = btn.get("max")
+            max_key = btn.get("max_key")
+            if max_key:
+                dyn_max = p_status.get(max_key)
+                if dyn_max is None:
+                    dyn_max = p_state.get(max_key)
+                if dyn_max is not None:
+                    try:
+                        b_max = float(dyn_max)
+                    except (ValueError, TypeError):
+                        pass
+
+            b_min = btn.get("min", 0)
+
+            b_entry = {
                 "active": bool(is_on),
                 "value": val_raw,
                 "label": str(lbl),
                 "timestamp": time.time(),
             }
+            if "display_mode" in btn:
+                b_entry["display_mode"] = btn["display_mode"]
+            if "unit" in btn:
+                b_entry["unit"] = btn["unit"]
+            if b_max is not None:
+                b_entry["max"] = b_max
+            if b_min is not None:
+                b_entry["min"] = b_min
+
+            states[f"{pname}:{bid}"] = b_entry
     return states
 
 

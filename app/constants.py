@@ -46,6 +46,12 @@ DEFAULT_CONFIG = {
         {"name": "Next", "type": "MEDIA_NEXT", "icon": "skip-next", "color": ""},
         {"name": "Spotify", "type": "MEDIA_EJECT", "icon": "eject", "color": ""},
     ],
+    "panel_core": [
+        {"name": "PC Stats", "type": "CORE", "core_action": "display", "icon": "monitor", "color": ""},
+        {"name": "Overlay", "type": "CORE", "core_action": "overlay", "icon": "speedometer", "color": ""},
+        {"name": "Mute Mic", "type": "CORE", "core_action": "mic", "icon": "microphone", "color": ""},
+        {"name": "Settings", "type": "CORE", "core_action": "settings", "icon": "cog", "color": ""},
+    ],
     "panel_sliders": [
         {"id": "app_volume", "enabled": True},
         {"id": "master_volume", "enabled": True},
@@ -56,6 +62,7 @@ DEFAULT_CONFIG = {
         {"id": "button_box", "enabled": True, "local": True, "remote": True},
         {"id": "sliders", "enabled": True, "local": True, "remote": True},
         {"id": "utility", "enabled": True, "local": True, "remote": True},
+        {"id": "core", "enabled": True, "local": True, "remote": True},
     ],
     "panel_gauges": {"source": "pc_stats", "enabled": True},
     "user_name": "",

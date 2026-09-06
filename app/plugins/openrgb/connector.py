@@ -290,6 +290,56 @@ class OpenRGBConnector(BaseConnector):
 
     # ── Internal: Profile Application ────────────────────────────
 
+    def _load_local_profile_resilient(self, name: str) -> bool:
+        """Load profile from local .orp file, slicing or padding colors to match live device LED counts."""
+        import openrgb.utils
+        found_path = None
+        for base in (os.environ.get("APPDATA", ""), os.environ.get("LOCALAPPDATA", "")):
+            if not base:
+                continue
+            p = os.path.join(base, "OpenRGB", f"{name}.orp")
+            if os.path.isfile(p):
+                found_path = p
+                break
+        if not found_path:
+            return False
+
+        with open(found_path, "rb") as f:
+            controllers = openrgb.utils.LocalProfile.unpack(f).controllers
+
+        pairs = []
+        for device in self._client.devices:
+            for nc in controllers:
+                if (nc.name == device.name
+                        and nc.device_type == device.type
+                        and nc.metadata.description == device.metadata.description):
+                    controllers.remove(nc)
+                    pairs.append((nc, device))
+                    break
+
+        if not pairs:
+            return False
+
+        for nc, device in pairs:
+            colors = nc.colors
+            n_leds = len(device.leds)
+            if len(colors) > n_leds:
+                colors = colors[:n_leds]
+            elif len(colors) < n_leds:
+                pad = colors[-1] if colors else openrgb.utils.RGBColor(0, 0, 0)
+                colors = colors + [pad] * (n_leds - len(colors))
+            try:
+                device.set_colors(colors, fast=True)
+                if nc.active_mode != device.active_mode:
+                    try:
+                        device.set_mode(nc.active_mode)
+                    except Exception:
+                        pass
+            except Exception as ex:
+                log.warning(f"[openrgb] Failed to set colors on '{device.name}': {ex}")
+
+        return True
+
     def _apply_profile(self, name: str):
         """Instruct OpenRGB to apply the profile over the SDK socket (instantaneous)."""
         if not name:
@@ -302,32 +352,31 @@ class OpenRGBConnector(BaseConnector):
         with self._lock:
             if not self._client:
                 self.connect()
-    
+
             if not self._client:
                 log.warning(f"[openrgb] Cannot apply '{clean_name}': OpenRGB SDK server is not connected. Please click 'Start Server' in OpenRGB.")
                 return
-    
+
             try:
                 applied = False
                 try:
-                    # Prefer loading the profile from the local .orp file
-                    # (local=True reads %APPDATA%\OpenRGB\<name>.orp). The
-                    # server-side load_profile only works when the SDK server
-                    # reports a non-empty profile list, which the headless
-                    # service instance does not — so local load is the reliable
-                    # path that actually pushes colors to the LEDs.
-                    self._client.load_profile(clean_name, local=True)
-                    applied = True
-                except Exception:
+                    applied = self._load_local_profile_resilient(clean_name)
+                except Exception as ex:
+                    log.debug(f"[openrgb] Resilient local load error for '{clean_name}': {ex}")
+
+                if not applied:
                     try:
-                        from openrgb.utils import Profile
-                        self._client.load_profile(Profile(clean_name))
+                        self._client.load_profile(clean_name, local=True)
                         applied = True
                     except Exception:
-                        self._client.load_profile(clean_name)
-                        applied = True
-                # load_profile (local or server) stages colors; show() is what
-                # pushes them to the LEDs.
+                        try:
+                            from openrgb.utils import Profile
+                            self._client.load_profile(Profile(clean_name))
+                            applied = True
+                        except Exception:
+                            self._client.load_profile(clean_name)
+                            applied = True
+
                 try:
                     self._client.show()
                 except Exception as e:
@@ -356,8 +405,25 @@ class OpenRGBConnector(BaseConnector):
     
             if self._client is not None:
                 try:
-                    from openrgb.utils import RGBColor
-                    self._client.set_color(RGBColor(red=r, green=g, blue=b))
+                    from openrgb.utils import RGBColor, ModeColors
+                    target_color = RGBColor(red=r, green=g, blue=b)
+                    devices = getattr(self._client, "devices", []) or []
+                    for device in devices:
+                        try:
+                            # If device mode doesn't accept color, switch to Direct or Static
+                            if hasattr(device, "modes") and hasattr(device, "active_mode"):
+                                active_m = device.modes[device.active_mode]
+                                if getattr(active_m, "color_mode", None) not in (ModeColors.PER_LED, ModeColors.MODE_SPECIFIC):
+                                    direct_mode = next((m for m in device.modes if m.name.lower() in ("direct", "static", "custom")), None)
+                                    if direct_mode:
+                                        device.set_mode(direct_mode)
+                            device.set_color(target_color)
+                        except Exception as dev_err:
+                            log.debug("device %s set_color error: %s", getattr(device, "name", "?"), dev_err)
+                    try:
+                        self._client.show()
+                    except Exception:
+                        pass
                     log.info("colour #%02x%02x%02x applied via OpenRGB SDK", r, g, b)
                 except Exception as e:
                     log.warning("set_color failed: %s", e)

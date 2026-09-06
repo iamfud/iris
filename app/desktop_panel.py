@@ -344,9 +344,14 @@ def _save_geometry(state):
 def _run(width, height, x=None, y=None, pinned=False):
     """Entry point for the pywebview desktop companion process."""
     try:
+        import os
         import paths
         wv_data = paths.get_webview_data_dir("WebView2_Companion")
         os.environ["WEBVIEW2_USER_DATA_FOLDER"] = wv_data
+        safe_args = "--disable-gpu-compositing --disable-direct-composition"
+        existing = os.environ.get("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "")
+        if safe_args not in existing:
+            os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = f"{existing} {safe_args}".strip()
     except Exception:
         pass
 

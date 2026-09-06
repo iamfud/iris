@@ -456,6 +456,7 @@
   let lastScrollTop = 0;
   let pluginsConfig = {};
   let selectedPlugin = null;
+  let selectedHardwarePlugin = null;
   let deviceStatus = {};
   let alarms = [];
   let editingAlarmId = null;
@@ -542,9 +543,10 @@
         } else {
           currentPage = page;
           selectedPlugin = null;
+          selectedHardwarePlugin = null;
           exitPanelView();
           renderPage();
-          if (page === "features" || page === "alarms" || page === "settings") fetchConfig();
+          if (page === "hardware" || page === "features" || page === "alarms" || page === "settings") { fetchPluginsConfig(); fetchConfig(); }
           else if (page === "plugins") { fetchPluginsConfig(); fetchConfig(); }
           else if (page === "vision") fetchVision();
           else { visionInWizard = false; stopTestPoll(); }
@@ -555,12 +557,14 @@
 
   window.navigateToPage = function (pageName) {
     if (!pageName) return;
+    if (pageName === "features") pageName = "hardware";
     const targetNav = document.querySelector(`.nav-item[data-page="${pageName}"]`);
     if (targetNav) {
       targetNav.click();
     } else {
       currentPage = pageName;
       selectedPlugin = null;
+      selectedHardwarePlugin = null;
       exitPanelView();
       renderPage();
     }
@@ -665,12 +669,13 @@
         const prev = pluginState;
         pluginState = next;
         // In-place live updates only — never rebuild the whole page from poll.
-        if (currentPage === "plugins" && selectedPlugin && settingsRenderer) {
+        const activePlg = (currentPage === "hardware" ? selectedHardwarePlugin : selectedPlugin);
+        if ((currentPage === "plugins" || currentPage === "hardware") && activePlg && settingsRenderer) {
           var dataEl = main.querySelector(".plugin-data-container");
-          if (dataEl && next[selectedPlugin]) {
-            var snap = pluginSnapshots[selectedPlugin] || next[selectedPlugin];
+          if (dataEl && next[activePlg]) {
+            var snap = pluginSnapshots[activePlg] || next[activePlg];
             var newHtml = '<span class="plugin-edit-label">DATA</span>' +
-              settingsRenderer._renderPluginData(selectedPlugin, snap, next[selectedPlugin]);
+              settingsRenderer._renderPluginData(activePlg, snap, next[activePlg]);
             if (dataEl.innerHTML !== newHtml) {
               dataEl.innerHTML = newHtml;
             }
@@ -843,6 +848,8 @@
         renderNotifications();
       } else if (currentPage === "library") {
         renderLibrary();
+      } else if (currentPage === "hardware" || currentPage === "features") {
+        renderHardwarePage();
       } else if (currentPage === "plugins") {
         if (selectedPlugin) {
           renderPluginSettings(selectedPlugin);
@@ -851,8 +858,6 @@
         }
       } else if (settingsRenderer && settingsRenderer.getPage(currentPage)) {
         renderDeclarativePage(currentPage);
-      } else if (currentPage === "features") {
-        renderFeatures();
       } else if (currentPage === "vision") {
         renderVision();
       } else if (currentPage === "automations") {
@@ -946,7 +951,7 @@
         if (featureConfig.theme && typeof window.applyTheme === "function") {
           window.applyTheme(featureConfig.theme);
         }
-        if (currentPage === "features" || currentPage === "alarms" || currentPage === "settings" || (currentPage === "plugins" && selectedPlugin)) renderPage();
+        if (currentPage === "hardware" || currentPage === "features" || currentPage === "alarms" || currentPage === "settings" || (currentPage === "plugins" && selectedPlugin)) renderPage();
         setTimeout(checkLightingWizard, 1200);
       }
     } catch (_) {}
@@ -1410,13 +1415,106 @@
         const nextJson = JSON.stringify(next);
         pluginsConfig = next;
         if (prevJson !== nextJson) {
-          if (currentPage === "plugins") renderPage();
+          if (currentPage === "plugins" || currentPage === "hardware" || currentPage === "features") renderPage();
           else if (currentPage === "dashboard") renderDashboard();
         }
       }
     } catch (_) {}
     _fetchPluginsConfigBusy = false;
     setTimeout(fetchPluginsConfig, 30000);
+  }
+
+  function renderHardwarePage() {
+    if (selectedHardwarePlugin) {
+      renderPluginSettings(selectedHardwarePlugin);
+      return;
+    }
+
+    const allKeys = Object.keys(pluginsConfig);
+    const hwKeys = allKeys.filter((k) => {
+      const p = pluginsConfig[k];
+      return p && (p.is_hardware || k === "matrix_display" || k === "ha" || k === "openrgb");
+    });
+
+    if (!hwKeys.includes("matrix_display")) {
+      hwKeys.unshift("matrix_display");
+    } else {
+      hwKeys.sort((a, b) => (a === "matrix_display" ? -1 : b === "matrix_display" ? 1 : 0));
+    }
+
+    const tiles = hwKeys.map((name) => {
+      const p = pluginsConfig[name] || {};
+      const icon = p.icon || (name === "matrix_display" ? "developer_board" : (name === "ha" ? "home" : "palette"));
+      const isCore = p.is_core || (name === "matrix_display");
+      let statusCode = p.status_code || "inactive";
+      let statusLabel = p.status_label || (p.running ? "Active" : "Offline");
+      if (name === "matrix_display" && typeof deviceStatus !== "undefined" && deviceStatus) {
+        if (deviceStatus.connected) {
+          statusCode = "active";
+          statusLabel = `Connected (${deviceStatus.port || "USB"})`;
+        } else if (!p.running) {
+          statusCode = "inactive";
+          statusLabel = "Offline";
+        }
+      }
+      const statusColor = STATUS_COLORS[statusCode] || (statusCode === "active" ? "var(--neon-grn)" : "var(--fg-dim)");
+      const desc = p.description || (name === "matrix_display" ? "Physical 32x8 LED pixel matrix display connected via USB serial" : "");
+
+      return `
+        <div class="dash-plugin profile-card hw-plugin-tile" data-name="${esc(name)}" style="cursor:pointer;">
+          <div class="dash-plugin-icon">
+            <span class="material-icons-outlined">${esc(icon)}</span>
+          </div>
+          <div class="dash-plugin-info" style="flex:1;min-width:0;">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span class="dash-plugin-name" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(p.display_name || name)}</span>
+              <span class="profile-card-badge ${isCore ? 'profile-badge-default' : 'profile-badge-app'}">
+                ${isCore ? 'Core Hardware' : 'Hardware Addon'}
+              </span>
+            </div>
+            <div class="dash-plugin-status" style="display:flex;align-items:center;gap:8px;font-size:12px;margin-top:2px;">
+              <span style="color:${statusColor};font-weight:600;">● ${esc(statusLabel)}</span>
+              ${desc ? `<span style="color:var(--fg-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">· ${esc(desc)}</span>` : ''}
+            </div>
+          </div>
+          <span class="material-icons-outlined plugin-tile-arrow" style="margin-left:auto;">chevron_right</span>
+        </div>`;
+    }).join("");
+
+    main.innerHTML = `
+      <header>
+        <div class="header-left">
+          <button class="hamburger" id="hamburger" aria-label="Menu">
+            <span class="material-icons-outlined">menu</span>
+          </button>
+          <div>
+            <h1>Hardware Plugins</h1>
+            <p>Physical peripherals, matrix display &amp; smart home integrations</p>
+          </div>
+        </div>
+        <button class="done-btn" id="done-btn">Done</button>
+      </header>
+      <section class="content settings-content" style="display:flex;flex-direction:column;gap:12px;padding:24px;">
+        ${tiles || '<div class="card"><p style="color:var(--fg-dim);margin:0">No hardware plugins detected</p></div>'}
+      </section>`;
+
+    main.querySelectorAll(".hw-plugin-tile").forEach((el) => {
+      el.addEventListener("click", () => {
+        selectedHardwarePlugin = el.dataset.name;
+        renderPage();
+      });
+    });
+
+    const doneBtn = document.getElementById("done-btn");
+    if (doneBtn) {
+      doneBtn.addEventListener("click", () => {
+        currentPage = "dashboard";
+        navItems.forEach((n) => n.classList.toggle("active", n.dataset.page === "dashboard"));
+        renderPage();
+      });
+    }
+
+    rebindHamburger();
   }
 
   function renderPlugins() {
@@ -1482,27 +1580,41 @@
           '</button>' +
           '<div>' +
             '<h1>' + esc(p.display_name || name) + '</h1>' +
+            (currentPage === "hardware" ? '<p>Hardware Plugin · Peripheral &amp; service configuration</p>' : '') +
           '</div>' +
         '</div>' +
         '<div style="display:flex;align-items:center;gap:8px">' +
-          '<button class="done-btn" id="back-btn">Back</button>' +
+          '<button class="done-btn" id="back-btn">' + (currentPage === "hardware" ? 'Back to Hardware' : 'Back') + '</button>' +
           '<button class="done-btn" id="done-btn">Done</button>' +
         '</div>' +
       '</header>' +
       contentHtml;
 
-    function returnToDashboard() {
-      selectedPlugin = null;
-      currentPage = "dashboard";
-      navItems.forEach((n) => n.classList.toggle("active", n.dataset.page === "dashboard"));
-      renderPage();
+    function returnFromPlugin() {
+      if (currentPage === "hardware") {
+        selectedHardwarePlugin = null;
+        renderPage();
+      } else {
+        selectedPlugin = null;
+        currentPage = "dashboard";
+        navItems.forEach((n) => n.classList.toggle("active", n.dataset.page === "dashboard"));
+        renderPage();
+      }
     }
 
     var backBtn = document.getElementById("back-btn");
-    if (backBtn) backBtn.addEventListener("click", returnToDashboard);
+    if (backBtn) backBtn.addEventListener("click", returnFromPlugin);
 
     var doneBtn = document.getElementById("done-btn");
-    if (doneBtn) doneBtn.addEventListener("click", returnToDashboard);
+    if (doneBtn) {
+      doneBtn.addEventListener("click", () => {
+        selectedHardwarePlugin = null;
+        selectedPlugin = null;
+        currentPage = "dashboard";
+        navItems.forEach((n) => n.classList.toggle("active", n.dataset.page === "dashboard"));
+        renderPage();
+      });
+    }
 
     rebindHamburger();
 
@@ -1586,6 +1698,17 @@
   function savePluginField(name, field, value) {
     if (!pluginsConfig[name]) pluginsConfig[name] = {};
     pluginsConfig[name][field] = value;
+    if (name === "matrix_display") {
+      featureConfig[field] = value;
+      return apiFetch(`${API_BASE}/api/config`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ [field]: value }),
+      }).then(() => {
+        fetchConfig();
+        fetchPluginsConfig();
+      }).catch(() => {});
+    }
     return apiFetch(`${API_BASE}/api/plugins/config/${name}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -3018,7 +3141,8 @@
       return lines;
     }
 
-    function getAnnotationLayout(ann) {
+    function getAnnotationLayout(ann, scale) {
+      const s = scale || 1;
       const w = fitW || 1;
       const h = fitH || 1;
       const x1 = ann.x1 * w;
@@ -3026,36 +3150,42 @@
       const x2 = ann.x2 * w;
       const y2 = ann.y2 * h;
 
-      ctx.save();
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.font = "600 13px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
-      const padH = 12, padV = 6;
+      // All pixel constants are divided by s so that after the canvas
+      // scale(s) transform they appear at a fixed screen-pixel size (~1.35x base).
+      const fontSize = 17 / s;
+      const padH = 15 / s, padV = 7.5 / s;
+      const lineHeight = 23 / s;
+      const minBoxW = 48 / s;
+      const minBoxH = 34 / s;
+      const boxOffset = 12 / s;
       const text = ann.text || "";
-      
+
+      // Measure at the scaled font size using the live context
+      ctx.save();
+      ctx.font = `600 ${fontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif`;
       let lines = [text];
-      let boxW = 36;
-      let boxH = 26;
-      const lineHeight = 18;
+      let boxW = minBoxW;
+      let boxH = minBoxH;
 
       if (ann.box_width) {
-        boxW = Math.max(ann.box_width * w, 50);
+        boxW = Math.max(ann.box_width * w, minBoxW);
         const maxTextW = boxW - padH * 2;
         lines = wrapText(ctx, text, maxTextW);
-        boxH = Math.max(lines.length * lineHeight + padV * 2, 26);
+        boxH = Math.max(lines.length * lineHeight + padV * 2, minBoxH);
       } else {
         const metrics = ctx.measureText(text);
-        boxW = Math.max(metrics.width + padH * 2, 36);
-        boxH = 26;
+        boxW = Math.max(metrics.width + padH * 2, minBoxW);
+        boxH = minBoxH;
       }
-
-      let boxX = x2 + 10;
-      let boxY = y2 - boxH / 2;
-      if (boxX + boxW > w) boxX = x2 - boxW - 10;
-      if (boxY + boxH > h) boxY = h - boxH - 6;
-      if (boxY < 6) boxY = 6;
       ctx.restore();
 
-      return { x1, y1, x2, y2, boxX, boxY, boxW, boxH, lines, lineHeight, padH, padV };
+      let boxX = x2 + boxOffset;
+      let boxY = y2 - boxH / 2;
+      if (boxX + boxW > w) boxX = x2 - boxW - boxOffset;
+      if (boxY + boxH > h) boxY = h - boxH - boxOffset / 2;
+      if (boxY < boxOffset / 2) boxY = boxOffset / 2;
+
+      return { x1, y1, x2, y2, boxX, boxY, boxW, boxH, lines, lineHeight, padH, padV, fontSize };
     }
 
     function distToSegment(px, py, x1, y1, x2, y2) {
@@ -3085,7 +3215,7 @@
           }
         }
 
-        const layout = getAnnotationLayout(ownerAnn);
+        const layout = getAnnotationLayout(ownerAnn, viewScale);
         const sBoxTopLeft = worldToScreen(layout.boxX / (fitW || 1), layout.boxY / (fitH || 1));
         const sBoxW = layout.boxW * viewScale;
         const sBoxH = layout.boxH * viewScale;
@@ -3107,15 +3237,15 @@
       for (let i = annotations.length - 1; i >= 0; i--) {
         const ann = annotations[i];
         if (ann.type === "path") continue;
-        const layout = getAnnotationLayout(ann);
+        const layout = getAnnotationLayout(ann, viewScale);
         const sHead = worldToScreen(layout.x1 / (fitW || 1), layout.y1 / (fitH || 1));
         const sTail = worldToScreen(layout.x2 / (fitW || 1), layout.y2 / (fitH || 1));
 
-        if (Math.hypot(sx - sHead.sx, sy - sHead.sy) <= 14) {
+        if (Math.hypot(sx - sHead.sx, sy - sHead.sy) <= 17) {
           return { index: i, target: "head", annotation: ann, layout };
         }
 
-        if (Math.hypot(sx - sTail.sx, sy - sTail.sy) <= 12) {
+        if (Math.hypot(sx - sTail.sx, sy - sTail.sy) <= 15) {
           let ownerIdx = i;
           let ownerAnn = ann;
           if (!ann.text) {
@@ -3146,8 +3276,9 @@
       return null;
     }
 
-    function drawArrow(context, fromX, fromY, toX, toY, color, isMovingTail) {
-      const headlen = 15;
+    function drawArrow(context, fromX, fromY, toX, toY, color, isMovingTail, scale) {
+      const s = scale || 1;
+      const headlen = 20 / s;  // 20 screen-px arrowhead (~1.35x)
       const dx = toX - fromX;
       const dy = toY - fromY;
       const angle = Math.atan2(dy, dx);
@@ -3155,11 +3286,11 @@
       context.save();
       context.strokeStyle = color;
       context.fillStyle = color;
-      context.lineWidth = 3.5;
+      context.lineWidth = 4.5 / s;  // 4.5 screen-px shaft (~1.3x)
       context.lineCap = "round";
       context.lineJoin = "round";
       context.shadowColor = "rgba(0,0,0,0.85)";
-      context.shadowBlur = 6;
+      context.shadowBlur = 5 / s;
 
       // Line from head to tail
       context.beginPath();
@@ -3177,10 +3308,10 @@
 
       // Tail handle circle
       context.beginPath();
-      context.arc(toX, toY, isMovingTail ? 6.5 : 5, 0, Math.PI * 2);
+      context.arc(toX, toY, (isMovingTail ? 8.5 : 6.5) / s, 0, Math.PI * 2);
       context.fill();
       context.strokeStyle = "#ffffff";
-      context.lineWidth = 2;
+      context.lineWidth = 2.5 / s;
       context.stroke();
       context.restore();
     }
@@ -3206,21 +3337,24 @@
       context.restore();
     }
 
-    function drawAnnotationLabel(context, layout, text, color) {
+    function drawAnnotationLabel(context, layout, text, color, scale) {
+      const s = scale || 1;
       context.save();
-      context.font = "600 13px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+      // fontSize is pre-computed by getAnnotationLayout as 17/s
+      const fontSize = layout.fontSize || (17 / s);
+      context.font = `600 ${fontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif`;
       const { boxX, boxY, boxW, boxH, lines, lineHeight, padH, padV } = layout;
 
       // Background badge plate
       context.fillStyle = "rgba(12, 14, 18, 0.95)";
       context.strokeStyle = color;
-      context.lineWidth = 2;
+      context.lineWidth = 2.5 / s;  // 2.5 screen-px border
       context.shadowColor = "rgba(0,0,0,0.85)";
-      context.shadowBlur = 8;
+      context.shadowBlur = 6 / s;
 
       context.beginPath();
       if (context.roundRect) {
-        context.roundRect(boxX, boxY, boxW, boxH, 6);
+        context.roundRect(boxX, boxY, boxW, boxH, 5 / s);
       } else {
         context.rect(boxX, boxY, boxW, boxH);
       }
@@ -3259,34 +3393,34 @@
       ctx.scale(viewScale, viewScale);
 
       if (annotationsVisible) {
-        // 1. Draw all saved freehand paths
+        // 1. Draw all saved freehand paths (remain zoom-scaled by design)
         annotations.forEach((ann) => {
           if (ann.type === "path") {
             drawPath(ctx, ann);
           }
         });
 
-        // 2. Draw all arrow lines and heads
+        // 2. Draw all arrow lines and heads (zoom-invariant via scale arg)
         annotations.forEach((ann, idx) => {
           if (ann.type !== "path") {
-            const layout = getAnnotationLayout(ann);
+            const layout = getAnnotationLayout(ann, viewScale);
             const isMoving = draggingTailIdx === idx;
-            drawArrow(ctx, layout.x1, layout.y1, layout.x2, layout.y2, ann.color || "#48B2E9", isMoving);
+            drawArrow(ctx, layout.x1, layout.y1, layout.x2, layout.y2, ann.color || "#48B2E9", isMoving, viewScale);
           }
         });
       }
 
-      // 3. Draw in-progress new arrow
+      // 3. Draw in-progress new arrow (zoom-invariant)
       if (dragArrow) {
-        drawArrow(ctx, dragArrow.x1 * fitW, dragArrow.y1 * fitH, dragArrow.x2 * fitW, dragArrow.y2 * fitH, currentColor || "#48B2E9", true);
+        drawArrow(ctx, dragArrow.x1 * fitW, dragArrow.y1 * fitH, dragArrow.x2 * fitW, dragArrow.y2 * fitH, currentColor || "#48B2E9", true, viewScale);
       }
 
       if (annotationsVisible) {
-        // 4. Draw label badges topmost
+        // 4. Draw label badges topmost (zoom-invariant via scale arg)
         annotations.forEach((ann) => {
           if (ann.type !== "path" && ann.text) {
-            const layout = getAnnotationLayout(ann);
-            drawAnnotationLabel(ctx, layout, ann.text, ann.color || "#48B2E9");
+            const layout = getAnnotationLayout(ann, viewScale);
+            drawAnnotationLabel(ctx, layout, ann.text, ann.color || "#48B2E9", viewScale);
           }
         });
       }
@@ -3878,26 +4012,26 @@
             expCtx.save();
             expCtx.scale(scale, scale);
 
-            // 1. Draw all freehand paths
+            // 1. Draw all freehand paths (zoom-scaled in export by design)
             annotations.forEach((ann) => {
               if (ann.type === "path") {
                 drawPath(expCtx, ann);
               }
             });
 
-            // 2. Draw all arrow lines and heads
+            // 2. Draw all arrow lines and heads (zoom-invariant: pass scale)
             annotations.forEach((ann) => {
               if (ann.type !== "path") {
-                const layout = getAnnotationLayout(ann);
-                drawArrow(expCtx, layout.x1, layout.y1, layout.x2, layout.y2, ann.color || "#48B2E9", false);
+                const layout = getAnnotationLayout(ann, scale);
+                drawArrow(expCtx, layout.x1, layout.y1, layout.x2, layout.y2, ann.color || "#48B2E9", false, scale);
               }
             });
 
-            // 3. Draw label badges topmost
+            // 3. Draw label badges topmost (zoom-invariant: pass scale)
             annotations.forEach((ann) => {
               if (ann.type !== "path" && ann.text) {
-                const layout = getAnnotationLayout(ann);
-                drawAnnotationLabel(expCtx, layout, ann.text, ann.color || "#48B2E9");
+                const layout = getAnnotationLayout(ann, scale);
+                drawAnnotationLabel(expCtx, layout, ann.text, ann.color || "#48B2E9", scale);
               }
             });
 
@@ -5007,6 +5141,31 @@
       });
   }
 
+  function defaultCoreSlots() {
+    return [
+      { name: "PC Stats", type: "CORE", core_action: "display", icon: "monitor", color: "" },
+      { name: "Overlay", type: "CORE", core_action: "overlay", icon: "speedometer", color: "" },
+      { name: "Mute Mic", type: "CORE", core_action: "mic", icon: "microphone", color: "" },
+      { name: "Settings", type: "CORE", core_action: "settings", icon: "cog", color: "" },
+    ];
+  }
+
+  const CORE_ACTION_DEFS = {
+    display: { name: "PC Stats", icon: "monitor", label: "PC Stats Display (Matrix / Companion Screen)" },
+    overlay: { name: "Overlay", icon: "speedometer", label: "Desktop Overlay (In-game HUD)" },
+    mic: { name: "Mute Mic", icon: "microphone", label: "Microphone Mute (Toggle Recording Mic)" },
+    settings: { name: "Settings", icon: "cog", label: "Settings Portal (Configuration & Hub)" },
+    toolbar: { name: "Toolbar", icon: "dock-top", label: "Quick Toolbar (Desktop Capture & Actions Bar)" },
+    lighting: { name: "Lighting Sync", icon: "lightbulb", label: "Lighting Sync (OpenRGB Ambient & Game FX)" },
+    colour_picker: { name: "Colour Picker", icon: "eyedropper", label: "Colour Picker (Screen Eyedropper Magnifier)" },
+    screenshot: { name: "Screenshot", icon: "camera", label: "Screenshot (Fullscreen Capture)" },
+    screenshot_zone: { name: "Snipping Tool", icon: "crop", label: "Snipping Tool (Drag Rectangular Zone)" },
+    note: { name: "Quick Note", icon: "note-text", label: "Quick Note (Sticky Notepad / Log)" },
+    borderless_toggle: { name: "Borderless", icon: "window-maximize", label: "Toggle Borderless (Switch Game Window Mode)" },
+    stopwatch: { name: "Stopwatch", icon: "timer-outline", label: "Stopwatch (Desktop Timer)" },
+    countdown: { name: "Countdown Timer", icon: "timer-sand", label: "Countdown Timer (Alarm)" },
+  };
+
   let _fetchPanelBusy = false;
   function fetchPanel() {
     if (_fetchPanelBusy) {
@@ -5025,6 +5184,7 @@
         panelDraft = {
           panel_board: data.panel_board || [],
           panel_utility: data.panel_utility || [],
+          panel_core: (data.panel_core && data.panel_core.length === 4) ? data.panel_core : defaultCoreSlots(),
           panel_sliders: data.panel_sliders || [],
           panel_layout: data.panel_layout || [],
           panel_gauges: data.panel_gauges || { enabled: true },
@@ -5032,12 +5192,14 @@
           hardware_connected: !!data.hardware_connected,
           panel_profiles: data.panel_profiles || [],
         };
-        // Universal dynamic icon preload: scan board, utility, and all profile boards
+        // Universal dynamic icon preload: scan board, utility, core, and all profile boards
         preloadBoardIcons(panelDraft.panel_board);
         preloadBoardIcons(panelDraft.panel_utility);
+        preloadBoardIcons(panelDraft.panel_core);
         (panelDraft.panel_profiles || []).forEach((p) => {
           if (p && p.board) preloadBoardIcons(p.board);
           if (p && p.utility) preloadBoardIcons(p.utility);
+          if (p && p.core) preloadBoardIcons(p.core);
         });
         panelDirty = false;
         panelEdit = null;
@@ -5052,7 +5214,7 @@
       })
       .catch(() => {
         panelDraft = panelDraft || {
-          panel_board: [], panel_utility: [], panel_sliders: [],
+          panel_board: [], panel_utility: [], panel_core: defaultCoreSlots(), panel_sliders: [],
           panel_layout: [], panel_gauges: { enabled: true }, media_player_path: "",
           panel_profiles: [],
         };
@@ -5424,6 +5586,7 @@
     const hwOn = !!panelDraft.hardware_connected;
     const board = (panelDraft && panelDraft.panel_board) || [];
     const util = (panelDraft && panelDraft.panel_utility) || [];
+    const core = (panelDraft && panelDraft.panel_core) || defaultCoreSlots();
 
     let html =
       '<header>' +
@@ -5452,6 +5615,7 @@
                 targetToggleRow("Gauges (CPU · GPU · FPS)", "gauges") +
                 targetToggleRow("Sliders (Audio / Display)", "sliders") +
                 targetToggleRow("Utility Row", "utility") +
+                targetToggleRow("Core Row", "core") +
                 '<p class="settings-hint" style="margin-top:8px;">Controls which hardware widgets render on your companion display / phone panel across all profiles.</p>') +
 
               // Card 2: Persistent Sliders Setup
@@ -5473,6 +5637,11 @@
               sectionCard("Persistent Utility Row", "grid_view",
                 '<p class="settings-hint" style="margin-bottom:12px;">Persistent custom actions at the base of the panel.</p>' +
                 renderUtilityEditor(util)) +
+
+              // Card 5: Core System Row
+              sectionCard("Core System Row", "build_circle",
+                '<p class="settings-hint" style="margin-bottom:12px;">Dedicated system toggles & controls (PC Stats, Overlay, Mic, Settings, or custom shortcuts).</p>' +
+                renderCoreEditor(core)) +
             '</div>' +
           '</div>' +
         '</div>' +
@@ -5521,6 +5690,7 @@
 
     wireBoardSlots();
     wireUtilitySlots();
+    wireCoreSlots();
     wireActionModal();
   }
 
@@ -5530,6 +5700,9 @@
     const profExe = (p.exe || "").toLowerCase().replace(".exe", "");
     const profName = (p.name || p.id || "").toLowerCase();
     for (const [pluginKey, pluginDef] of Object.entries(pluginsConfig)) {
+      if (pluginDef && (pluginDef.is_hardware || pluginKey === "ha" || pluginKey === "openrgb" || pluginKey === "matrix_display")) {
+        continue;
+      }
       const plgExe = (pluginDef.exe_default || pluginDef.exe_path || "").toLowerCase().replace(".exe", "");
       const plgName = (pluginDef.display_name || pluginKey).toLowerCase();
       if ((profExe && plgExe && (profExe.includes(plgExe) || plgExe.includes(profExe))) ||
@@ -6004,10 +6177,23 @@
   }
 
   function wireUtilitySlots() {
-    document.querySelectorAll(".panel-util-tile").forEach((btn) => {
+    document.querySelectorAll(".panel-util-tile:not(.panel-core-tile)").forEach((btn) => {
       btn.addEventListener("click", () => {
         panelEdit = { scope: "utility", index: parseInt(btn.getAttribute("data-i"), 10), path: [] };
         renderProfilesPage();
+      });
+    });
+  }
+
+  function wireCoreSlots() {
+    document.querySelectorAll(".panel-core-tile").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        panelEdit = { scope: "core", index: parseInt(btn.getAttribute("data-i"), 10), path: [] };
+        if (currentPage === "profiles") {
+          renderProfilesPage();
+        } else {
+          renderPanel();
+        }
       });
     });
   }
@@ -6016,6 +6202,7 @@
   let panelPreviewTarget = (typeof IS_APP !== "undefined" && IS_APP) || (typeof IS_MOBILE !== "undefined" && !IS_MOBILE) ? "desktop" : "remote";
 
   function actionLabel(type) {
+    if (type === "CORE") return "Core Action";
     const a = panelActions.find((x) => x.type === type);
     return a ? a.label : type;
   }
@@ -6041,6 +6228,7 @@
     const hwOn = !!panelDraft.hardware_connected;
     const board = panelProfileCurrent().board;
     const util = panelDraft.panel_utility || [];
+    const core = (panelDraft && panelDraft.panel_core) || defaultCoreSlots();
     const briOn = hwOn && sliderOn("brightness");
 
     const headerBtn = '<button class="done-btn" id="done-btn">Done</button>';
@@ -6080,6 +6268,10 @@
           sectionCard("Utility row", "grid_view",
             targetToggleRow("Utility row", "utility") +
             renderUtilityEditor(util)) +
+          // Core
+          sectionCard("Core row", "build_circle",
+            targetToggleRow("Core row", "core") +
+            renderCoreEditor(core)) +
         '</div>' +
         (panelProfileModal ? renderProfileModal() : '') +
         (panelEdit ? renderActionModal() : '') +
@@ -6158,6 +6350,7 @@
     const boxOn = layout.button_box !== false;
     const slidOn = layout.sliders !== false;
     const utilOn = layout.utility !== false;
+    const coreOn = layout.core !== false;
     const sliders = {};
     ((cfg && cfg.panel_sliders) || (panelDraft && panelDraft.panel_sliders) || []).forEach((r) => { if (r && r.id) sliders[r.id] = r.enabled !== false; });
     const hw = !!(data.hardware_connected !== undefined ? data.hardware_connected
@@ -6172,8 +6365,10 @@
     const prof = panelProfileCurrent();
     const curBoard = board || (prof && prof.board) || [];
     const curUtil = util || (cfg && cfg.panel_utility) || (panelDraft && panelDraft.panel_utility) || [];
+    const curCore = (panelDraft && panelDraft.panel_core) || (cfg && cfg.panel_core) || defaultCoreSlots();
     preloadBoardIcons(curBoard);
     preloadBoardIcons(curUtil);
+    preloadBoardIcons(curCore);
 
     const gaugesHtml = gOn
       ? '<div class="prev-gauges">' +
@@ -6212,7 +6407,9 @@
     if (utilOn) {
       screenHtml += '<div class="prev-util"><div class="pdev-grid">' + utilTilesHtml(curUtil) + '</div></div>';
     }
-    screenHtml += '<div class="prev-core"><div class="pdev-grid">' + coreTilesHtml(data) + '</div></div>';
+    if (coreOn) {
+      screenHtml += '<div class="prev-core"><div class="pdev-grid">' + coreTilesHtml(data, true) + '</div></div>';
+    }
     screenHtml += '</div>';
     screenHtml += '</div>';
 
@@ -6319,6 +6516,21 @@
         '<span class="panel-util-label">Slot ' + (i + 1) + '</span>' +
         '<span class="panel-slot-name">' + esc(s.name || s.type || "Empty") + '</span>' +
         '<span class="panel-slot-type">' + esc(actionLabel(s.type)) + '</span>' +
+      '</button>';
+    }
+    h += '</div>';
+    return h;
+  }
+
+  function renderCoreEditor(core) {
+    let h = '<div class="panel-util-grid">';
+    for (let i = 0; i < 4; i++) {
+      const s = (core && core[i]) || defaultCoreSlots()[i] || { type: "EMPTY", name: "" };
+      let actType = s.type === "CORE" ? (s.name || "Core") : actionLabel(s.type);
+      h += '<button type="button" class="panel-util-tile panel-core-tile" data-i="' + i + '">' +
+        '<span class="panel-util-label">Core ' + (i + 1) + '</span>' +
+        '<span class="panel-slot-name">' + esc(s.name || s.type || "Core") + '</span>' +
+        '<span class="panel-slot-type">' + esc(actType) + '</span>' +
       '</button>';
     }
     h += '</div>';
@@ -6453,19 +6665,23 @@
 
   function renderActionModal() {
     const ctx = panelEdit;
-    const isUtil = ctx.scope === "utility" || ctx.scope === "util";
-    let slot = { name: "", type: "HOTKEY", icon: "gesture-tap-button", color: "", show_name: true, show_icon: true, show_state: true };
-    if (isUtil) {
+    const isCore = ctx.scope === "core";
+    const isUtil = ctx.scope === "utility" || ctx.scope === "util" || isCore;
+    let slot = { name: "", type: isCore ? "CORE" : "HOTKEY", icon: "gesture-tap-button", color: "", show_name: true, show_icon: true, show_state: true };
+    if (isCore) {
+      slot = Object.assign(slot, ((panelDraft && panelDraft.panel_core) || defaultCoreSlots())[ctx.index] || {});
+    } else if (isUtil) {
       slot = Object.assign(slot, (panelDraft.panel_utility || [])[ctx.index] || {});
     } else {
       const list = boardAtPath(ctx.path || []);
       if (ctx.index >= 0 && list[ctx.index]) slot = Object.assign(slot, list[ctx.index]);
     }
     const allowGroup = !isUtil && ctx.scope === "board";
-    let curType = slot.type || "HOTKEY";
+    let curType = slot.type || (isCore ? "CORE" : "HOTKEY");
     if (curType === "PLUGIN_BUTTON" || curType === "REST" || curType.startsWith("MEDIA_")) curType = "TOGGLE";
 
     const typeOptions = [
+      { type: "CORE", label: "Iris Core Action" },
       { type: "HOTKEY", label: "Button" },
       { type: "TOGGLE", label: "Toggle Button" },
       { type: "SHORTCUT", label: "App / Shortcut" },
@@ -6474,6 +6690,8 @@
       { type: "EMPTY", label: "Empty / Spacer" },
       { type: "GROUP", label: "Group / Profile Link" },
     ].filter((a) => allowGroup || a.type !== "GROUP");
+
+    const curCoreAct = slot.core_action || (ctx.index === 0 ? "display" : ctx.index === 1 ? "overlay" : ctx.index === 2 ? "mic" : "settings");
 
     let curEntity = slot.entity || (slot.plugin && slot.button_id ? (slot.plugin + "." + slot.button_id) : "");
     if (!curEntity && slot.openrgb_profile) {
@@ -6494,12 +6712,12 @@
     const hasStateCapability = !isMediaPlayPause && !isActionEntity && (curType === "TOGGLE" || curType === "SENSOR" || (entObj && (entObj.type === "status" || entObj.type === "data" || !!entObj.state_key || !!entObj.openrgb_profile)));
     const showState = (slot.show_state !== false);
     const showProgressFill = (slot.show_progress_fill !== false);
-    const showKeys = (curType !== "EMPTY" && curType !== "AUDIO OUTPUT") && !isAnyMediaControl;
+    const showKeys = (curType !== "EMPTY" && curType !== "AUDIO OUTPUT" && curType !== "CORE") && !isAnyMediaControl;
 
     const initColor = slot.color || "";
     const colorHexVal = (initColor && initColor.startsWith("#") && (initColor.length === 7 || initColor.length === 4))
       ? initColor : "#48B2E9";
-    let curIcon = (slot.icon || "gesture-tap-button").trim();
+    let curIcon = (slot.icon || (curType === "CORE" ? ((CORE_ACTION_DEFS[curCoreAct] && CORE_ACTION_DEFS[curCoreAct].icon) || "cog") : "gesture-tap-button")).trim();
     if (curIcon === "application") curIcon = "apps";
     const curIconChar = mdiChar(curIcon);
     const curHotkey = slot.hotkey || ((slot.keys && slot.keys.length) ? slot.keys.join(",") : "");
@@ -6550,7 +6768,7 @@
     let h = '<div class="panel-modal-backdrop" id="panel-modal">' +
       '<div class="panel-modal panel-modal-wide">' +
       '<div class="panel-modal-header">' +
-        '<h3>' + (isUtil ? ("Edit Utility Button (Slot " + (ctx.index + 1) + ")") : (ctx.index < 0 ? "Add Action" : ("Edit Action (Slot " + (ctx.index + 1) + ")"))) + '</h3>' +
+        '<h3>' + (isCore ? ("Edit Core Button (Slot " + (ctx.index + 1) + ")") : (isUtil ? ("Edit Utility Button (Slot " + (ctx.index + 1) + ")") : (ctx.index < 0 ? "Add Action" : ("Edit Action (Slot " + (ctx.index + 1) + ")")))) + '</h3>' +
         '<span class="panel-modal-subtitle">Configure entity, appearance, and card display</span>' +
       '</div>' +
       '<div class="panel-modal-body-grid" id="pe-body-grid">' +
@@ -6565,8 +6783,18 @@
     typeOptions.forEach((a) => {
       h += '<option value="' + esc(a.type) + '"' + (a.type === curType ? " selected" : "") + ">" + esc(a.label) + "</option>";
     });
-    h += '</select></div>' +
+    h += '</select></div>';
 
+    h += ('<div class="settings-control" id="pe-core-wrap"' + (curType === "CORE" ? '' : ' style="display:none"') + '>' +
+            '<label class="settings-label">Core Action</label>' +
+            '<select class="settings-select" id="pe-core-act">');
+    Object.keys(CORE_ACTION_DEFS).forEach((k) => {
+      const def = CORE_ACTION_DEFS[k];
+      h += '<option value="' + esc(k) + '"' + (curCoreAct === k ? ' selected' : '') + '>' + esc(def.label || def.name) + '</option>';
+    });
+    h +=    ('</select>' +
+            '<span class="settings-hint">Built-in Iris core system action.</span>' +
+          '</div>' +
           '<div class="settings-control" id="pe-entity-wrap">' +
             '<label class="settings-label">Entity (Optional / Quick-Fill)</label>' +
             '<div class="settings-picker-row" style="gap:6px;margin-bottom:6px">' +
@@ -6583,7 +6811,7 @@
             '<label class="settings-label">Target Profile</label>' +
             '<div class="settings-picker-row">' +
               '<select class="settings-select" id="pe-group-profile">' +
-                '<option value="">Select a profile...</option>';
+                '<option value="">Select a profile...</option>');
     ((panelDraft && panelDraft.panel_profiles) || []).forEach((pr) => {
       h += '<option value="' + esc(pr.id) + '"' + ((slot.target_profile || slot.profile_id) === pr.id ? " selected" : "") + '>' + esc(pr.name || pr.id) + '</option>';
     });
@@ -6759,7 +6987,15 @@
         '<button type="button" class="settings-btn" id="pe-up">▲ Move up</button>' +
         '<button type="button" class="settings-btn" id="pe-down">▼ Move down</button>' +
         '<button type="button" class="settings-btn" id="pe-delete">Delete</button>' +
-        '</div>' : '') +
+        '</div>' :
+      (ctx.scope === "core" ?
+        '<div class="panel-modal-sub">' +
+        '<button type="button" class="settings-btn" id="pe-delete">Reset to Default</button>' +
+        '</div>' :
+      (ctx.scope === "utility" || ctx.scope === "util" ?
+        '<div class="panel-modal-sub">' +
+        '<button type="button" class="settings-btn" id="pe-delete">Clear Slot</button>' +
+        '</div>' : ''))) +
       '<button type="button" class="settings-btn" id="pe-cancel">Cancel</button>' +
       '<button type="button" class="settings-btn settings-btn-primary" id="pe-save">Save</button>' +
       '</div></div></div>';
@@ -6867,6 +7103,9 @@
         } else if (action === "slot" && list === "util" && idx >= 0) {
           panelEdit = { scope: "utility", index: idx, path: [] };
           renderPanel();
+        } else if (action === "slot" && list === "core" && idx >= 0) {
+          panelEdit = { scope: "core", index: idx, path: [] };
+          renderPanel();
         }
       });
 
@@ -6911,6 +7150,8 @@
           targetArray = panelProfileCurrent().board;
         } else if (list === "util") {
           targetArray = (panelDraft && panelDraft.panel_utility) || [];
+        } else if (list === "core") {
+          targetArray = (panelDraft && panelDraft.panel_core) || defaultCoreSlots();
         }
 
         if (targetArray) {
@@ -7111,12 +7352,14 @@
       });
     });
 
-    document.querySelectorAll(".panel-util-tile").forEach((btn) => {
+    document.querySelectorAll(".panel-util-tile:not(.panel-core-tile)").forEach((btn) => {
       btn.addEventListener("click", () => {
         panelEdit = { scope: "utility", index: parseInt(btn.getAttribute("data-i"), 10), path: [] };
         renderPanel();
       });
     });
+
+    wireCoreSlots();
 
 
 
@@ -7396,6 +7639,7 @@
   function openPanelView() {
     panelViewMode = true;
     panelNav = [];
+    panelProfileSel = "__default__";
     panelViewSig = "";
     updateViewportMode();
     ensurePanelOverlay();
@@ -7445,6 +7689,7 @@
     const currentBoardSlots = currentBoard();
     const boardSig = currentBoardSlots.map(slotSig).join(";");
     const utilSig = (cfg.panel_utility || []).map(slotSig).join(";");
+    const coreSig = (cfg.panel_core || defaultCoreSlots()).map(slotSig).join(";");
     const lay = (cfg.panel_layout || []).map((r) => r.id + "=E:" + (r.enabled !== false ? 1 : 0) + ",L:" + (r.local !== false ? 1 : 0) + ",R:" + (r.remote !== false ? 1 : 0)).join(";");
     const sl = (cfg.panel_sliders || []).map((r) => r.id + "=" + (r.enabled === false ? 0 : 1)).join(",");
     // Orientation must be part of the signature: boardPagesHtml bakes the
@@ -7459,6 +7704,7 @@
       panelNav.map((g) => g.name || g.type || "").join(">"),
       boardSig,
       utilSig,
+      coreSig,
       lay,
       sl,
       cfg.media_player_path || "",
@@ -7508,6 +7754,7 @@
           panelDraft = {
             panel_board: data.config.panel_board || [],
             panel_utility: data.config.panel_utility || [],
+            panel_core: data.config.panel_core || defaultCoreSlots(),
             panel_sliders: data.config.panel_sliders || [],
             panel_layout: data.config.panel_layout || [],
             panel_gauges: data.config.panel_gauges || { enabled: true },
@@ -7519,6 +7766,7 @@
           panelDraft = {
             panel_board: data.config.panel_board || [],
             panel_utility: data.config.panel_utility || [],
+            panel_core: data.config.panel_core || defaultCoreSlots(),
             panel_sliders: data.config.panel_sliders || [],
             panel_layout: data.config.panel_layout || [],
             panel_gauges: data.config.panel_gauges || { enabled: true },
@@ -7796,6 +8044,9 @@
       if (currentPage === "library") {
         fetchLibraryItems();
       }
+    } else if (msg.type === "screenshot_ready") {
+      screensaverWakeOnEvent();
+      openScreenshotViewer(msg);
     } else if (msg.type === "reload") {
       if ("caches" in window) {
         caches.keys().then((keys) => Promise.all(keys.map((k) => caches.delete(k)))).then(() => {
@@ -8027,6 +8278,7 @@
     const boxOn = layout.button_box !== false;
     const slidOn = layout.sliders !== false;
     const utilOn = layout.utility !== false;
+    const coreOn = layout.core !== false;
     const sliders = {};
     (cfg.panel_sliders || []).forEach((r) => { sliders[r.id] = r.enabled !== false; });
     const hw = !!(live.hardware_connected !== undefined ? live.hardware_connected
@@ -8059,7 +8311,7 @@
       }
     }
     const pageSize = buttonRows * 4;
-    return { isDesktop, gOn, boxOn, slidOn, utilOn, volOn, mvolOn, mixOn, briOn, activeSliderCount, sliderRows, utilRows, buttonRows, pageSize };
+    return { isDesktop, gOn, boxOn, slidOn, utilOn, coreOn, volOn, mvolOn, mixOn, briOn, activeSliderCount, sliderRows, utilRows, buttonRows, pageSize };
   }
 
   function renderPanelView() {
@@ -8072,6 +8324,7 @@
     const isDesktop = layoutSpec.isDesktop;
     const gOn = layoutSpec.gOn;
     const utilOn = layoutSpec.utilOn;
+    const coreOn = layoutSpec.coreOn;
     const boxOn = layoutSpec.boxOn;
     const slidOn = layoutSpec.slidOn;
     const volOn = layoutSpec.volOn;
@@ -8089,8 +8342,10 @@
       ? ((panelNav[panelNav.length - 1].children && panelNav[panelNav.length - 1].children.length) ? panelNav[panelNav.length - 1].children : currentBoard())
       : currentBoard();
     const util = cfg.panel_utility || [];
+    const core = cfg.panel_core || defaultCoreSlots();
     preloadBoardIcons(board);
     preloadBoardIcons(util);
+    preloadBoardIcons(core);
     const gauges = data.gauges || {};
     const volume = data.volume || {};
 
@@ -8170,7 +8425,7 @@
     if (utilOn) {
       html += '<div class="pv-util"><div class="pdev-grid">' + utilTilesHtml(util) + '</div></div>';
     }
-    if (isDesktop ? utilOn : true) {
+    if (coreOn && (isDesktop ? utilOn : true)) {
       html += '<div class="pv-core"><div class="pdev-grid">' + coreTilesHtml(data) + '</div></div>';
     }
     html += '</div>';
@@ -8332,7 +8587,8 @@
     const list = board || [];
     const btnRows = rows || _panelButtonRows || 4;
     const PAGE = btnRows * 4;
-    const isSubPanel = (panelNav && panelNav.length > 0);
+    const isSubPanel = (panelNav && panelNav.length > 0) ||
+      !!(panelProfileCurrent().profile && panelProfileCurrent().profile.is_group);
     const totalTiles = list.length;
     const numPages = isSubPanel
       ? Math.max(1, Math.ceil((totalTiles + 1) / PAGE))
@@ -8568,19 +8824,25 @@
       }
     }
 
+    const isValueMode = (bState.display_mode === "value" || s.display_mode === "value");
+
     if (isGroup) {
       topBar = '<span class="pdev-group-bar">GROUP</span>';
       extraTileClass += " has-group-bar";
-    } else if (s.entity !== "media.play_pause" && showState && (hasLiveState || labels.on || labels.off || fillPct !== null)) {
+    } else if (s.entity !== "media.play_pause" && showState && (hasLiveState || labels.on || labels.off || fillPct !== null || isValueMode)) {
       let lblText = bState.label;
-      if (!lblText && bState.value !== undefined && bState.value !== null) {
-        lblText = (typeof bState.value === "number") ? `${bState.value}` : String(bState.value);
-      }
-      if (!lblText && fillPct !== null) {
-        lblText = fillPct.toFixed(0) + "%";
-      }
-      if (!lblText) {
-        lblText = isOn ? (labels.on || "ON") : (labels.off || "OFF");
+      if (isValueMode) {
+        lblText = bState.unit || s.unit || bState.label || "";
+      } else {
+        if (!lblText && bState.value !== undefined && bState.value !== null) {
+          lblText = (typeof bState.value === "number") ? `${bState.value}` : String(bState.value);
+        }
+        if (!lblText && fillPct !== null) {
+          lblText = fillPct.toFixed(0) + "%";
+        }
+        if (!lblText) {
+          lblText = isOn ? (labels.on || "ON") : (labels.off || "OFF");
+        }
       }
       if (lblText) {
         topBar = '<span class="pdev-group-bar pdev-status-bar" style="color:' + esc(badgeColor) + ';">' + esc(lblText) + '</span>';
@@ -8608,7 +8870,10 @@
     }
 
     let glyph = "";
-    if (showIcon) {
+    if (isValueMode) {
+      const numVal = (bState.value !== undefined && bState.value !== null) ? bState.value : (s.value !== undefined && s.value !== null ? s.value : "--");
+      glyph = '<span class="pdev-num-glyph"' + glyphStyle + '>' + esc(String(numVal)) + '</span>';
+    } else if (showIcon) {
       if (useAppIcon && (appPath || s.entity === "media.player" || s.entity === "media.eject" || s.type === "MEDIA_EJECT")) {
         const targetPath = appPath || (panelLive && panelLive.config && panelLive.config.media_player_path) || (panelDraft && panelDraft.media_player_path) || "";
         const brandSvg = typeof getMediaPlayerBrandIcon === "function" ? getMediaPlayerBrandIcon(targetPath) : null;
@@ -8630,7 +8895,7 @@
       glyph = centerTitle ? ('<span class="pdev-text-only"' + glyphStyle + '>' + esc(formatTileTitle(centerTitle)) + '</span>') : "";
     }
 
-    return '<button type="button" class="pdev-tile' + (isGroup ? " pdev-group" : "") + extraTileClass + '"' +
+    return '<button type="button" class="pdev-tile' + (isGroup ? " pdev-group" : "") + (listName === "core" ? " pdev-core-tile" : "") + extraTileClass + '"' +
       extraTileStyle +
       ' data-action="slot" data-list="' + listName + '" data-idx="' + idx + '"' +
       ' title="' + esc(s.name || "") + '">' +
@@ -8674,17 +8939,76 @@
     return h;
   }
 
-  function coreTilesHtml(data) {
-    const dispOn = !!data.pc_stats_manual;
-    const ovOn = !!data.overlay_on;
-    return '<button type="button" class="pdev-tile pdev-core-tile' + (dispOn ? " pdev-active" : "") + '" data-core="display" title="PC stats display">' +
-        '<span class="md" data-md="monitor"></span></button>' +
-      '<button type="button" class="pdev-tile pdev-core-tile' + (ovOn ? " pdev-active" : "") + '" data-core="overlay" title="Stats overlay">' +
-        '<span class="md" data-md="speedometer"></span></button>' +
-      '<button type="button" class="pdev-tile pdev-core-tile" data-core="mic" title="Microphone mute">' +
-        '<span class="md" data-md="microphone"></span></button>' +
-      '<button type="button" class="pdev-tile pdev-core-tile" data-core="settings" title="Settings">' +
-        '<span class="md" data-md="cog"></span></button>';
+  function coreTilesHtml(data, isPreview) {
+    const cfg = panelViewConfig();
+    const prof = panelProfileCurrent();
+    const coreList = (panelDraft && panelDraft.panel_core) || (prof && prof.core) || (cfg && cfg.panel_core) || defaultCoreSlots();
+    preloadBoardIcons(coreList);
+
+    const dispOn = !!(data && data.pc_stats_manual);
+    const ovOn = !!(data && data.overlay_on);
+    const isMicMuted = !!(data && data.entity_states && data.entity_states["system.mic_mute"] && data.entity_states["system.mic_mute"].active);
+
+    let h = "";
+    for (let i = 0; i < 4; i++) {
+      const s = coreList[i] || defaultCoreSlots()[i] || { type: "EMPTY" };
+      if (s.type === "EMPTY") {
+        h += '<button type="button" class="pdev-tile pdev-empty-tile pdev-core-tile" data-action="slot" data-list="core" data-idx="' + i + '"></button>';
+        continue;
+      }
+      if (s.type === "CORE" || !s.type) {
+        const act = s.core_action || (i === 0 ? "display" : i === 1 ? "overlay" : i === 2 ? "mic" : "settings");
+        const def = CORE_ACTION_DEFS[act] || { name: act, icon: "star-circle" };
+        let activeCls = "";
+        let ic = s.icon;
+        if (act === "display") {
+          if (dispOn) activeCls = " pdev-active";
+          if (!ic) ic = def.icon;
+        } else if (act === "overlay") {
+          if (ovOn) activeCls = " pdev-active";
+          if (!ic) ic = def.icon;
+        } else if (act === "mic" || act === "mic_mute") {
+          if (isMicMuted) activeCls = " pdev-active pdev-muted";
+          if (!ic) ic = isMicMuted ? "microphone-off" : "microphone";
+        } else if (act === "toolbar") {
+          const isTb = !!(data && data.entity_states && data.entity_states["system.toolbar"] && data.entity_states["system.toolbar"].active);
+          if (isTb) activeCls = " pdev-active";
+          if (!ic) ic = def.icon;
+        } else if (act === "lighting" || act === "lighting_sync") {
+          const isLt = !!(data && data.entity_states && data.entity_states["system.lighting_sync"] && data.entity_states["system.lighting_sync"].active);
+          if (isLt) activeCls = " pdev-active";
+          if (!ic) ic = def.icon;
+        } else {
+          if (!ic) ic = def.icon;
+        }
+
+        let tileStyle = "";
+        let glyphStyle = "";
+        let colorPlate = "";
+        if (s.color) {
+          if (s.color.startsWith("#")) {
+            colorPlate = '<span class="pdev-color-plate" style="background:' + esc(s.color) + ';"></span>';
+            glyphStyle = ' style="color:' + (isLightColor(s.color) ? '#0a0a0a' : '#ffffff') + ';"';
+          } else if (s.color === "RAINBOW") {
+            colorPlate = '<span class="pdev-color-plate" style="background:linear-gradient(135deg, #ff0000, #ff7f00, #ffff00, #00ff00, #0000ff, #8b00ff);"></span>';
+            glyphStyle = ' style="color:#0a0a0a;"';
+          }
+        }
+
+        const title = s.name || (act === "display" ? "PC stats display" : act === "overlay" ? "Stats overlay" : act === "mic" ? "Microphone mute" : act === "settings" ? "Settings" : act);
+
+        h += '<button type="button" class="pdev-tile pdev-core-tile' + activeCls + '"' +
+          tileStyle +
+          ' data-core="' + esc(act) + '" data-action="slot" data-list="core" data-idx="' + i + '"' +
+          ' title="' + esc(title) + '">' +
+          colorPlate +
+          '<span class="md" data-md="' + esc(ic) + '"' + glyphStyle + '>' + esc(mdiChar(ic)) + '</span>' +
+          '</button>';
+      } else {
+        h += panelTileHtml(s, "core", i);
+      }
+    }
+    return h;
   }
 
   function currentBoard() {
@@ -8702,26 +9026,31 @@
   // ── Screenshot phone-side functions ──────────────────────────────────
 
   function doScreenshotRequest(slot) {
-    const startTs = Date.now();
-    apiFetch(`${API_BASE}/api/panel/action`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ slot: slot }),
-    })
-    .then(() => pollScreenshotReady(startTs, 0))
-    .catch(() => {});
+    // Fetch the server's current capture seq first so we only show the screenshot
+    // produced by THIS request (phone/PC clocks may be skewed, so ts is unreliable).
+    apiFetch(`${API_BASE}/api/screenshot/latest`)
+      .then((r) => r.json())
+      .then((base) => {
+        const baseSeq = (base && base.seq) || 0;
+        return apiFetch(`${API_BASE}/api/panel/action`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ slot: slot }),
+        }).then(() => pollScreenshotReady(baseSeq, 0));
+      })
+      .catch(() => {});
   }
 
-  function pollScreenshotReady(startTs, attempt) {
+  function pollScreenshotReady(baseSeq, attempt) {
     if (attempt > 60) return;  // 30 s hard timeout
     setTimeout(() => {
       apiFetch(`${API_BASE}/api/screenshot/latest`)
         .then((r) => r.json())
         .then((data) => {
-          if (data.available && data.ts * 1000 > startTs) {
+          if (data.available && (data.seq || 0) > baseSeq) {
             openScreenshotViewer(data);
           } else {
-            pollScreenshotReady(startTs, attempt + 1);
+            pollScreenshotReady(baseSeq, attempt + 1);
           }
         })
         .catch(() => {});
@@ -8773,6 +9102,10 @@
       }).catch(() => {});
       return;
     }
+    if (slot.type === "CORE") {
+      coreAction(slot.core_action || "settings");
+      return;
+    }
     // SCREENSHOT — POST action to trigger Tk capture, then poll for the image
     if (slot.type === "SCREENSHOT" || slot.entity === "system.screenshot") {
       doScreenshotRequest(slot);
@@ -8798,7 +9131,9 @@
 
   function coreAction(core, tile) {
     if (core === "settings") {
-      if (isDesktopEnvironment()) {
+      // In live panel view on a paired phone, always send to the desktop.
+      // Only fall through to local nav when in the PC editor (not panelViewMode).
+      if (panelViewMode || isDesktopEnvironment()) {
         apiFetch(`${API_BASE}/api/panel/core`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -8811,6 +9146,10 @@
       renderPage();
       return;
     }
+    if (core === "screenshot" || core === "screenshot_full" || core === "screenshot_zone") {
+      doScreenshotRequest({ type: "CORE", core_action: core, mode: core === "screenshot_zone" ? "zone" : "fullscreen" });
+      return;
+    }
     apiFetch(`${API_BASE}/api/panel/core`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -8818,14 +9157,14 @@
     })
       .then((r) => r.json())
       .then((d) => {
-        if (!d) return;
-        if (core === "mic") {
+        if (!d || !tile) return;
+        if (core === "mic" || core === "mic_mute") {
           tile.classList.toggle("pdev-active", !!d.state);
           tile.classList.toggle("pdev-muted", !!d.state);
           const ic = tile.querySelector(".md");
           if (ic) ic.setAttribute("data-md", d.state ? "microphone-off" : "microphone");
           applyMdiIcons(tile);
-        } else {
+        } else if (d.state !== undefined) {
           tile.classList.toggle("pdev-active", !!d.state);
         }
       })
@@ -8904,6 +9243,9 @@
           if (prev) {
             if (prev.prevProfile) panelProfileSel = prev.prevProfile;
             activeBoxPage = prev.returnPage || 1;
+          } else {
+            panelProfileSel = "__default__";
+            activeBoxPage = 1;
           }
           panelViewSig = panelViewSignature();
           if (panelViewMode) renderPanelView(); else renderPanel();
@@ -8922,10 +9264,16 @@
           let s = null;
           if (list === "util") {
             s = (panelViewConfig().panel_utility || [])[idx];
+          } else if (list === "core") {
+            s = (panelViewConfig().panel_core || defaultCoreSlots())[idx];
           } else {
             s = currentBoard()[idx];
           }
-          runSlotAction(s);
+          if (s && s.type === "CORE" && s.core_action) {
+            coreAction(s.core_action, tile);
+          } else {
+            runSlotAction(s);
+          }
         });
       }
     });
@@ -9204,6 +9552,12 @@
       }
     });
 
+    const isTbActive = !!(data.entity_states && data.entity_states["system.toolbar"] && data.entity_states["system.toolbar"].active);
+    document.querySelectorAll('.pdev-core-tile[data-core="toolbar"]').forEach((t) => t.classList.toggle("pdev-active", isTbActive));
+
+    const isLtActive = !!(data.entity_states && data.entity_states["system.lighting_sync"] && data.entity_states["system.lighting_sync"].active);
+    document.querySelectorAll('.pdev-core-tile[data-core="lighting"], .pdev-core-tile[data-core="lighting_sync"]').forEach((l) => l.classList.toggle("pdev-active", isLtActive));
+
     const notifEl = document.getElementById("pv-notif");
     if (notifEl && !notifDismissTimer) {
       const notif = data.notification || null;
@@ -9227,11 +9581,9 @@
     const isMediaPaused = !!(mediaState && (mediaState.status === "paused" || mediaState.playback_status === "paused"));
 
     const btnStates = (data.entity_states) || (data.plugin_button_states) || {};
-    const btnStatesSig = JSON.stringify(btnStates) + '|' + (isMediaPlaying ? '1' : '0') + '|' + (isMediaPaused ? '1' : '0') + '|' + (mediaState.art_id || '') + '|' + (data.default_audio_output || '');
+    const warnStates = (data.warnings) || (panelLive && panelLive.warnings) || {};
+    const btnStatesSig = JSON.stringify(btnStates) + '|' + JSON.stringify(warnStates) + '|' + (isMediaPlaying ? '1' : '0') + '|' + (isMediaPaused ? '1' : '0') + '|' + (mediaState.art_id || '') + '|' + (data.default_audio_output || '');
     if (btnStatesSig !== _lastBtnStatesSig) {
-      if (_lastBtnStatesSig !== null && typeof screensaverWakeOnEvent === "function") {
-        screensaverWakeOnEvent();
-      }
       _lastBtnStatesSig = btnStatesSig;
       document.querySelectorAll(".pdev-tile").forEach((tile) => {
         const idx = parseInt(tile.getAttribute("data-idx"), 10);
@@ -9334,23 +9686,65 @@
           const isTileLight = (isProgressActive && isLightColor(fillColor) && fillPct >= 45) || (!isProgressActive && s.color && isLightColor(s.color));
           tile.classList.toggle("pdev-tile-light", !!isTileLight);
 
+          const isValueMode = (bState.display_mode === "value" || s.display_mode === "value");
+
+          // Warning state overlay & status override
+          const warn = warnStates[entKey] || warnStates[(s.plugin || "") + ":" + (s.button_id || "")];
+          let warnFlashEl = tile.querySelector(".pdev-warn-flash");
+
+          if (warn && warn.color) {
+            tile.classList.add("pdev-warning");
+            const warnText = isLightColor(warn.color) ? "#0a0a0a" : "#ffffff";
+            tile.style.setProperty("--warn-color", warn.color);
+            tile.style.color = warnText;
+            if (!warnFlashEl) {
+              warnFlashEl = document.createElement("span");
+              warnFlashEl.className = "pdev-warn-flash";
+              tile.insertBefore(warnFlashEl, tile.firstChild);
+            }
+          } else {
+            tile.classList.remove("pdev-warning");
+            tile.style.removeProperty("--warn-color");
+            tile.style.color = "";
+            if (warnFlashEl) warnFlashEl.remove();
+          }
+
           // Update status bar
           const statusBar = tile.querySelector(".pdev-status-bar");
           if (statusBar) {
-            const labels = s.labels || {};
-            let lblText = bState.label;
-            if (!lblText && bState.value !== undefined && bState.value !== null) {
-              lblText = (typeof bState.value === "number") ? `${bState.value}` : String(bState.value);
+            if (warn && warn.color && warn.message) {
+              const warnText = isLightColor(warn.color) ? "#0a0a0a" : "#ffffff";
+              statusBar.textContent = warn.message;
+              statusBar.style.color = warnText;
+            } else {
+              const labels = s.labels || {};
+              let lblText = bState.label;
+              if (isValueMode) {
+                lblText = bState.unit || s.unit || bState.label || "";
+              } else {
+                if (!lblText && bState.value !== undefined && bState.value !== null) {
+                  lblText = (typeof bState.value === "number") ? `${bState.value}` : String(bState.value);
+                }
+                if (!lblText && fillPct !== null) {
+                  lblText = fillPct.toFixed(0) + "%";
+                }
+                if (!lblText) {
+                  lblText = isOn ? (labels.on || "ON") : (labels.off || "OFF");
+                }
+              }
+              if (lblText) {
+                statusBar.textContent = lblText;
+                statusBar.style.color = badgeColor;
+              }
             }
-            if (!lblText && fillPct !== null) {
-              lblText = fillPct.toFixed(0) + "%";
-            }
-            if (!lblText) {
-              lblText = isOn ? (labels.on || "ON") : (labels.off || "OFF");
-            }
-            if (lblText) {
-              statusBar.textContent = lblText;
-              statusBar.style.color = badgeColor;
+          }
+
+          // Update numerical glyph if in value display mode
+          if (isValueMode) {
+            const numGlyphEl = tile.querySelector(".pdev-num-glyph");
+            const numVal = (bState.value !== undefined && bState.value !== null) ? bState.value : (s.value !== undefined && s.value !== null ? s.value : "--");
+            if (numGlyphEl) {
+              numGlyphEl.textContent = String(numVal);
             }
           }
 
@@ -9657,9 +10051,11 @@
     let activeIconCategory = "all";
     let iconSearchTimer = null;
 
-    const modalSlot = (panelEdit && (panelEdit.scope === "utility" || panelEdit.scope === "util"))
-      ? ((panelDraft.panel_utility || [])[panelEdit.index] || {})
-      : ((boardAtPath(panelEdit.path || [])[panelEdit.index]) || {});
+    const modalSlot = (panelEdit && panelEdit.scope === "core")
+      ? (((panelDraft && panelDraft.panel_core) || defaultCoreSlots())[panelEdit.index] || {})
+      : ((panelEdit && (panelEdit.scope === "utility" || panelEdit.scope === "util"))
+        ? ((panelDraft.panel_utility || [])[panelEdit.index] || {})
+        : ((boardAtPath(panelEdit.path || [])[panelEdit.index]) || {}));
     let customSelectedIconPath = (modalSlot && modalSlot.app_icon_path) || "";
     let curEntity = (modalSlot && (modalSlot.entity || (modalSlot.plugin && modalSlot.button_id ? (modalSlot.plugin + "." + modalSlot.button_id) : ""))) || "";
     if (!curEntity && modalSlot && modalSlot.openrgb_profile) {
@@ -10027,12 +10423,16 @@
 
     const syncFields = () => {
       const t = typeEl.value;
+      const isCore = t === "CORE";
       const showGroupProf = t === "GROUP";
       const showPath = t === "SHORTCUT";
       const showAppIcon = t === "SHORTCUT";
-      const showEnt = t === "TOGGLE" || t === "SENSOR" || t === "HOTKEY";
+      const showEnt = !isCore && (t === "TOGGLE" || t === "SENSOR" || t === "HOTKEY");
       const isAppShortcut = t === "SHORTCUT";
       const isEmpty = t === "EMPTY";
+
+      const coreWrap = document.getElementById("pe-core-wrap");
+      if (coreWrap) coreWrap.style.display = isCore ? "" : "none";
 
       const nameWrap = document.getElementById("pe-name-wrap");
       if (nameWrap) nameWrap.style.display = isEmpty ? "none" : "";
@@ -10059,7 +10459,7 @@
         } else {
           entSelectEl.value = "";
         }
-        if (isAppShortcut || showGroupProf || isEmpty) {
+        if (isAppShortcut || showGroupProf || isEmpty || isCore) {
           entSelectEl.value = "";
         }
       };
@@ -10092,7 +10492,7 @@
       const audioWrap = document.getElementById("pe-audio-output-wrap");
       if (audioWrap) audioWrap.style.display = isAudio ? "" : "none";
 
-      const showKeys = (t !== "EMPTY" && t !== "AUDIO OUTPUT") && !isAnyMediaControl;
+      const showKeys = (t !== "EMPTY" && t !== "AUDIO OUTPUT" && !isCore) && !isAnyMediaControl;
       const keysWrap = document.getElementById("pe-keys-wrap");
       if (keysWrap) keysWrap.style.display = showKeys ? "" : "none";
 
@@ -10120,6 +10520,25 @@
     };
     typeEl.addEventListener("change", syncFields);
     syncFields();
+
+    const coreActSelect = document.getElementById("pe-core-act");
+    if (coreActSelect) {
+      coreActSelect.addEventListener("change", () => {
+        const act = coreActSelect.value;
+        const nameInp = document.getElementById("pe-name");
+        const def = CORE_ACTION_DEFS[act] || { name: "Core Action", icon: "cog" };
+        const defName = def.name;
+        const defIcon = def.icon;
+        const allDefNames = Object.values(CORE_ACTION_DEFS).map((d) => d.name);
+        if (nameInp && (!nameInp.value || allDefNames.includes(nameInp.value))) {
+          nameInp.value = defName;
+        }
+        if (iconInput) {
+          iconInput.value = defIcon;
+          updateLiveIcon(defIcon);
+        }
+      });
+    }
 
     // Entity Quick-Fill auto-population
     const entSelect = document.getElementById("pe-entity");
@@ -10402,8 +10821,16 @@
     if (downBtn) downBtn.addEventListener("click", () => moveSlot(1));
     const delBtn = document.getElementById("pe-delete");
     if (delBtn) delBtn.addEventListener("click", () => {
-      const list = boardAtPath(panelEdit.path || []);
-      list.splice(panelEdit.index, 1);
+      if (panelEdit.scope === "core") {
+        if (!panelDraft.panel_core) panelDraft.panel_core = defaultCoreSlots();
+        panelDraft.panel_core[panelEdit.index] = defaultCoreSlots()[panelEdit.index];
+      } else if (panelEdit.scope === "utility" || panelEdit.scope === "util") {
+        if (!panelDraft.panel_utility) panelDraft.panel_utility = [{}, {}, {}, {}];
+        panelDraft.panel_utility[panelEdit.index] = { type: "EMPTY", name: "", icon: "border-none-variant" };
+      } else {
+        const list = boardAtPath(panelEdit.path || []);
+        list.splice(panelEdit.index, 1);
+      }
       setPanelDirty(true);
       finishModalEdit();
     });
@@ -10412,7 +10839,8 @@
       const isApp = t === "SHORTCUT";
       const isGroup = t === "GROUP";
       const isEmpty = t === "EMPTY";
-      const canHaveEntity = (t === "TOGGLE" || t === "SENSOR" || t === "HOTKEY");
+      const isCore = t === "CORE";
+      const canHaveEntity = !isCore && (t === "TOGGLE" || t === "SENSOR" || t === "HOTKEY");
       const entId = canHaveEntity && document.getElementById("pe-entity") ? document.getElementById("pe-entity").value.trim() : "";
       const entObj = entId ? (panelEntities || []).find((e) => e.id === entId) : null;
       const isActionEntity = entObj && (entObj.type === "action" || entObj.type === "shortcut");
@@ -10467,6 +10895,17 @@
         app_icon_path: finalAppIconPath,
         color: (document.getElementById("pe-color") ? document.getElementById("pe-color").value.trim() : ""),
       };
+      if (t === "CORE") {
+        const coreActEl = document.getElementById("pe-core-act");
+        slot.core_action = coreActEl ? coreActEl.value : "display";
+        const def = CORE_ACTION_DEFS[slot.core_action] || { name: "Core Action", icon: "cog" };
+        if (!slot.name) {
+          slot.name = def.name;
+        }
+        if (!slot.icon || slot.icon === "toggle-switch" || slot.icon === "gesture-tap-button") {
+          slot.icon = def.icon;
+        }
+      }
       if (resolvedEntId) {
         slot.entity = resolvedEntId;
         const [defaultPlg, defaultBid] = resolvedEntId.includes(".") ? resolvedEntId.split(".", 2) : [resolvedEntId, ""];
@@ -10514,14 +10953,18 @@
         slot.target_profile = (grpProfEl && grpProfEl.value) ? grpProfEl.value : "";
         slot.profile_id = slot.target_profile;
       }
-      if (t !== "EMPTY" && t !== "AUDIO OUTPUT") {
+      if (t !== "EMPTY" && t !== "AUDIO OUTPUT" && !isCore) {
         let val = document.getElementById("pe-keys") ? document.getElementById("pe-keys").value.trim() : "";
         if (val === "Conflict !!") val = "";
         slot.hotkey = val;
         const numList = val.split(",").map((x) => parseInt(x.trim(), 10)).filter((n) => !isNaN(n));
         slot.keys = numList.length ? numList : (val ? [val] : []);
       }
-      if (panelEdit.scope === "utility" || panelEdit.scope === "util") {
+      if (panelEdit.scope === "core") {
+        if (!panelDraft.panel_core) panelDraft.panel_core = defaultCoreSlots();
+        while (panelDraft.panel_core.length < 4) panelDraft.panel_core.push({ type: "EMPTY" });
+        panelDraft.panel_core[panelEdit.index] = slot;
+      } else if (panelEdit.scope === "utility" || panelEdit.scope === "util") {
         if (!panelDraft.panel_utility) panelDraft.panel_utility = [{}, {}, {}, {}];
         while (panelDraft.panel_utility.length < 4) panelDraft.panel_utility.push({ type: "EMPTY" });
         panelDraft.panel_utility[panelEdit.index] = slot;
@@ -10938,6 +11381,14 @@
     main.querySelectorAll(".dash-plugin").forEach((el) => {
       el.addEventListener("click", () => {
         const plgName = el.dataset.name;
+        if (pluginsConfig[plgName] && (pluginsConfig[plgName].is_hardware || plgName === "ha" || plgName === "openrgb" || plgName === "matrix_display")) {
+          selectedHardwarePlugin = plgName;
+          currentPage = "hardware";
+          navItems.forEach((n) => n.classList.toggle("active", n.dataset.page === "hardware"));
+          fetchConfig();
+          renderPage();
+          return;
+        }
         // Check if there is a profile matching this plugin
         const profilesList = (panelDraft && panelDraft.panel_profiles) || [];
         const match = profilesList.find((prof) => {
@@ -11154,34 +11605,87 @@
     return val * 60 * 1000; // minutes to ms
   }
 
-  const SS_PULSE_INTERVAL_MS = 30 * 1000; // pulse appearance every 30s
-  const SS_PULSE_VISIBLE_MS  = 6 * 1000;  // hold visible for 6s before fading to black
+  const SS_DRIFT_INTERVAL_MS = 60 * 1000; // subtle anti-burn-in drift every 60s
+  const SS_CLOCK_INTERVAL_MS = 1000;      // second-precision clock update
 
   let ssIdleTimer    = null; // idle timeout -> showScreensaver()
-  let ssPulseTimer   = null; // 30s recurring pulse
-  let ssFadeOutTimer = null; // 6s timer to fade to black
+  let ssDriftTimer   = null; // recurring drift (60s)
+  let ssClockTimer   = null; // recurring clock update (1s)
   let ssActive       = false;
 
   function ssEl() { return document.getElementById("iris-screensaver"); }
 
-  function pulseScreensaverLock() {
+  function updateScreensaverClock() {
+    const timeEl = document.getElementById("ssv-clock-time");
+    if (!timeEl) return;
+    const dateEl = document.getElementById("ssv-clock-date");
+    const ampmEl = document.getElementById("ssv-clock-ampm");
+
+    const now = new Date();
+    let formatted = false;
+
+    if (typeof Intl !== "undefined" && Intl.DateTimeFormat && typeof Intl.DateTimeFormat.prototype.formatToParts === "function") {
+      try {
+        const parts = new Intl.DateTimeFormat(navigator.language || "default", {
+          hour: "numeric",
+          minute: "2-digit"
+        }).formatToParts(now);
+
+        let h = "", m = "", ampm = "";
+        for (let i = 0; i < parts.length; i++) {
+          const p = parts[i];
+          if (p.type === "hour") h = p.value;
+          else if (p.type === "minute") m = p.value;
+          else if (p.type === "dayPeriod") ampm = p.value;
+        }
+        if (h && m) {
+          timeEl.textContent = h + ":" + m;
+          if (ampmEl) {
+            ampmEl.textContent = ampm ? ampm.toUpperCase() : "";
+            ampmEl.style.display = ampm ? "inline-block" : "none";
+          }
+          formatted = true;
+        }
+      } catch (_) {}
+    }
+
+    if (!formatted) {
+      const rawH = now.getHours();
+      const rawM = now.getMinutes();
+      const hh = rawH < 10 ? "0" + rawH : "" + rawH;
+      const mm = rawM < 10 ? "0" + rawM : "" + rawM;
+      timeEl.textContent = hh + ":" + mm;
+      if (ampmEl) ampmEl.style.display = "none";
+    }
+
+    if (dateEl) {
+      let dStr = "";
+      try {
+        dStr = now.toLocaleDateString(navigator.language || "default", {
+          weekday: "short",
+          month: "short",
+          day: "numeric"
+        });
+      } catch (_) {
+        const days = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+        const months = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+        dStr = days[now.getDay()] + ", " + months[now.getMonth()] + " " + now.getDate();
+      }
+      dateEl.textContent = (dStr || "").toUpperCase();
+    }
+  }
+
+  function driftScreensaverLock() {
     const el = ssEl();
     if (!el || !ssActive) return;
     const lockEl = el.querySelector(".ssv-clean-lock");
     if (!lockEl) return;
 
-    // Pixel shift within ±20px horizontal and ±30px vertical to protect OLED subpixels
-    const offsetX = (Math.random() * 40 - 20).toFixed(1);
-    const offsetY = (Math.random() * 60 - 30).toFixed(1);
+    // Pixel shift within ±24px horizontal and ±36px vertical to protect OLED/LCD subpixels
+    const offsetX = (Math.random() * 48 - 24).toFixed(1);
+    const offsetY = (Math.random() * 72 - 36).toFixed(1);
     lockEl.style.transform = `translate(${offsetX}px, ${offsetY}px)`;
-    lockEl.style.opacity = "1";
-
-    if (ssFadeOutTimer) clearTimeout(ssFadeOutTimer);
-    ssFadeOutTimer = setTimeout(function () {
-      if (ssActive && lockEl) {
-        lockEl.style.opacity = "0"; // Smooth fade to pure black (OLED pixels off)
-      }
-    }, SS_PULSE_VISIBLE_MS);
+    lockEl.style.opacity = "0.75"; // Gentle dimmed ambient standby
   }
 
   function resetScreensaverTimer() {
@@ -11210,18 +11714,23 @@
     el.classList.add("ss-visible");
     document.body.style.overflow = "hidden";
 
-    // Immediate initial pulse on lock
-    pulseScreensaverLock();
-    if (ssPulseTimer) clearInterval(ssPulseTimer);
-    ssPulseTimer = setInterval(pulseScreensaverLock, SS_PULSE_INTERVAL_MS);
+    // Immediate initial display and drift on lock
+    updateScreensaverClock();
+    driftScreensaverLock();
+
+    if (ssClockTimer) clearInterval(ssClockTimer);
+    ssClockTimer = setInterval(updateScreensaverClock, SS_CLOCK_INTERVAL_MS);
+
+    if (ssDriftTimer) clearInterval(ssDriftTimer);
+    ssDriftTimer = setInterval(driftScreensaverLock, SS_DRIFT_INTERVAL_MS);
   }
 
   function hideScreensaver() {
     ssActive = false;
     requestWakeLock();
     if (ssIdleTimer) { clearTimeout(ssIdleTimer); ssIdleTimer = null; }
-    if (ssPulseTimer) { clearInterval(ssPulseTimer); ssPulseTimer = null; }
-    if (ssFadeOutTimer) { clearTimeout(ssFadeOutTimer); ssFadeOutTimer = null; }
+    if (ssClockTimer) { clearInterval(ssClockTimer); ssClockTimer = null; }
+    if (ssDriftTimer) { clearInterval(ssDriftTimer); ssDriftTimer = null; }
     const el = ssEl();
     if (!el) return;
     el.classList.remove("ss-visible");
@@ -11386,8 +11895,8 @@
   function ssDisarmForPanelView() {
     hideScreensaver();
     if (ssIdleTimer) { clearTimeout(ssIdleTimer); ssIdleTimer = null; }
-    if (ssPulseTimer) { clearInterval(ssPulseTimer); ssPulseTimer = null; }
-    if (ssFadeOutTimer) { clearTimeout(ssFadeOutTimer); ssFadeOutTimer = null; }
+    if (ssClockTimer) { clearInterval(ssClockTimer); ssClockTimer = null; }
+    if (ssDriftTimer) { clearInterval(ssDriftTimer); ssDriftTimer = null; }
   }
 
   // Touch/interaction resets idle timer or wakes screensaver

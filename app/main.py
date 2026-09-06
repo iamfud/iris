@@ -21,8 +21,9 @@ if not any(isinstance(h, RotatingFileHandler) for h in _root_logger.handlers):
 if __name__ == "__main__":
     multiprocessing.freeze_support()
 
-    from win_platform import init_dpi_awareness
+    from win_platform import init_dpi_awareness, ensure_rtss_exclusions
     init_dpi_awareness()
+    ensure_rtss_exclusions()
 
     import threading
     import time as _time

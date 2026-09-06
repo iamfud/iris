@@ -61,6 +61,7 @@ class LightingService:
 
         # Alert pulse stack (always on top)
         self._active_alert: Optional[Dict[str, Any]] = None
+        self._alert_critical: bool = False
         self._alert_timer: Optional[threading.Timer] = None
 
     # ── Lifecycle ───────────────────────────────────────────────
@@ -82,9 +83,13 @@ class LightingService:
     def update_config(self, cfg: Dict[str, Any]):
         with self._lock:
             self._cfg = cfg
-        # Explicit config save (e.g. Apply Theme & Lighting) re-applies.
-        self._startup_pending = False
-        self.evaluate_state(force=True)
+        # If OpenRGB is connected, apply baseline immediately and mark startup complete;
+        # otherwise preserve _startup_pending so the watcher loop applies it once connected.
+        if self._openrgb_connected():
+            self._startup_pending = False
+            self.evaluate_state(force=True)
+        else:
+            self._startup_pending = True
 
     def stop(self):
         self._running = False
@@ -175,8 +180,19 @@ class LightingService:
 
     # ── Alert Stack (highest priority) ──────────────────────────
 
-    def push_alert(self, actions: Dict[str, str], duration_s: float):
+    def push_alert(self, actions: Dict[str, str], duration_s: float, is_critical: bool = False):
+        """Push a lighting alert onto the single always-on-top alert slot.
+
+        Critical (red) alerts take precedence: a non-critical alert is ignored
+        while a critical alert is already active, so ordinary automations can
+        never knock out a live red alert. A critical alert replaces any prior
+        alert; a non-critical alert only replaces a non-critical one.
+        """
         with self._lock:
+            if self._active_alert is not None and self._alert_critical and not is_critical:
+                log.info("[lighting] red alert active -> ignoring non-critical alert %s", actions)
+                return
+            self._alert_critical = is_critical
             if self._alert_timer:
                 self._alert_timer.cancel()
                 self._alert_timer = None
@@ -185,17 +201,22 @@ class LightingService:
                 self._alert_timer = threading.Timer(duration_s, self.pop_alert)
                 self._alert_timer.daemon = True
                 self._alert_timer.start()
-        log.info("[lighting] alert pushed (duration=%.1fs, actions=%s)", duration_s, actions)
+        log.info("[lighting] alert pushed (duration=%.1fs, critical=%s, actions=%s)", duration_s, is_critical, actions)
         self.evaluate_state(force=True)
 
-    def pop_alert(self):
+    def pop_alert(self, force: bool = False):
         with self._lock:
+            had_alert = self._active_alert is not None
+            if had_alert and self._alert_critical and not force:
+                return
             self._active_alert = None
+            self._alert_critical = False
             if self._alert_timer:
                 self._alert_timer.cancel()
                 self._alert_timer = None
-        log.info("[lighting] alert expired -> reverting to baseline")
-        self.evaluate_state(force=True)
+        if had_alert:
+            log.info("[lighting] alert expired -> reverting to baseline")
+            self.evaluate_state(force=True)
 
     # ── State Evaluation & Dispatch ─────────────────────────────
 

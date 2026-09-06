@@ -50,6 +50,67 @@ def init_dpi_awareness():
     return False
 
 
+def ensure_rtss_exclusions():
+    """Ensure RivaTuner Statistics Server (RTSS) does not inject hooks into Iris or WebView2.
+    
+    Prevents fatal RTSSHooks64.dll Access Violations (0xC0000005) and resulting black screen crashes.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import winreg
+        rtss_dir = None
+        for root in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+            for subkey in (r"SOFTWARE\WOW6432Node\Unwinder\RTSS", r"SOFTWARE\Unwinder\RTSS"):
+                try:
+                    with winreg.OpenKey(root, subkey) as k:
+                        val, _ = winreg.QueryValueEx(k, "InstallDir")
+                        if val and os.path.isdir(val):
+                            rtss_dir = val
+                            break
+                except OSError:
+                    pass
+            if rtss_dir:
+                break
+
+        if not rtss_dir:
+            cand = os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"), "RivaTuner Statistics Server")
+            if os.path.isdir(cand):
+                rtss_dir = cand
+
+        if not rtss_dir:
+            return
+
+        prof_dir = os.path.join(rtss_dir, "Profiles")
+        if not os.path.isdir(prof_dir):
+            return
+
+        cfg_content = (
+            "[Hooking]\n"
+            "EnableHooking=0\n"
+            "HookLoadLibrary=0\n"
+            "HookDirectDraw=0\n"
+            "HookDirect3D8=0\n"
+            "HookDirect3D9=0\n"
+            "HookDirect3DSwapChain9Present=0\n"
+            "HookDXGI=0\n"
+            "HookDirect3D12=0\n"
+            "HookOpenGL=0\n"
+            "HookVulkan=0\n"
+        )
+        for name in ("Iris.exe.cfg", "msedgewebview2.exe.cfg"):
+            target = os.path.join(prof_dir, name)
+            if not os.path.isfile(target):
+                try:
+                    with open(target, "w", encoding="utf-8") as f:
+                        f.write(cfg_content)
+                    log.info("[platform] Installed RTSS exclusion profile: %s", name)
+                except (OSError, PermissionError):
+                    pass
+    except Exception as e:
+        log.debug("[platform] ensure_rtss_exclusions: %s", e)
+
+
 def get_running_process_names(ttl: float = 1.0) -> set[str]:
     """Return a cached set of lowercase running process executable names (e.g. {'notepad.exe', 'elitedangerous64.exe'}).
     

@@ -36,15 +36,40 @@ class Plugin:
         if not preset_id:
             return
         if preset_id == "__theme__":
-            # Highest-luminance colour of the active theme (neon cyan vs accent
-            # purple) — the "neon or neon 2 depending on luminance" choice.
+            # Read the live in-memory theme — game overrides (e.g. Elite orange)
+            # are applied to _cfg in memory by sync_plugin_themes but are never
+            # written to disk, so get_current_theme_colors() (disk read) would
+            # always return the stale base theme and ignore the game override.
+            cfg = self._cfg or {}
             try:
-                from desktop_theme import get_current_theme_colors
-                color = get_current_theme_colors().get("bright_neon_hex") or "#48B2E9"
+                from lighting_service import get_lighting_service
+                ls_cfg = get_lighting_service()._cfg
+                if ls_cfg and isinstance(ls_cfg, dict) and "theme" in ls_cfg:
+                    cfg = ls_cfg
             except Exception:
-                cfg = self._cfg or {}
-                theme = cfg.get("theme") or {}
-                color = theme.get("neon") or theme.get("accent") or "#48B2E9"
+                pass
+
+            theme = cfg.get("theme") or {}
+            mode = theme.get("mode", "iris") if isinstance(theme, dict) else "iris"
+            if mode == "monochrome":
+                neon = "#FFFFFF"
+                accent = "#888888"
+            elif mode == "custom":
+                neon = theme.get("neon") or "#48B2E9"
+                accent = theme.get("accent") or "#B23AF6"
+            else:  # "iris" (default)
+                neon = "#48B2E9"
+                accent = "#B23AF6"
+
+            # Pick the higher-luminance of the two, matching desktop_theme logic
+            def _lum(h):
+                try:
+                    h = h.lstrip("#")
+                    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+                    return (0.299 * r + 0.587 * g + 0.114 * b) / 255.0
+                except Exception:
+                    return 0.0
+            color = neon if _lum(neon) >= _lum(accent) else accent
             self._connector._set_color(color)
         elif preset_id.startswith("#"):
             self._connector._set_color(preset_id)

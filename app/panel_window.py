@@ -493,6 +493,31 @@ def _nav_loop(nav_queue, state, window):
             pass
 
 
+def _clean_stale_caches(wv_dir: str):
+    """Purge stale or corrupt shader caches and old crash dumps that cause black screen hangs."""
+    try:
+        import os
+        import shutil
+        eb = os.path.join(wv_dir, "EBWebView")
+        if not os.path.isdir(eb):
+            return
+        for sub in ("GPUPersistentCache", "ShaderCache", "GrShaderCache", os.path.join("Default", "GPUCache")):
+            target = os.path.join(eb, sub)
+            if os.path.isdir(target):
+                shutil.rmtree(target, ignore_errors=True)
+        crash_dir = os.path.join(eb, "Crashpad", "reports")
+        if os.path.isdir(crash_dir):
+            for f in os.listdir(crash_dir):
+                fp = os.path.join(crash_dir, f)
+                if os.path.isfile(fp):
+                    try:
+                        os.remove(fp)
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
+
 def _run(width, height, x=None, y=None, query_params=None, nav_queue=None):
     _ensure_child_logger()
 
@@ -507,9 +532,12 @@ def _run(width, height, x=None, y=None, query_params=None, nav_queue=None):
         import paths
         wv_data = paths.get_webview_data_dir("WebView2_panel")
         os.environ["WEBVIEW2_USER_DATA_FOLDER"] = wv_data
-        # Ensure standard hardware acceleration and DirectComposition
-        if "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS" in os.environ:
-            os.environ.pop("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", None)
+        _clean_stale_caches(wv_data)
+        # Prevent third-party overlay/hook crashes (e.g. RTSSHooks64.dll) by disabling DirectComposition hooks
+        safe_args = "--disable-gpu-compositing --disable-direct-composition"
+        existing = os.environ.get("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "")
+        if safe_args not in existing:
+            os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = f"{existing} {safe_args}".strip()
     except Exception as exc:
         log.error("[panel] WebView2 data-folder setup failed: %s", exc)
 
@@ -532,14 +560,17 @@ def _run(width, height, x=None, y=None, query_params=None, nav_queue=None):
     api = _JSApi(state)
     import urllib.parse
     import urllib.request
+    ts = int(time.time())
     if query_params:
         if isinstance(query_params, dict):
-            qs = urllib.parse.urlencode(query_params)
+            qp = dict(query_params)
+            qp["_t"] = ts
+            qs = urllib.parse.urlencode(qp)
         else:
-            qs = str(query_params).lstrip("?")
+            qs = f"{str(query_params).lstrip('?')}&_t={ts}"
         panel_url = f"http://127.0.0.1:15502/index.html?{qs}"
     else:
-        panel_url = "http://127.0.0.1:15502/index.html"
+        panel_url = f"http://127.0.0.1:15502/index.html?_t={ts}"
 
     # Pre-flight check: ensure local HTTP server is responding before launching webview
     for _ in range(25):

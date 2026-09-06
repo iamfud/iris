@@ -423,6 +423,14 @@ class Plugin:
                 "name": "Elite Dangerous",
                 "exe": ed_exe,
                 "enabled": True,
+                "theme": {
+                    "accent": "#ff5500",
+                    "neon": "#ffaa00",
+                },
+                "theme_override": True,
+                "lighting_enabled": True,
+                "lighting_theme_enabled": True,
+                "lighting_alerts_enabled": True,
                 "board": default_board,
             }
 
@@ -437,6 +445,7 @@ class Plugin:
 
     def stop(self):
         self._running = False
+        self._clear_shields_warning()
         self._connector.disconnect()
         if self._serial:
             if hasattr(self._serial, "release_progress_prefix"):
@@ -548,51 +557,55 @@ class Plugin:
                 except Exception as ex:
                     log.debug("[ed] periodic binds check error: %s", ex)
 
-            for key, (label, on_msg, off_msg) in ship_labels.items():
-                cur = st.get(key)
-                if cur is None:
-                    continue
-                last = prev.get(key)
-                if last is not None and cur != last and self._serial:
-                    # Determine good vs bad status
-                    if key == "landing_gear":
-                        ev_status = "good" if cur else "bad"  # DOWN is safe (good), UP is retracted (bad)
-                    elif key == "hardpoints":
-                        ev_status = "bad" if cur else "good"  # DEPLOYED is combat alert (bad), STOWED is safe (good)
+            try:
+                for key, (label, on_msg, off_msg) in ship_labels.items():
+                    cur = st.get(key)
+                    if cur is None:
+                        continue
+                    last = prev.get(key)
+                    if last is not None and cur != last and self._serial:
+                        # Determine good vs bad status
+                        if key == "landing_gear":
+                            ev_status = "good" if cur else "bad"  # DOWN is safe (good), UP is retracted (bad)
+                        elif key == "hardpoints":
+                            ev_status = "bad" if cur else "good"  # DEPLOYED is combat alert (bad), STOWED is safe (good)
+                        else:
+                            ev_status = "good"
+
+                        if hasattr(self._serial, "event"):
+                            self._serial.event(
+                                f"ed.{key}",
+                                label,
+                                on_msg if cur else off_msg,
+                                status=ev_status,
+                            )
+                        else:
+                            self._serial.notify(
+                                f"ed.{key}",
+                                label,
+                                on_msg if cur else off_msg,
+                            )
+                    prev[key] = cur
+
+                # Shield-down alert: STATE-driven, not edge-triggered. Only fire
+                # during active flight when the game is running and player is undocked.
+                in_flight = not st.get("docked", False) and not st.get("landed", False) and not st.get("on_foot", False)
+                shields = st.get("shields_up")
+                if shields is not None:
+                    if shields is False and in_flight:
+                        if not shield_alert_active:
+                            self._alert_shields_down()
+                            self._set_shields_warning()
+                            shield_alert_active = True
                     else:
-                        ev_status = "good"
+                        if shield_alert_active:
+                            shield_alert_active = False
+                            self._clear_shields_warning()
 
-                    if hasattr(self._serial, "event"):
-                        self._serial.event(
-                            f"ed.{key}",
-                            label,
-                            on_msg if cur else off_msg,
-                            status=ev_status,
-                        )
-                    else:
-                        self._serial.notify(
-                            f"ed.{key}",
-                            label,
-                            on_msg if cur else off_msg,
-                        )
-                prev[key] = cur
+                self._update_progress_bar(st)
+            except Exception as ex:
+                log.warning("[ed] ship state processing error: %s", ex)
 
-            # Shield-down alert: STATE-driven, not edge-triggered. Only fire
-            # during active flight when the game is running and player is undocked.
-            in_flight = not st.get("docked", False) and not st.get("landed", False) and not st.get("on_foot", False)
-            shields = st.get("shields_up")
-            if shields is not None:
-                if shields is False and in_flight:
-                    if not shield_alert_active:
-                        self._alert_shields_down()
-                        self._set_shields_warning()
-                        shield_alert_active = True
-                else:
-                    if shield_alert_active:
-                        shield_alert_active = False
-                        self._clear_shields_warning()
-
-            self._update_progress_bar(st)
             time.sleep(0.5)
 
     def _alert_shields_down(self):

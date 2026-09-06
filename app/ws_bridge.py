@@ -1278,11 +1278,11 @@ class _RequestHandler(SimpleHTTPRequestHandler):
     def _handle_screenshot_latest(self):
         """Return the most recent screenshot captured by the Tk dialog."""
         if _app is None:
-            self._send_json({"available": False})
+            self._send_json({"available": False, "seq": 0})
             return
         data = getattr(_app, "screenshot_last", None)
         if not data:
-            self._send_json({"available": False})
+            self._send_json({"available": False, "seq": getattr(_app, "screenshot_seq", 0)})
             return
         self._send_json({"available": True, **data})
 
@@ -1923,6 +1923,7 @@ class _RequestHandler(SimpleHTTPRequestHandler):
                 "config": {
                     "panel_board": _app.cfg.get("panel_board", []),
                     "panel_utility": _app.cfg.get("panel_utility", []),
+                    "panel_core": _app.cfg.get("panel_core", []),
                     "panel_sliders": _app.cfg.get("panel_sliders", []),
                     "panel_layout": _app.cfg.get("panel_layout", []),
                     "panel_gauges": _app.cfg.get("panel_gauges", {}),
@@ -2320,7 +2321,7 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             except Exception as e:
                 log.warning("[http] overlay toggle failed: %s", e)
             self._send_json({"ok": True, "state": not cur})
-        elif tile == "mic":
+        elif tile in ("mic", "mic_mute"):
             try:
                 from win_platform import toggle_mic_mute
                 st = toggle_mic_mute()
@@ -2344,6 +2345,67 @@ class _RequestHandler(SimpleHTTPRequestHandler):
                     panel_window.open_panel()
             except Exception as e:
                 log.warning("[http] settings open failed: %s", e)
+            self._send_json({"ok": True})
+        elif tile == "toolbar":
+            try:
+                if hasattr(_app, "_toggle_capture_toolbar"):
+                    _app._root.after(0, _app._toggle_capture_toolbar)
+            except Exception as e:
+                log.warning("[http] toolbar toggle failed: %s", e)
+            self._send_json({"ok": True})
+        elif tile == "colour_picker":
+            try:
+                mw = _app._ensure_main_win() if hasattr(_app, "_ensure_main_win") else getattr(_app, "_main_win", None)
+                if mw:
+                    _app._root.after(0, mw.start_colour_picker)
+            except Exception as e:
+                log.warning("[http] colour picker failed: %s", e)
+            self._send_json({"ok": True})
+        elif tile in ("screenshot", "screenshot_full"):
+            try:
+                mw = _app._ensure_main_win() if hasattr(_app, "_ensure_main_win") else getattr(_app, "_main_win", None)
+                if mw:
+                    _app._root.after(0, lambda: mw.start_screenshot({}, mode="fullscreen"))
+            except Exception as e:
+                log.warning("[http] screenshot failed: %s", e)
+            self._send_json({"ok": True})
+        elif tile == "screenshot_zone":
+            try:
+                mw = _app._ensure_main_win() if hasattr(_app, "_ensure_main_win") else getattr(_app, "_main_win", None)
+                if mw:
+                    _app._root.after(0, lambda: mw.start_screenshot({}, mode="zone"))
+            except Exception as e:
+                log.warning("[http] screenshot zone failed: %s", e)
+            self._send_json({"ok": True})
+        elif tile == "note":
+            try:
+                mw = _app._ensure_main_win() if hasattr(_app, "_ensure_main_win") else getattr(_app, "_main_win", None)
+                if mw:
+                    _app._root.after(0, mw.start_quick_note)
+            except Exception as e:
+                log.warning("[http] quick note failed: %s", e)
+            self._send_json({"ok": True})
+        elif tile == "borderless_toggle":
+            try:
+                from win_platform import toggle_borderless_window
+                st = toggle_borderless_window()
+                self._send_json({"ok": True, "borderless": st})
+            except Exception as e:
+                log.warning("[http] borderless toggle failed: %s", e)
+                self._send_json({"ok": False, "error": str(e)})
+        elif tile == "stopwatch":
+            try:
+                if hasattr(_app, "_toggle_stopwatch"):
+                    _app._root.after(0, _app._toggle_stopwatch)
+            except Exception as e:
+                log.warning("[http] stopwatch toggle failed: %s", e)
+            self._send_json({"ok": True})
+        elif tile == "countdown":
+            try:
+                if hasattr(_app, "_toggle_countdown"):
+                    _app._root.after(0, _app._toggle_countdown)
+            except Exception as e:
+                log.warning("[http] countdown toggle failed: %s", e)
             self._send_json({"ok": True})
         else:
             self._send_json({"ok": False})
@@ -2484,6 +2546,20 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         except Exception as e:
             self.send_error(400, str(e))
             return
+        if name == "matrix_display":
+            if _app and isinstance(body, dict):
+                from config import save_config
+                if "brightness" in body:
+                    try:
+                        _app._set_brightness(max(0, min(4, int(body["brightness"]))))
+                    except Exception:
+                        pass
+                _app.cfg.update(body)
+                save_config(_app.cfg)
+                self._push_config_to_device(body)
+                broadcast({"type": "config", "config": body})
+            self._send_json({"ok": True})
+            return
         import plugin_manager
         if name == "vision":
             body = _merge_vision_config(body)
@@ -2546,8 +2622,28 @@ def _get_plugin_state():
             result[name] = {"available": False}
     return result
 
-
 def _get_plugin_snapshot(name):
+    if name == "matrix_display":
+        try:
+            from serial_comm import serial_sender
+            port = serial_sender.connected_port()
+        except Exception:
+            port = None
+        if not port and _app:
+            port = getattr(_app, "_port", None)
+        is_conn = (port is not None) or bool(_app and getattr(_app, "_online", False))
+        return {
+            "available": is_conn,
+            "connected": is_conn,
+            "port": port or "—",
+            "state": {"port": port or "—", "connected": is_conn},
+            "status": {
+                "port": port or "—",
+                "connected": is_conn,
+                "status_label": f"Connected ({port})" if (is_conn and port) else ("Connected" if is_conn else "Offline"),
+                "message": f"Port: {port}" if (is_conn and port) else ("Connected" if is_conn else "Display disconnected"),
+            },
+        }
     import plugin_manager
     inst = plugin_manager.get(name)
     if inst and hasattr(inst, "snapshot"):
@@ -2616,7 +2712,154 @@ def _get_plugins_config():
             "labels": manifest.get("labels", {}),
             "theme": manifest.get("theme"),
             "log_path": pcfg.get("log_path", ""),
+            "is_hardware": plugin_manager.is_hardware_plugin(name, manifest),
         }
+
+    # Core Matrix Display Hardware Plugin
+    try:
+        from serial_comm import serial_sender
+        port = serial_sender.connected_port()
+    except Exception:
+        port = None
+    if not port and _app:
+        port = getattr(_app, "_port", None)
+    is_matrix_online = (port is not None) or bool(_app and getattr(_app, "_online", False))
+    matrix_status_code = "active" if is_matrix_online else "inactive"
+    matrix_status_label = f"Connected ({port})" if (is_matrix_online and port) else ("Connected" if is_matrix_online else "Offline")
+    matrix_cfg = dict(_app.cfg) if _app and hasattr(_app, "cfg") else {}
+    matrix_settings = [
+        {
+            "title": "Clock Display",
+            "controls": [
+                {
+                    "type": "select",
+                    "key": "clock_mode",
+                    "label": "Clock Mode",
+                    "value_from": "_clock_mode",
+                    "description": "Which clock style the matrix display shows.",
+                    "options": [
+                        {"value": "small", "label": "Small Clock"},
+                        {"value": "large", "label": "Large Clock", "set": {"feature_large_clock": True, "feature_day_clock": False}},
+                        {"value": "day", "label": "Day and time", "set": {"feature_large_clock": False, "feature_day_clock": True}}
+                    ]
+                },
+                {
+                    "type": "toggle",
+                    "key": "feature_time",
+                    "label": "Time display",
+                    "description": "Show/hide current time on the matrix display."
+                },
+                {
+                    "type": "toggle",
+                    "key": "feature_date",
+                    "label": "Date reminder",
+                    "description": "Alternate time display with the current date."
+                },
+                {
+                    "type": "toggle",
+                    "key": "feature_minute_bar",
+                    "label": "Minute bar",
+                    "description": "Visual minute progress bar on display."
+                },
+                {
+                    "type": "toggle",
+                    "key": "feature_greeting",
+                    "label": "Greeting message",
+                    "description": "Show greeting message on startup."
+                }
+            ]
+        },
+        {
+            "title": "Display Brightness",
+            "controls": [
+                {
+                    "type": "slider",
+                    "key": "brightness",
+                    "label": "Display Brightness",
+                    "min": 0,
+                    "max": 4,
+                    "step": 1,
+                    "unit": "",
+                    "description": "Brightness of the matrix display (0 = off, 4 = max)."
+                }
+            ]
+        },
+        {
+            "title": "Display Features & Extras",
+            "controls": [
+                {
+                    "type": "toggle",
+                    "key": "feature_eyes",
+                    "label": "Animated eyes",
+                    "description": "Animated eyes that follow motion."
+                },
+                {
+                    "type": "toggle",
+                    "key": "night_mode_enabled",
+                    "label": "Night mode",
+                    "description": "Dim display during nighttime hours."
+                },
+                {
+                    "type": "toggle",
+                    "key": "pc_stats_enabled",
+                    "label": "PC Stats",
+                    "description": "Show PC hardware stats on the matrix display."
+                },
+                {
+                    "type": "toggle",
+                    "key": "feature_notifications",
+                    "label": "Notifications",
+                    "description": "Show phone and PC notifications on the matrix display."
+                }
+            ]
+        }
+    ]
+
+    result["matrix_display"] = {
+        "display_name": "Matrix Display",
+        "description": "Physical 32x8 LED pixel matrix display connected via USB serial.",
+        "icon": "developer_board",
+        "type": "hardware",
+        "is_hardware": True,
+        "is_core": True,
+        "exe_path": "",
+        "exe_default": "",
+        "enabled": True,
+        "running": is_matrix_online,
+        "status_code": matrix_status_code,
+        "status_label": matrix_status_label,
+        "message": f"Port: {port}" if is_matrix_online else "Display disconnected",
+        "requirements": [],
+        "settings": matrix_settings,
+        "config": matrix_cfg,
+        "capabilities": {
+            "status": True,
+            "configuration": True,
+            "outputs": False,
+            "live_data": False,
+            "actions": False,
+            "diagnostics": False,
+            "hardware": True
+        },
+        "status_fields": [
+            {"key": "status_label", "label": "Connection", "source": "lifecycle"},
+            {"key": "message", "label": "Port Details", "source": "lifecycle"}
+        ],
+        "outputs_def": [],
+        "outputs": {},
+        "live_data_def": {},
+        "buttons_def": [],
+        "preset_layout": [],
+        "panel_profiles": [],
+        "actions_def": [],
+        "diagnostics_def": [],
+        "labels": {
+            "status": "HARDWARE CONNECTION",
+            "configuration": "DISPLAY & CLOCK SETTINGS"
+        },
+        "theme": None,
+        "log_path": "",
+    }
     return result
 
 

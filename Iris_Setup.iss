@@ -52,7 +52,7 @@ Type: filesandordirs; Name: "{userappdata}\Iris"
 Type: filesandordirs; Name: "{localappdata}\Iris"
 
 [Run]
-Filename: "{app}\Iris.exe"; Description: "Launch Iris now"; Flags: nowait postinstall skipifsilent; Check: NotVCInstallFailed
+Filename: "{app}\Iris.exe"; Description: "Launch Iris now"; Flags: nowait postinstall skipifsilent runascurrentuser; Check: NotVCInstallFailed
 
 [Code]
 var
@@ -192,12 +192,65 @@ begin
   end;
 end;
 
+procedure ConfigureRTSSExclusions;
+var
+  RtssDir, ProfilesDir, CfgContent: String;
+begin
+  RtssDir := '';
+  if not RegQueryStringValue(HKLM, 'SOFTWARE\WOW6432Node\Unwinder\RTSS', 'InstallDir', RtssDir) then
+    RegQueryStringValue(HKLM, 'SOFTWARE\Unwinder\RTSS', 'InstallDir', RtssDir);
+
+  if (RtssDir = '') and DirExists(ExpandConstant('{commonpf32}\RivaTuner Statistics Server')) then
+    RtssDir := ExpandConstant('{commonpf32}\RivaTuner Statistics Server');
+
+  if (RtssDir <> '') and DirExists(RtssDir + '\Profiles') then
+  begin
+    ProfilesDir := RtssDir + '\Profiles';
+    CfgContent := '[Hooking]' + #13#10 +
+                  'EnableHooking=0' + #13#10 +
+                  'HookLoadLibrary=0' + #13#10 +
+                  'HookDirectDraw=0' + #13#10 +
+                  'HookDirect3D8=0' + #13#10 +
+                  'HookDirect3D9=0' + #13#10 +
+                  'HookDirect3DSwapChain9Present=0' + #13#10 +
+                  'HookDXGI=0' + #13#10 +
+                  'HookDirect3D12=0' + #13#10 +
+                  'HookOpenGL=0' + #13#10 +
+                  'HookVulkan=0' + #13#10;
+    SaveStringToFile(ProfilesDir + '\Iris.exe.cfg', CfgContent, False);
+    SaveStringToFile(ProfilesDir + '\msedgewebview2.exe.cfg', CfgContent, False);
+  end;
+end;
+
+procedure PurgeWebView2Caches;
+begin
+  DelTree(ExpandConstant('{localappdata}\Iris\WebView2_panel\EBWebView\GPUPersistentCache'), True, True, True);
+  DelTree(ExpandConstant('{localappdata}\Iris\WebView2_panel\EBWebView\ShaderCache'), True, True, True);
+  DelTree(ExpandConstant('{localappdata}\Iris\WebView2_panel\EBWebView\GrShaderCache'), True, True, True);
+  DelTree(ExpandConstant('{localappdata}\Iris\WebView2_panel\EBWebView\Default\Code Cache'), True, True, True);
+  DelTree(ExpandConstant('{localappdata}\Iris\WebView2_panel\EBWebView\Default\GPUCache'), True, True, True);
+  DelTree(ExpandConstant('{localappdata}\Iris\WebView2_panel\EBWebView\Crashpad\reports'), True, True, True);
+
+  DelTree(ExpandConstant('{localappdata}\Iris\WebView2_Companion\EBWebView\GPUPersistentCache'), True, True, True);
+  DelTree(ExpandConstant('{localappdata}\Iris\WebView2_Companion\EBWebView\ShaderCache'), True, True, True);
+  DelTree(ExpandConstant('{localappdata}\Iris\WebView2_Companion\EBWebView\GrShaderCache'), True, True, True);
+  DelTree(ExpandConstant('{localappdata}\Iris\WebView2_Companion\EBWebView\Default\Code Cache'), True, True, True);
+  DelTree(ExpandConstant('{localappdata}\Iris\WebView2_Companion\EBWebView\Default\GPUCache'), True, True, True);
+  DelTree(ExpandConstant('{localappdata}\Iris\WebView2_Companion\EBWebView\Crashpad\reports'), True, True, True);
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   ResultCode: Integer;
 begin
   if CurStep = ssPostInstall then
   begin
+    { Purge stale GPU/shader caches to prevent black screen on first launch }
+    PurgeWebView2Caches;
+
+    { Configure RTSS exclusion profiles to prevent fatal RTSSHooks64.dll crashes }
+    ConfigureRTSSExclusions;
+
     WizardForm.StatusLabel.Caption := 'Configuring dependencies...';
     WizardForm.Update;
 

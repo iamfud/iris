@@ -22,6 +22,7 @@ BUILTIN_ACTIONS = [
     {"type": "SCREENSHOT", "label": "Screenshot", "icon": "camera", "group": False},
     {"type": "NOTE", "label": "Quick Note", "icon": "note-text", "group": False},
     {"type": "EMPTY", "label": "Empty / Spacer", "icon": "border-none-variant", "group": False},
+    {"type": "CORE", "label": "Iris Core Action", "icon": "star-circle", "group": False},
 ]
 
 DEFAULT_UTILITY = [
@@ -29,6 +30,13 @@ DEFAULT_UTILITY = [
     {"name": "Play/Pause", "type": "MEDIA_PLAY", "icon": "play-pause", "color": ""},
     {"name": "Next", "type": "MEDIA_NEXT", "icon": "skip-next", "color": ""},
     {"name": "Spotify", "type": "MEDIA_EJECT", "icon": "eject", "color": ""},
+]
+
+DEFAULT_CORE = [
+    {"name": "PC Stats", "type": "CORE", "core_action": "display", "icon": "monitor", "color": ""},
+    {"name": "Overlay", "type": "CORE", "core_action": "overlay", "icon": "speedometer", "color": ""},
+    {"name": "Mute Mic", "type": "CORE", "core_action": "mic", "icon": "microphone", "color": ""},
+    {"name": "Settings", "type": "CORE", "core_action": "settings", "icon": "cog", "color": ""},
 ]
 
 DEFAULT_SLIDERS = [
@@ -55,13 +63,17 @@ _SLOT_KEYS = (
     "audio_input_device_id_alt", "audio_input_device_name_alt",
     "audio_primary_icon", "audio_alt_icon",
     "plugin", "button_id", "widget_type", "state_key", "labels", "colors", "icon_off", "description",
-    "screenshot_monitor", "capture_mode",
+    "screenshot_monitor", "capture_mode", "core_action",
 )
 
 
 
 def default_utility():
     return copy.deepcopy(DEFAULT_UTILITY)
+
+
+def default_core():
+    return copy.deepcopy(DEFAULT_CORE)
 
 
 def default_sliders():
@@ -90,6 +102,13 @@ def ensure_panel_defaults(cfg):
         while len(u) < 4:
             u.append({"name": "", "type": "EMPTY", "icon": "border-none-variant", "color": ""})
         cfg["panel_utility"] = u
+    if not isinstance(cfg.get("panel_core"), list) or len(cfg["panel_core"]) != 4:
+        cfg["panel_core"] = default_core()
+    else:
+        u = list(cfg["panel_core"])[:4]
+        while len(u) < 4:
+            u.append({"name": "", "type": "EMPTY", "icon": "border-none-variant", "color": ""})
+        cfg["panel_core"] = u
     if not isinstance(cfg.get("panel_sliders"), list):
         cfg["panel_sliders"] = default_sliders()
     if not isinstance(cfg.get("panel_layout"), list):
@@ -171,11 +190,22 @@ def sanitize_profiles(raw):
         seen.add(pid)
         exe = str(item.get("exe") or "").strip()
         name = str(item.get("name") or "").strip() or (exe or pid)
+        theme_dict = item.get("theme")
+        if not isinstance(theme_dict, dict):
+            theme_dict = {}
         out.append({
             "id": pid,
             "name": name,
             "exe": exe,
             "enabled": bool(item.get("enabled", True)),
+            "theme": {
+                "accent": str(theme_dict.get("accent") or "").strip(),
+                "neon": str(theme_dict.get("neon") or "").strip(),
+            } if theme_dict else {},
+            "theme_override": bool(item.get("theme_override", True)),
+            "lighting_enabled": bool(item.get("lighting_enabled", True)),
+            "lighting_theme_enabled": bool(item.get("lighting_theme_enabled", True)),
+            "lighting_alerts_enabled": bool(item.get("lighting_alerts_enabled", True)),
             "lighting": item.get("lighting", {}) if isinstance(item.get("lighting"), dict) else {},
             "board": sanitize_board(item.get("board")),
         })
@@ -314,6 +344,22 @@ def sanitize_utility(raw):
     return out
 
 
+def sanitize_core(raw):
+    base = default_core()
+    if not isinstance(raw, list):
+        return base
+    out = []
+    for i in range(4):
+        if i < len(raw) and isinstance(raw[i], dict):
+            s = sanitize_slot(raw[i], allow_group=False)
+            out.append(s or {"name": "", "type": "EMPTY", "icon": "border-none-variant", "color": ""})
+        else:
+            out.append(base[i] if i < len(base) else {
+                "name": "", "type": "EMPTY", "icon": "border-none-variant", "color": ""
+            })
+    return out
+
+
 def sanitize_sliders(raw):
     defaults = {d["id"]: d["enabled"] for d in DEFAULT_SLIDERS}
     if isinstance(raw, list):
@@ -392,6 +438,7 @@ def panel_payload(cfg):
         "panel_board": cfg.get("panel_board") or [],
         "panel_profiles": cfg.get("panel_profiles") or [],
         "panel_utility": cfg.get("panel_utility") or default_utility(),
+        "panel_core": cfg.get("panel_core") or default_core(),
         "panel_sliders": cfg.get("panel_sliders") or default_sliders(),
         "panel_layout": cfg.get("panel_layout") or default_layout(),
         "panel_gauges": cfg.get("panel_gauges") or default_gauges(),
@@ -416,6 +463,8 @@ def apply_panel_save(cfg, body):
         _RESOLVE_CACHE["board"] = None
     if "panel_utility" in body:
         cfg["panel_utility"] = sanitize_utility(body["panel_utility"])
+    if "panel_core" in body:
+        cfg["panel_core"] = sanitize_core(body["panel_core"])
     if "panel_sliders" in body:
         cfg["panel_sliders"] = sanitize_sliders(body["panel_sliders"])
     if "panel_layout" in body:
