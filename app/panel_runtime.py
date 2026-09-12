@@ -194,7 +194,7 @@ def live_payload(cfg, client_cv=None):
         "panel_gauges": cfg.get("panel_gauges") or {},
         "panel_profiles": cfg.get("panel_profiles") or [],
         "media_player_path": cfg.get("media_player_path") or "",
-        "screensaver_timeout": int(cfg.get("screensaver_timeout", 60)),
+        "screensaver_timeout": int(cfg.get("screensaver_timeout", 2) if cfg.get("screensaver_timeout") is not None else 2),
         "keep_alive": bool(cfg.get("keep_alive", True)),
         "theme": cfg.get("theme") or {"mode": "iris", "accent": "#B23AF6", "neon": "#79E8FC"},
     }
@@ -221,6 +221,7 @@ def live_payload(cfg, client_cv=None):
         "entity_states": e_states,
         "default_audio_output": _default_audio_output(),
         "warnings": _warnings(),
+        "screenshot_seq": getattr(_app(), "screenshot_seq", 0) if _app() is not None else 0,
     }
     if client_cv != cv:
         payload["config"] = cfg_data
@@ -243,22 +244,30 @@ def execute_slot(slot):
         if btype == "CORE":
             core_act = str(slot.get("core_action") or "").strip()
             if core_act in ("screenshot", "screenshot_full"):
-                if app is not None and getattr(app, "_main_win", None):
-                    slot_copy = dict(slot)
-                    app._root.after(0, lambda: app._main_win.start_screenshot(slot_copy, mode="fullscreen"))
+                if app is not None:
+                    mw = app._ensure_main_win() if hasattr(app, "_ensure_main_win") else getattr(app, "_main_win", None)
+                    if mw:
+                        slot_copy = dict(slot)
+                        app._root.after(0, lambda: mw.start_screenshot(slot_copy, mode="fullscreen"))
                 return {"ok": True}
             if core_act == "screenshot_zone":
-                if app is not None and getattr(app, "_main_win", None):
-                    slot_copy = dict(slot)
-                    app._root.after(0, lambda: app._main_win.start_screenshot(slot_copy, mode="zone"))
+                if app is not None:
+                    mw = app._ensure_main_win() if hasattr(app, "_ensure_main_win") else getattr(app, "_main_win", None)
+                    if mw:
+                        slot_copy = dict(slot)
+                        app._root.after(0, lambda: mw.start_screenshot(slot_copy, mode="zone"))
                 return {"ok": True}
-            if core_act == "note":
-                if app is not None and getattr(app, "_main_win", None):
-                    app._root.after(0, app._main_win.start_quick_note)
+            if core_act in ("note", "note_native", "note_webview"):
+                if app is not None:
+                    mw = app._ensure_main_win() if hasattr(app, "_ensure_main_win") else getattr(app, "_main_win", None)
+                    if mw:
+                        app._root.after(0, lambda: mw.start_quick_note(toggle=True))
                 return {"ok": True}
             if core_act == "colour_picker":
-                if app is not None and getattr(app, "_main_win", None):
-                    app._root.after(0, app._main_win.start_colour_picker)
+                if app is not None:
+                    mw = app._ensure_main_win() if hasattr(app, "_ensure_main_win") else getattr(app, "_main_win", None)
+                    if mw:
+                        app._root.after(0, mw.start_colour_picker)
                 return {"ok": True}
             if core_act == "borderless_toggle":
                 try:
@@ -325,18 +334,24 @@ def execute_slot(slot):
                     log.warning("[panel_runtime] stopwatch schedule failed: %s", ex)
             return {"ok": True}
         if btype == "SCREENSHOT" or btype == "SCREENSHOT_FULL":
-            if app is not None and getattr(app, "_main_win", None):
-                slot_copy = dict(slot)
-                app._root.after(0, lambda: app._main_win.start_screenshot(slot_copy, mode="fullscreen"))
+            if app is not None:
+                mw = app._ensure_main_win() if hasattr(app, "_ensure_main_win") else getattr(app, "_main_win", None)
+                if mw:
+                    slot_copy = dict(slot)
+                    app._root.after(0, lambda: mw.start_screenshot(slot_copy, mode="fullscreen"))
             return {"ok": True}
         if btype == "SCREENSHOT_ZONE":
-            if app is not None and getattr(app, "_main_win", None):
-                slot_copy = dict(slot)
-                app._root.after(0, lambda: app._main_win.start_screenshot(slot_copy, mode="zone"))
+            if app is not None:
+                mw = app._ensure_main_win() if hasattr(app, "_ensure_main_win") else getattr(app, "_main_win", None)
+                if mw:
+                    slot_copy = dict(slot)
+                    app._root.after(0, lambda: mw.start_screenshot(slot_copy, mode="zone"))
             return {"ok": True}
         if btype == "NOTE":
-            if app is not None and getattr(app, "_main_win", None):
-                app._root.after(0, app._main_win.start_quick_note)
+            if app is not None:
+                mw = app._ensure_main_win() if hasattr(app, "_ensure_main_win") else getattr(app, "_main_win", None)
+                if mw:
+                    app._root.after(0, mw.start_quick_note)
             return {"ok": True}
         if btype == "MEDIA_PREV":
             _media_key(0xB1)
@@ -441,9 +456,9 @@ def execute_slot(slot):
                     app._root.after(
                         0, lambda: app._main_win.start_screenshot(slot_copy, mode="zone"))
                 return {"ok": True}
-            elif bid == "note" or ent == "system.note":
+            elif bid in ("note", "note_native", "note_webview") or ent in ("system.note", "system.note_native", "system.note_webview"):
                 if app is not None and getattr(app, "_main_win", None):
-                    app._root.after(0, app._main_win.start_quick_note)
+                    app._root.after(0, lambda: app._main_win.start_quick_note(toggle=True))
                 return {"ok": True}
             elif bid == "borderless_toggle" or ent == "system.borderless_toggle":
                 try:

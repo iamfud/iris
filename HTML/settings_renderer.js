@@ -985,11 +985,12 @@ class SettingsRenderer {
     var val = config[ctrl.key];
     if (val === undefined || val === null) val = ctrl.min || 0;
     var unit = ctrl.unit || "";
+    var displayVal = (parseFloat(val) === 0 && ctrl.zero_label) ? ctrl.zero_label : (String(val) + unit);
     var html = '<div class="settings-control">';
     if (ctrl.label) {
       html += '<label class="settings-label">';
       html += this._esc(ctrl.label);
-      html += ' <span class="settings-slider-value" data-display-for="' + this._esc(ctrl.key) + '">' + this._esc(String(val)) + unit + "</span>";
+      html += ' <span class="settings-slider-value" data-display-for="' + this._esc(ctrl.key) + '">' + this._esc(displayVal) + "</span>";
       html += "</label>";
     }
     html += '<input type="range" class="pdev-range" data-key="' + this._esc(ctrl.key) + '"';
@@ -1774,7 +1775,8 @@ class SettingsRenderer {
           sliderEl.addEventListener("input", function () {
             var val = this.value;
             var display = container.querySelector("[data-display-for='" + self._cssEsc(ctrl.key) + "']");
-            if (display) display.textContent = val + unit;
+            var displayVal = (parseFloat(val) === 0 && ctrl.zero_label) ? ctrl.zero_label : (val + unit);
+            if (display) display.textContent = displayVal;
             self._paintSliderFill(this);
             clearTimeout(self._saveTimers[ctrl.key]);
             self._saveTimers[ctrl.key] = setTimeout(function () {
@@ -2233,7 +2235,8 @@ class SettingsRenderer {
           sliderEl.addEventListener("input", function () {
             var val = this.value;
             var display = container.querySelector("[data-display-for='" + self._cssEsc(ctrl.key) + "']");
-            if (display) display.textContent = val + unit;
+            var displayVal = (parseFloat(val) === 0 && ctrl.zero_label) ? ctrl.zero_label : (val + unit);
+            if (display) display.textContent = displayVal;
             self._paintSliderFill(this);
             clearTimeout(self._saveTimers[ctrl.key]);
             self._saveTimers[ctrl.key] = setTimeout(function () {

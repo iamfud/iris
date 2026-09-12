@@ -7,6 +7,16 @@ DEFAULT_BRIGHTNESS = 3
 PC_DISP_STATS = "7"
 HOTKEY_SLEEP_MS = 50
 
+from panel_actions import (
+    DEFAULT_BOARD,
+    DEFAULT_PROFILES,
+    DEFAULT_UTILITY,
+    DEFAULT_CORE,
+    DEFAULT_SLIDERS,
+    DEFAULT_LAYOUT,
+    DEFAULT_GAUGES,
+)
+
 DEFAULT_CONFIG = {
     "serial_port": "auto",
     "brightness": 3,
@@ -24,7 +34,7 @@ DEFAULT_CONFIG = {
     "pc_stats_enabled": True,
     "pc_stats_manual": False,
     "cpu_temp_lim": 90,
-    "gpu_temp_lim": 90,
+    "gpu_temp_lim": 75,
     "ha_url": "",
     "ha_token": "",
     "ha_shortcuts": [],
@@ -38,33 +48,13 @@ DEFAULT_CONFIG = {
     "lan_access": True,
     "keep_alive": True,
     "alarms": [],
-    "panel_board": [],
-    "panel_profiles": [],
-    "panel_utility": [
-        {"name": "Previous", "type": "MEDIA_PREV", "icon": "skip-previous", "color": ""},
-        {"name": "Play/Pause", "type": "MEDIA_PLAY", "icon": "play-pause", "color": ""},
-        {"name": "Next", "type": "MEDIA_NEXT", "icon": "skip-next", "color": ""},
-        {"name": "Spotify", "type": "MEDIA_EJECT", "icon": "eject", "color": ""},
-    ],
-    "panel_core": [
-        {"name": "PC Stats", "type": "CORE", "core_action": "display", "icon": "monitor", "color": ""},
-        {"name": "Overlay", "type": "CORE", "core_action": "overlay", "icon": "speedometer", "color": ""},
-        {"name": "Mute Mic", "type": "CORE", "core_action": "mic", "icon": "microphone", "color": ""},
-        {"name": "Settings", "type": "CORE", "core_action": "settings", "icon": "cog", "color": ""},
-    ],
-    "panel_sliders": [
-        {"id": "app_volume", "enabled": True},
-        {"id": "master_volume", "enabled": True},
-        {"id": "brightness", "enabled": True},
-    ],
-    "panel_layout": [
-        {"id": "gauges", "enabled": True, "local": True, "remote": True},
-        {"id": "button_box", "enabled": True, "local": True, "remote": True},
-        {"id": "sliders", "enabled": True, "local": True, "remote": True},
-        {"id": "utility", "enabled": True, "local": True, "remote": True},
-        {"id": "core", "enabled": True, "local": True, "remote": True},
-    ],
-    "panel_gauges": {"source": "pc_stats", "enabled": True},
+    "panel_board": DEFAULT_BOARD,
+    "panel_profiles": DEFAULT_PROFILES,
+    "panel_utility": DEFAULT_UTILITY,
+    "panel_core": DEFAULT_CORE,
+    "panel_sliders": DEFAULT_SLIDERS,
+    "panel_layout": DEFAULT_LAYOUT,
+    "panel_gauges": DEFAULT_GAUGES,
     "user_name": "",
     "screensaver_timeout": 2,
     "run_at_startup": False,
@@ -93,7 +83,7 @@ DEVICE_DEFAULTS = {
     "alarm_minute": "0",
     "temp_alert": "0",
     "cpu_temp_lim": "90",
-    "gpu_temp_lim": "90",
+    "gpu_temp_lim": "75",
     "user_name": "",
 }
 

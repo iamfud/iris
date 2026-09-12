@@ -37,10 +37,18 @@ class Plugin:
                 })
         return presets
 
-    def apply_lighting_preset(self, preset_id: str):
+    def apply_lighting_preset(self, preset_id: str, is_alert: bool = False):
         """Execute HA script or scene."""
         if not preset_id:
             return
+        if not is_alert:
+            try:
+                from lighting_service import get_lighting_service
+                if get_lighting_service().is_alert_active():
+                    log.info("[ha] critical alert active -> ignoring non-alert preset '%s'", preset_id)
+                    return
+            except Exception:
+                pass
         clean_id = preset_id.replace("ha.", "") if preset_id.startswith("ha.") else preset_id
         dom = clean_id.split(".")[0] if "." in clean_id else "script"
         self._connector.call_service(dom, "turn_on", entity_id=clean_id)

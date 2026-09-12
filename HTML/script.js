@@ -451,6 +451,7 @@
   }
 
   let currentPage = "dashboard";
+  let pageHistory = [];
   let pluginState = {};
   let pollTimer = null;
   let lastScrollTop = 0;
@@ -465,6 +466,7 @@
   let alarmSaveTimer = null;
   let settingsRenderer = null;
   let panelEntities = [];
+  let panelLiveStates = {};
   let audioOutputDevices = [];
 
   let visionSensors = [];
@@ -507,6 +509,43 @@
   const main = document.querySelector(".main");
   const content = document.getElementById("content");
 
+  // ── Page history (global back) ───────────────────────────────
+
+  function pushNavSnapshot() {
+    const sc = (main && (main.querySelector('.settings-content') || main.querySelector('.content'))) || main;
+    pageHistory.push({
+      page: currentPage,
+      selectedPlugin: selectedPlugin,
+      selectedHardwarePlugin: selectedHardwarePlugin,
+      libraryTab: libraryTab,
+      profilesViewMode: profilesViewMode,
+      scrollTop: sc ? sc.scrollTop : 0
+    });
+    if (pageHistory.length > 60) pageHistory.shift();
+  }
+
+  function doNavBack() {
+    if (pageHistory.length === 0) {
+      if (currentPage !== "dashboard") navigateToPage("dashboard");
+      return;
+    }
+    const snap = pageHistory.pop();
+    currentPage = snap.page;
+    selectedPlugin = snap.selectedPlugin || null;
+    selectedHardwarePlugin = snap.selectedHardwarePlugin || null;
+    libraryTab = snap.libraryTab || "screenshots";
+    profilesViewMode = snap.profilesViewMode || "list";
+    exitPanelView();
+    portalAutoPanel = false;
+    if (panelLiveTimer) { clearInterval(panelLiveTimer); panelLiveTimer = null; }
+    navItems.forEach((n) => n.classList.toggle("active", n.dataset.page === currentPage));
+    renderPage();
+    const sc = (main && (main.querySelector('.settings-content') || main.querySelector('.content'))) || main;
+    if (sc && sc.scrollTop) {
+      requestAnimationFrame(() => { if (sc.scrollTop) sc.scrollTop = snap.scrollTop || 0; });
+    }
+  }
+
   // ── Sidebar navigation (desktop) ────────────────────────────
 
   const navItems = document.querySelectorAll(".nav-item");
@@ -517,6 +556,10 @@
       item.classList.add("active");
       const page = item.getAttribute("data-page");
       if (page) {
+        if (page === currentPage && !(page === "hardware" && selectedHardwarePlugin) && !(page === "plugins" && selectedPlugin)) {
+          return;
+        }
+        if (page !== currentPage) pushNavSnapshot();
         if (page === "profiles" || page === "panel") {
           if (IS_MOBILE && !IS_APP) {
             portalAutoPanel = true;
@@ -562,6 +605,7 @@
     if (targetNav) {
       targetNav.click();
     } else {
+      if (pageName !== currentPage) pushNavSnapshot();
       currentPage = pageName;
       selectedPlugin = null;
       selectedHardwarePlugin = null;
@@ -575,8 +619,13 @@
       if (page === "library" && (tab === "screenshots" || tab === "notes")) {
         libraryTab = tab;
       }
+      exitPanelView();
       if (typeof window.navigateToPage === "function") {
         window.navigateToPage(page);
+      } else {
+        currentPage = page;
+        navItems.forEach((n) => n.classList.toggle("active", n.dataset.page === page));
+        renderPage();
       }
       const u = new URL(window.location.href);
       u.searchParams.set("page", page);
@@ -715,12 +764,11 @@
 
     const isNotepadParam = params.get("view") === "notepad";
     if (isNotepadParam) {
-      document.body.classList.add("standalone-notepad-mode");
       const noteFile = params.get("file");
       const noteApp = params.get("app") || "general";
       const noteTitle = params.get("title") || "";
       const noteBody = params.get("body") || "";
-      openNotepad(noteFile, noteApp, true, noteTitle, noteBody);
+      openNotepad(noteFile, noteApp, false, noteTitle, noteBody);
       return;
     }
 
@@ -779,9 +827,8 @@
   function startPolling() {
     const urlParams = new URLSearchParams(window.location.search);
     const isStandaloneViewer = urlParams.get("view") === "viewer";
-    const isStandaloneNotepad = urlParams.get("view") === "notepad";
 
-    if (isStandaloneViewer || isStandaloneNotepad) {
+    if (isStandaloneViewer) {
       renderInitialView();
       connectWs();
       return;
@@ -964,6 +1011,7 @@
       if (res.ok) {
         const data = await res.json();
         panelEntities = data.entities || [];
+        panelLiveStates = data.live_states || {};
       }
     } catch (_) {}
   }
@@ -1433,7 +1481,7 @@
     const allKeys = Object.keys(pluginsConfig);
     const hwKeys = allKeys.filter((k) => {
       const p = pluginsConfig[k];
-      return p && (p.is_hardware || k === "matrix_display" || k === "ha" || k === "openrgb");
+      return p && (p.is_hardware || k === "matrix_display" || k === "ha" || k === "openrgb" || k === "pc_stats");
     });
 
     if (!hwKeys.includes("matrix_display")) {
@@ -1494,7 +1542,7 @@
         </div>
         <button class="done-btn" id="done-btn">Done</button>
       </header>
-      <section class="content settings-content" style="display:flex;flex-direction:column;gap:12px;padding:24px;">
+      <section class="content settings-content">
         ${tiles || '<div class="card"><p style="color:var(--fg-dim);margin:0">No hardware plugins detected</p></div>'}
       </section>`;
 
@@ -1977,9 +2025,32 @@
                 <select class="settings-select" id="m-trig-plugin" style="width:140px;flex:0 0 auto">
                   ${autoPluginOptionsHtml}
                 </select>
-                <input type="text" class="settings-input" id="m-trig-search" placeholder="Search trigger entities..." style="flex:1">
+                <div style="position:relative;flex:1">
+                  <input type="text" class="settings-input" id="m-trig-display" readonly placeholder="Click to select entity..." style="width:100%;cursor:pointer">
+                  <div class="trig-entity-popup" id="trig-entity-popup" style="display:none">
+                    <div class="pe-icon-search-row">
+                      <span class="material-icons-outlined pe-icon-search-icon">search</span>
+                      <input type="text" class="settings-input pe-icon-search-box" id="m-trig-search" placeholder="Search entities..." autocomplete="off">
+                    </div>
+                    <div class="trig-entity-list" id="trig-entity-list"></div>
+                  </div>
+                </div>
               </div>
-              <select class="settings-select" id="m-key" style="width:100%"></select>
+              <div id="m-trig-cond-row" style="display:none;margin-bottom:4px">
+                <label class="settings-label" style="font-size:11px;margin-bottom:2px">Condition value</label>
+                <div style="display:flex;gap:6px;align-items:center">
+                  <select class="settings-select" id="m-trig-cond-op" style="width:60px;flex:0 0 auto">
+                    <option value="==">==</option>
+                    <option value="!=">!=</option>
+                    <option value="<">&lt;</option>
+                    <option value="<=">&lt;=</option>
+                    <option value=">">&gt;</option>
+                    <option value=">=">&gt;=</option>
+                  </select>
+                  <div id="m-trig-cond-val-wrap" style="flex:1"></div>
+                </div>
+                <div id="m-trig-value" style="margin-top:4px;font-size:11px;color:var(--text-muted,#888);display:none"></div>
+              </div>
             </div>
           </div>
 
@@ -2062,10 +2133,129 @@
       ];
     }
 
-    const actionsTable = backdrop.querySelector("#m-actions-table");
     const trigPluginSel = backdrop.querySelector("#m-trig-plugin");
+    const trigDisplay = backdrop.querySelector("#m-trig-display");
+    const trigPopup = backdrop.querySelector("#trig-entity-popup");
+    const trigList = backdrop.querySelector("#trig-entity-list");
     const trigSearchInput = backdrop.querySelector("#m-trig-search");
-    const triggerKeySel = backdrop.querySelector("#m-key");
+    const trigCondRow = backdrop.querySelector("#m-trig-cond-row");
+    const trigCondOp = backdrop.querySelector("#m-trig-cond-op");
+    const trigCondValWrap = backdrop.querySelector("#m-trig-cond-val-wrap");
+    const trigValDiv = backdrop.querySelector("#m-trig-value");
+    const actionsTable = backdrop.querySelector("#m-actions-table");
+
+    let _selectedTrigKey = draft.trigger_key || "";
+    let _trigCondValue = draft.target_value !== undefined ? draft.target_value : "";
+    let _trigCondOp = draft.operator || "==";
+
+    trigCondOp.value = _trigCondOp;
+
+    function getFilteredEntities() {
+      const curPlg = trigPluginSel.value || "all";
+      const q = (trigSearchInput.value || "").trim().toLowerCase();
+      return (panelEntities || []).filter(e => {
+        const plg = e.plugin || (e.id && e.id.includes(".") ? e.id.split(".")[0] : "core");
+        if (curPlg !== "all" && plg !== curPlg) return false;
+        if (q) {
+          const matchName = (e.name || "").toLowerCase().includes(q);
+          const matchId = (e.id || "").toLowerCase().includes(q);
+          const matchDomain = (e.domain || "").toLowerCase().includes(q);
+          if (!matchName && !matchId && !matchDomain) return false;
+        }
+        return true;
+      });
+    }
+
+    function renderTrigEntityList() {
+      const filtered = getFilteredEntities();
+      let h = "";
+      filtered.forEach(ent => {
+        const val = ent.id || ent.state_key || "";
+        const name = ent.name || val;
+        const sel = val === _selectedTrigKey ? " trig-entity-item--selected" : "";
+        const liveVal = panelLiveStates[val];
+        const liveStr = (liveVal !== undefined && liveVal !== null) ? " = " + liveVal + (ent.unit ? " " + ent.unit : "") : "";
+        h += `<div class="trig-entity-item${sel}" data-key="${esc(val)}">${esc(name)}<span class="trig-entity-item-live">${esc(liveStr)}</span></div>`;
+      });
+      if (!filtered.length) h = '<div style="font-size:11px;color:var(--fg-dim);padding:10px;text-align:center">No matching entities</div>';
+      trigList.innerHTML = h;
+      trigList.querySelectorAll(".trig-entity-item").forEach(el => {
+        el.onclick = () => {
+          _selectedTrigKey = el.getAttribute("data-key");
+          const ent = (panelEntities || []).find(e => (e.id === _selectedTrigKey || e.state_key === _selectedTrigKey));
+          trigDisplay.value = ent ? (ent.name || _selectedTrigKey) : _selectedTrigKey;
+          trigPopup.style.display = "none";
+          updateTriggerCondition();
+          renderActionsTable();
+        };
+      });
+    }
+
+    function updateTriggerCondition() {
+      if (!_selectedTrigKey) {
+        trigCondRow.style.display = "none";
+        trigValDiv.style.display = "none";
+        return;
+      }
+      trigCondRow.style.display = "";
+      const ent = (panelEntities || []).find(e => (e.id === _selectedTrigKey || e.state_key === _selectedTrigKey));
+      const isTime = ent && ent.plugin === "time" && ent.state_key === "str";
+      const isTimeNum = ent && ent.plugin === "time" && ent.state_key === "hourminute";
+      const liveVal = panelLiveStates[_selectedTrigKey];
+      if (liveVal !== undefined && liveVal !== null && liveVal !== "") {
+        const unit = ent && ent.unit ? " " + ent.unit : "";
+        trigValDiv.textContent = "Current value: " + liveVal + unit;
+        trigValDiv.style.display = "";
+      } else {
+        trigValDiv.style.display = "none";
+      }
+      if (isTime) {
+        trigCondValWrap.innerHTML = `<input type="time" class="settings-input" id="m-trig-cond-val" value="${esc(String(_trigCondValue))}" style="width:100%">`;
+      } else if (isTimeNum) {
+        trigCondValWrap.innerHTML = `<input type="number" class="settings-input" id="m-trig-cond-val" value="${esc(String(_trigCondValue))}" placeholder="e.g. 1600" min="0" max="2359" style="width:100%">`;
+      } else if (ent && (ent.type === "status" || ent.labels)) {
+        const onL = ent.labels && ent.labels.on ? ent.labels.on : "Online";
+        const offL = ent.labels && ent.labels.off ? ent.labels.off : "Offline";
+        trigCondValWrap.innerHTML = `<select class="settings-select" id="m-trig-cond-val" style="width:100%"><option value="true">${esc(onL)}</option><option value="false">${esc(offL)}</option></select>`;
+      } else if (ent && ent.data_type === "number") {
+        trigCondValWrap.innerHTML = `<input type="number" class="settings-input" id="m-trig-cond-val" value="${esc(String(_trigCondValue))}" placeholder="Target value" style="width:100%">`;
+      } else {
+        trigCondValWrap.innerHTML = `<input type="text" class="settings-input" id="m-trig-cond-val" value="${esc(String(_trigCondValue))}" placeholder="Target value" style="width:100%">`;
+      }
+      const condValInput = trigCondValWrap.querySelector("#m-trig-cond-val");
+      if (condValInput) {
+        condValInput.oninput = () => { _trigCondValue = condValInput.value; };
+        condValInput.onchange = () => { _trigCondValue = condValInput.value; };
+      }
+    }
+
+    trigDisplay.onclick = () => {
+      trigPopup.style.display = trigPopup.style.display === "none" ? "" : "none";
+      if (trigPopup.style.display !== "none") {
+        trigSearchInput.value = "";
+        trigSearchInput.focus();
+        renderTrigEntityList();
+      }
+    };
+
+    document.addEventListener("click", function _trigOutsideClick(e) {
+      if (!trigPopup.contains(e.target) && e.target !== trigDisplay) {
+        trigPopup.style.display = "none";
+        document.removeEventListener("click", _trigOutsideClick);
+      }
+    });
+
+    trigSearchInput.oninput = () => renderTrigEntityList();
+    trigPluginSel.onchange = () => { renderTrigEntityList(); };
+    trigCondOp.onchange = () => { _trigCondOp = trigCondOp.value; };
+
+    if (_selectedTrigKey) {
+      const ent = (panelEntities || []).find(e => (e.id === _selectedTrigKey || e.state_key === _selectedTrigKey));
+      if (ent && ent.plugin) trigPluginSel.value = ent.plugin;
+      trigDisplay.value = ent ? (ent.name || _selectedTrigKey) : _selectedTrigKey;
+      updateTriggerCondition();
+    }
+    renderTrigEntityList();
 
     function getSourceForAction(act) {
       if (act.type === "hotkey") return "core_hotkey";
@@ -2082,40 +2272,16 @@
     }
 
     function renderActionsTable() {
-      const trigKey = triggerKeySel.value || draft.trigger_key;
-      const ent = (panelEntities || []).find(e => (e.id === trigKey || e.state_key === trigKey));
-      const hasLabels = ent && ent.labels && (ent.labels.on || ent.labels.off);
-      const onLabel = hasLabels ? (ent.labels.on || "ON") : "Active / True";
-      const offLabel = hasLabels ? (ent.labels.off || "OFF") : "Inactive / False";
-
       if (currentActions.length === 0) {
         actionsTable.innerHTML = `<div style="font-size:12px;color:var(--fg-dim);padding:14px;text-align:center;background:var(--bg-card);border:1px dashed var(--border);border-radius:var(--radius-small)">No actions in pipeline. Click "+ Add Action" above.</div>`;
         return;
       }
 
       actionsTable.innerHTML = currentActions.map((act, aIdx) => {
-        const curOp = act.operator || (act.condition && act.condition.operator) || "==";
-        const curVal = (act.target_value !== undefined) ? act.target_value : (act.condition ? act.condition.target_value : false);
         const dur = act.duration_s || 0;
         const currentSrc = getSourceForAction(act);
 
-        // 1. Condition controls
-        let valInputHtml = "";
-        if (hasLabels || ent?.type === "status" || typeof curVal === "boolean") {
-          const isOff = (curVal === false || String(curVal).toLowerCase() === "false" || String(curVal).toUpperCase() === offLabel.toUpperCase());
-          valInputHtml = `
-            <select class="settings-select row-val-sel" data-aidx="${aIdx}" style="flex:1;min-width:0">
-              <option value="false" ${isOff ? "selected" : ""}>${esc(offLabel)} (Down)</option>
-              <option value="true" ${!isOff ? "selected" : ""}>${esc(onLabel)} (Online)</option>
-            </select>
-          `;
-        } else {
-          valInputHtml = `
-            <input type="text" class="settings-input row-val-input" data-aidx="${aIdx}" value="${esc(String(curVal !== undefined ? curVal : ""))}" placeholder="Target value" style="flex:1;min-width:0">
-          `;
-        }
-
-        // 2. Action value controls (Fixed 200px width with ellipsis)
+        // Action value controls
         let detailHtml = "";
         if (currentSrc === "core_hotkey") {
           detailHtml = `<input type="text" class="settings-input row-act-val" data-aidx="${aIdx}" value="${esc(act.hotkey || "")}" placeholder="Key (e.g. 7, F13)" style="width:200px">`;
@@ -2168,19 +2334,8 @@
         }
 
         return `
-          <div style="display:grid;grid-template-columns: 220px 170px 200px 70px 32px;gap:8px;align-items:center;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-small);padding:6px 10px">
-            <!-- 1. Condition Column -->
-            <div style="display:flex;align-items:center;gap:6px;min-width:0">
-              <select class="settings-select row-op-sel" data-aidx="${aIdx}" style="width:65px;flex:0 0 auto">
-                <option value="==" ${curOp === "==" ? "selected" : ""}>==</option>
-                <option value="!=" ${curOp === "!=" ? "selected" : ""}>!=</option>
-                <option value="<" ${curOp === "<" ? "selected" : ""}>&lt;</option>
-                <option value=">" ${curOp === ">" ? "selected" : ""}>&gt;</option>
-              </select>
-              ${valInputHtml}
-            </div>
-
-            <!-- 2. Action Category Column -->
+          <div style="display:grid;grid-template-columns: 170px 200px 70px 32px;gap:8px;align-items:center;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-small);padding:6px 10px">
+            <!-- 1. Action Category Column -->
             <div style="min-width:0">
               <select class="settings-select row-src-sel" data-aidx="${aIdx}" style="width:100%">
                 ${actionCategories.map(c => `<option value="${esc(c.id)}" ${currentSrc === c.id ? "selected" : ""}>${esc(c.label)}</option>`).join("")}
@@ -2206,21 +2361,6 @@
       }).join("");
 
       // Wire row inputs
-      actionsTable.querySelectorAll(".row-op-sel").forEach(sel => {
-        sel.onchange = (e) => {
-          const aIdx = parseInt(e.target.getAttribute("data-aidx"), 10);
-          currentActions[aIdx].operator = e.target.value;
-        };
-      });
-
-      actionsTable.querySelectorAll(".row-val-sel, .row-val-input").forEach(inp => {
-        inp.onchange = (e) => {
-          const aIdx = parseInt(e.target.getAttribute("data-aidx"), 10);
-          const v = e.target.value;
-          currentActions[aIdx].target_value = (v === "true") ? true : (v === "false" ? false : (!isNaN(Number(v)) && v !== "" ? Number(v) : v));
-        };
-      });
-
       actionsTable.querySelectorAll(".row-dur-input").forEach(inp => {
         inp.oninput = (e) => {
           const aIdx = parseInt(e.target.getAttribute("data-aidx"), 10);
@@ -2287,54 +2427,12 @@
 
     backdrop.querySelector("#m-add-action-btn").onclick = () => {
       currentActions.push({
-        operator: "==",
-        target_value: false,
         duration_s: 0,
         type: "openrgb",
         profile: "Red"
       });
       renderActionsTable();
     };
-
-    function renderTriggerEntityOptions(targetKey) {
-      const curPlg = trigPluginSel.value || "all";
-      const q = (trigSearchInput.value || "").trim().toLowerCase();
-
-      let filtered = (panelEntities || []).filter(e => {
-        const plg = e.plugin || (e.id && e.id.includes(".") ? e.id.split(".")[0] : "core");
-        if (curPlg !== "all" && plg !== curPlg) return false;
-        if (q) {
-          const matchName = (e.name || "").toLowerCase().includes(q);
-          const matchId = (e.id || "").toLowerCase().includes(q);
-          const matchDomain = (e.domain || "").toLowerCase().includes(q);
-          if (!matchName && !matchId && !matchDomain) return false;
-        }
-        return true;
-      });
-
-      let h = `<option value="">(Select Trigger Entity...)</option>`;
-      filtered.forEach(ent => {
-        const val = ent.id || ent.state_key || "";
-        const sel = (targetKey && (targetKey === val || targetKey === ent.id)) ? "selected" : "";
-        const rawDType = ent.raw_data_type || ent.type || "state";
-        h += `<option value="${esc(val)}" ${sel}>${esc(ent.name || val)} (${esc(rawDType)})</option>`;
-      });
-
-      triggerKeySel.innerHTML = h;
-      renderActionsTable();
-    }
-
-    trigPluginSel.onchange = () => renderTriggerEntityOptions();
-    trigSearchInput.oninput = () => renderTriggerEntityOptions();
-    triggerKeySel.onchange = () => renderActionsTable();
-
-    if (draft.trigger_key) {
-      const matchEnt = (panelEntities || []).find(e => (e.id === draft.trigger_key || e.state_key === draft.trigger_key));
-      if (matchEnt && matchEnt.plugin) {
-        trigPluginSel.value = matchEnt.plugin;
-      }
-    }
-    renderTriggerEntityOptions(draft.trigger_key);
 
     const profileSel = backdrop.querySelector("#m-profile");
     const exeInput = backdrop.querySelector("#m-exe");
@@ -2362,8 +2460,13 @@
       const name = backdrop.querySelector("#m-name").value.trim() || "Automation";
       const profId = backdrop.querySelector("#m-profile").value.trim();
       const exe = exeInput.value.trim();
-      const trigKey = triggerKeySel.value.trim();
+      const trigKey = _selectedTrigKey;
       const cooldown = Number(backdrop.querySelector("#m-cooldown").value) || 2;
+
+      let condVal = _trigCondValue;
+      if (condVal === "true") condVal = true;
+      else if (condVal === "false") condVal = false;
+      else if (!isNaN(Number(condVal)) && condVal !== "") condVal = Number(condVal);
 
       const payload = {
         id: draft.id || undefined,
@@ -2372,6 +2475,8 @@
         profile_id: profId,
         exe: exe,
         trigger_key: trigKey,
+        operator: _trigCondOp,
+        target_value: condVal,
         require_foreground: !!exe,
         cooldown_s: cooldown,
         actions: currentActions,
@@ -2756,7 +2861,9 @@
           </div>
           ${libraryTab === 'notes' ? `<button class="lib-new-note-btn" id="lib-new-note-btn">
             <span class="material-icons-outlined" style="font-size:16px;">add</span> New Note
-          </button>` : ''}
+          </button>` : `<button class="lib-new-note-btn" id="lib-open-folder-btn" title="Open Screenshots in File Explorer">
+            <span class="material-icons-outlined" style="font-size:16px;">folder_open</span> Open in Explorer
+          </button>`}
         </div>
         <div id="lib-items-container" class="lib-items-container"></div>
       </section>`;
@@ -2791,6 +2898,13 @@
     const newNoteBtn = document.getElementById("lib-new-note-btn");
     if (newNoteBtn) {
       newNoteBtn.addEventListener("click", () => openNotepad(null));
+    }
+    const openFolderBtn = document.getElementById("lib-open-folder-btn");
+    if (openFolderBtn) {
+      openFolderBtn.addEventListener("click", () => {
+        apiFetch(`${API_BASE}/api/library/open_folder`, { method: "POST" })
+          .catch((err) => console.warn("Open folder failed:", err));
+      });
     }
   }
 
@@ -2887,7 +3001,7 @@
   function libNoteCardHtml(item) {
     const ts = new Date(item.ts * 1000).toLocaleString([], {dateStyle:"short", timeStyle:"short"});
     const title = item.title || "";
-    const preview = item.preview || "";
+    const preview = (item.preview || "").replace(/<[^>]*>/g, "").replace(/&nbsp;/g, " ").trim();
     return `<div class="lib-card-note" data-filename="${item.filename}">
       <div class="lib-note-body">
         <div class="lib-note-header">
@@ -2948,7 +3062,7 @@
             <button type="button" class="ssv-tool active" data-tool="arrow" title="Arrow & Label Annotation (A)">
               <span class="material-icons-outlined" style="font-size:18px;">north_east</span>
             </button>
-            <button type="button" class="ssv-tool" data-tool="pen" title="Freehand Drawing Pen (P)">
+            <button type="button" class="ssv-tool" data-tool="pen" title="Freehand Drawing Pen (P) — Right-Click to Erase">
               <span class="material-icons-outlined" style="font-size:18px;">draw</span>
             </button>
             <button type="button" class="ssv-tool" data-tool="hand" title="Pan View (H / Space+Drag)">
@@ -2957,6 +3071,12 @@
             <button type="button" class="ssv-tool" data-tool="zoom" title="Zoom In/Out (Z)">
               <span class="material-icons-outlined" style="font-size:18px;">zoom_in</span>
             </button>
+          </div>
+          <div class="ssv-color-group" id="ssv-color-group" title="Annotation & Pen Color">
+            <button type="button" class="ssv-color-dot active" data-color="#48B2E9" style="--c:#48B2E9;" title="Neon Blue"></button>
+            <button type="button" class="ssv-color-dot" data-color="#00ff88" style="--c:#00ff88;" title="Neon Green"></button>
+            <button type="button" class="ssv-color-dot" data-color="#ff3355" style="--c:#ff3355;" title="Neon Red"></button>
+            <button type="button" class="ssv-color-dot" data-color="#B23AF6" style="--c:#B23AF6;" title="Neon Purple"></button>
           </div>
           <button type="button" class="ssv-btn-icon" id="ssv-reset-btn" title="Reset View (0)">
             <span class="material-icons-outlined" style="font-size:18px;">fit_screen</span>
@@ -2968,11 +3088,17 @@
           <button type="button" class="ssv-btn-icon" id="ssv-copy-btn" title="Copy image with annotations to clipboard">
             <span class="material-icons-outlined" style="font-size:18px;">content_copy</span>
           </button>
+          <button type="button" class="ssv-btn-icon" id="ssv-folder-btn" title="Open in File Explorer">
+            <span class="material-icons-outlined" style="font-size:18px;">folder_open</span>
+          </button>
           <button type="button" class="ssv-btn-icon" id="ssv-delete-btn" title="Delete screenshot">
             <span class="material-icons-outlined" style="font-size:18px;">delete</span>
           </button>
           <button type="button" class="ssv-btn-icon" id="ssv-fullscreen-btn" title="Toggle Fullscreen">
             <span class="material-icons-outlined" style="font-size:18px;">fullscreen</span>
+          </button>
+          <button type="button" class="ssv-btn-icon" id="ssv-back-btn" title="Back to Library (Backspace)">
+            <span class="material-icons-outlined" style="font-size:18px;">arrow_back</span>
           </button>
           <button type="button" class="ssv-close" aria-label="Close">&#x2715;</button>
         </div>
@@ -3018,6 +3144,7 @@
     let zoomStartY = 0, zoomInitScale = 1.0;
     let isSpacePanning = false;
     let currentColor = "#48B2E9";
+    let isRightErasing = false;
     let annotationsVisible = true;
     let rafPending = false;
     let retryCount = 0;
@@ -3074,10 +3201,19 @@
     }
 
     function resizeCanvas() {
-      if (!img.complete || img.naturalWidth === 0) return;
+      if (!img.complete || img.naturalWidth === 0) {
+        // Image still decoding / loading from local bridge; retry next frame
+        requestAnimationFrame(() => {
+          if (img.complete && img.naturalWidth > 0) resizeCanvas();
+        });
+        return;
+      }
       stageW = stage.clientWidth;
       stageH = stage.clientHeight;
-      if (stageW <= 0 || stageH <= 0) return;
+      if (stageW <= 0 || stageH <= 0) {
+        requestAnimationFrame(resizeCanvas);
+        return;
+      }
 
       dpr = window.devicePixelRatio || 1;
       canvas.width = Math.round(stageW * dpr);
@@ -3118,8 +3254,13 @@
     }
 
     img.addEventListener("load", resizeCanvas);
+    if (img.decode) {
+      img.decode().then(resizeCanvas).catch(() => {});
+    }
     window.addEventListener("resize", resizeCanvas);
     setTimeout(resizeCanvas, 50);
+    setTimeout(resizeCanvas, 150);
+    setTimeout(resizeCanvas, 400);
 
     function wrapText(context, text, maxWidth) {
       if (!maxWidth) return [text];
@@ -3316,6 +3457,120 @@
       context.restore();
     }
 
+    function detectScriptCircle(stroke) {
+      if (!stroke || stroke.length < 10) return null;
+      const w = fitW || 1;
+      const h = fitH || 1;
+      const N = stroke.length;
+
+      // 1. Convert to pixel coordinates for scale-accurate geometric analysis
+      const pts = stroke.map(p => ({ x: p.nx * w, y: p.ny * h }));
+
+      // 2. Bounding box & minimum size check
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      let sumX = 0, sumY = 0;
+      for (let i = 0; i < N; i++) {
+        const px = pts[i].x, py = pts[i].y;
+        if (px < minX) minX = px;
+        if (px > maxX) maxX = px;
+        if (py < minY) minY = py;
+        if (py > maxY) maxY = py;
+        sumX += px;
+        sumY += py;
+      }
+      const boxW = maxX - minX;
+      const boxH = maxY - minY;
+      const diag = Math.hypot(boxW, boxH);
+      if (diag < 25) return null; // Too small (dot or tiny scribble)
+
+      // 3. Loop closure check: start and end points must be reasonably close
+      const dEnds = Math.hypot(pts[0].x - pts[N - 1].x, pts[0].y - pts[N - 1].y);
+      if (dEnds > diag * 0.35) return null; // Not closed
+
+      // 4. Centroid
+      const cx = sumX / N;
+      const cy = sumY / N;
+
+      // 5. Angular sweep (winding) relative to centroid
+      let totalAngle = 0;
+      let prevAngle = Math.atan2(pts[0].y - cy, pts[0].x - cx);
+      const startAngle = prevAngle;
+      for (let i = 1; i < N; i++) {
+        const curAngle = Math.atan2(pts[i].y - cy, pts[i].x - cx);
+        let da = curAngle - prevAngle;
+        while (da > Math.PI) da -= 2 * Math.PI;
+        while (da < -Math.PI) da += 2 * Math.PI;
+        totalAngle += da;
+        prevAngle = curAngle;
+      }
+      const absSweep = Math.abs(totalAngle);
+      // A circle must complete approximately 1 revolution (between 280° and 480°)
+      if (absSweep < 4.8 || absSweep > 8.5) return null;
+
+      // 6. Ellipse fitting via principal axes (covariance)
+      let cxx = 0, cyy = 0, cxy = 0;
+      for (let i = 0; i < N; i++) {
+        const dx = pts[i].x - cx;
+        const dy = pts[i].y - cy;
+        cxx += dx * dx;
+        cyy += dy * dy;
+        cxy += dx * dy;
+      }
+      cxx /= N;
+      cyy /= N;
+      cxy /= N;
+
+      // Orientation angle phi (-PI/2 to PI/2)
+      const phi = 0.5 * Math.atan2(2 * cxy, cxx - cyy);
+      const cosPhi = Math.cos(phi);
+      const sinPhi = Math.sin(phi);
+
+      // Project onto principal axes to find radii ra and rb
+      let maxU = 0, maxV = 0;
+      for (let i = 0; i < N; i++) {
+        const dx = pts[i].x - cx;
+        const dy = pts[i].y - cy;
+        const u = Math.abs(dx * cosPhi + dy * sinPhi);
+        const v = Math.abs(-dx * sinPhi + dy * cosPhi);
+        if (u > maxU) maxU = u;
+        if (v > maxV) maxV = v;
+      }
+
+      // Filter out flat lines (aspect ratio too extreme)
+      if (maxU < 10 || maxV < 10) return null;
+      const aspect = Math.min(maxU, maxV) / Math.max(maxU, maxV);
+      if (aspect < 0.22) return null;
+
+      // 7. Radial error variance check
+      let errSum = 0;
+      for (let i = 0; i < N; i++) {
+        const dx = pts[i].x - cx;
+        const dy = pts[i].y - cy;
+        const u = (dx * cosPhi + dy * sinPhi) / maxU;
+        const v = (-dx * sinPhi + dy * cosPhi) / maxV;
+        const rNorm = Math.hypot(u, v);
+        errSum += Math.abs(rNorm - 1.0);
+      }
+      const meanErr = errSum / N;
+      if (meanErr > 0.28) return null; // Deviates too much from circle/ellipse
+
+      // 8. Generate neat script circle points
+      const dir = totalAngle > 0 ? 1 : -1;
+      const numSteps = 44;
+      const sweep = (Math.PI * 2 + 0.18) * dir;
+      const circlePoints = [];
+      for (let k = 0; k <= numSteps; k++) {
+        const t = k / numSteps;
+        const a = startAngle + t * sweep;
+        const u = maxU * Math.cos(a);
+        const v = maxV * Math.sin(a);
+        const px = cx + u * cosPhi - v * sinPhi;
+        const py = cy + u * sinPhi + v * cosPhi;
+        circlePoints.push([px / w, py / h]);
+      }
+      return circlePoints;
+    }
+
     function drawPath(context, ann) {
       const pts = ann.points;
       if (!pts || pts.length < 2) return;
@@ -3330,11 +3585,49 @@
 
       context.beginPath();
       context.moveTo(pts[0][0] * w, pts[0][1] * h);
-      for (let i = 1; i < pts.length; i++) {
-        context.lineTo(pts[i][0] * w, pts[i][1] * h);
+
+      if (pts.length === 2) {
+        context.lineTo(pts[1][0] * w, pts[1][1] * h);
+      } else if (pts.length === 3) {
+        context.quadraticCurveTo(pts[1][0] * w, pts[1][1] * h, pts[2][0] * w, pts[2][1] * h);
+      } else {
+        for (let i = 1; i < pts.length - 2; i++) {
+          const xc = (pts[i][0] * w + pts[i + 1][0] * w) / 2;
+          const yc = (pts[i][1] * h + pts[i + 1][1] * h) / 2;
+          context.quadraticCurveTo(pts[i][0] * w, pts[i][1] * h, xc, yc);
+        }
+        context.quadraticCurveTo(
+          pts[pts.length - 2][0] * w,
+          pts[pts.length - 2][1] * h,
+          pts[pts.length - 1][0] * w,
+          pts[pts.length - 1][1] * h
+        );
       }
       context.stroke();
       context.restore();
+    }
+
+    function eraseFreehandAt(sx, sy, radius) {
+      const r = radius || 18;
+      let changed = false;
+      for (let i = annotations.length - 1; i >= 0; i--) {
+        const ann = annotations[i];
+        if (ann.type === "path" && ann.points && ann.points.length >= 2) {
+          for (let j = 0; j < ann.points.length - 1; j++) {
+            const p1 = worldToScreen(ann.points[j][0], ann.points[j][1]);
+            const p2 = worldToScreen(ann.points[j + 1][0], ann.points[j + 1][1]);
+            if (distToSegment(sx, sy, p1.sx, p1.sy, p2.sx, p2.sy) <= r) {
+              annotations.splice(i, 1);
+              changed = true;
+              break;
+            }
+          }
+        }
+      }
+      if (changed) {
+        saveAnnotations();
+        redraw();
+      }
     }
 
     function drawAnnotationLabel(context, layout, text, color, scale) {
@@ -3441,11 +3734,25 @@
       inkCtx.shadowBlur = 4;
 
       inkCtx.beginPath();
-      const p0 = worldToScreen(pts[0].nx, pts[0].ny);
-      inkCtx.moveTo(p0.sx, p0.sy);
-      for (let i = 1; i < pts.length; i++) {
-        const p = worldToScreen(pts[i].nx, pts[i].ny);
-        inkCtx.lineTo(p.sx, p.sy);
+      const sPts = pts.map(p => worldToScreen(p.nx, p.ny));
+      inkCtx.moveTo(sPts[0].sx, sPts[0].sy);
+
+      if (sPts.length === 2) {
+        inkCtx.lineTo(sPts[1].sx, sPts[1].sy);
+      } else if (sPts.length === 3) {
+        inkCtx.quadraticCurveTo(sPts[1].sx, sPts[1].sy, sPts[2].sx, sPts[2].sy);
+      } else {
+        for (let i = 1; i < sPts.length - 2; i++) {
+          const xc = (sPts[i].sx + sPts[i + 1].sx) / 2;
+          const yc = (sPts[i].sy + sPts[i + 1].sy) / 2;
+          inkCtx.quadraticCurveTo(sPts[i].sx, sPts[i].sy, xc, yc);
+        }
+        inkCtx.quadraticCurveTo(
+          sPts[sPts.length - 2].sx,
+          sPts[sPts.length - 2].sy,
+          sPts[sPts.length - 1].sx,
+          sPts[sPts.length - 1].sy
+        );
       }
       inkCtx.stroke();
       inkCtx.restore();
@@ -3513,6 +3820,7 @@
           selectedColor = swatch.dataset.color;
           currentColor = selectedColor;
           box.style.borderColor = selectedColor;
+          updateActiveColorDot(selectedColor);
         });
       });
 
@@ -3566,6 +3874,7 @@
 
     function setToolMode(mode) {
       toolMode = mode;
+      isRightErasing = false;
       el.querySelectorAll(".ssv-tool").forEach(btn => {
         btn.classList.toggle("active", btn.getAttribute("data-tool") === mode);
       });
@@ -3594,6 +3903,23 @@
       });
     });
 
+    function updateActiveColorDot(hex) {
+      if (!hex) return;
+      el.querySelectorAll(".ssv-color-dot").forEach(b => {
+        b.classList.toggle("active", (b.getAttribute("data-color") || "").toLowerCase() === hex.toLowerCase());
+      });
+    }
+
+    el.querySelectorAll(".ssv-color-dot").forEach(dot => {
+      dot.addEventListener("click", () => {
+        const col = dot.getAttribute("data-color");
+        if (col) {
+          currentColor = col;
+          updateActiveColorDot(col);
+        }
+      });
+    });
+
     const resetBtn = el.querySelector("#ssv-reset-btn");
     if (resetBtn) {
       resetBtn.addEventListener("click", () => {
@@ -3607,6 +3933,7 @@
     // Context menu right-click deletion
     canvas.addEventListener("contextmenu", (e) => {
       e.preventDefault();
+      if (toolMode === "pen") return;
       const rect = stage.getBoundingClientRect();
       const sx = e.clientX - rect.left;
       const sy = e.clientY - rect.top;
@@ -3681,7 +4008,18 @@
 
     // Pointer Events on canvas
     canvas.addEventListener("pointerdown", (e) => {
-      if (e.button === 2) return; // Handled by contextmenu
+      if (e.button === 3) return; // browser/mouse back button handled by viewer
+      if (e.button === 2) {
+        if (toolMode === "pen") {
+          isRightErasing = true;
+          const rect = stage.getBoundingClientRect();
+          const sx = e.clientX - rect.left;
+          const sy = e.clientY - rect.top;
+          canvas.setPointerCapture(e.pointerId);
+          eraseFreehandAt(sx, sy, 22);
+        }
+        return;
+      }
       if (activeTextBox) { activeTextBox.remove(); activeTextBox = null; }
       const rect = stage.getBoundingClientRect();
       const sx = e.clientX - rect.left;
@@ -3791,14 +4129,28 @@
         return;
       }
 
+      if (isRightErasing && toolMode === "pen") {
+        eraseFreehandAt(sx, sy, 22);
+        return;
+      }
+
       if (toolMode === "pen" && isDrawing && activeStroke) {
         const events = (e.getCoalescedEvents && e.getCoalescedEvents().length) ? e.getCoalescedEvents() : [e];
+        let added = false;
         events.forEach(ev => {
           const evSx = ev.clientX - rect.left;
           const evSy = ev.clientY - rect.top;
+          const lastPt = activeStroke[activeStroke.length - 1];
+          if (lastPt) {
+            const lastScreen = worldToScreen(lastPt.nx, lastPt.ny);
+            if (Math.hypot(evSx - lastScreen.sx, evSy - lastScreen.sy) < 2.5) return;
+          }
           activeStroke.push(screenToWorld(evSx, evSy));
+          added = true;
         });
-        drawInkStroke(activeStroke);
+        if (added) {
+          drawInkStroke(activeStroke);
+        }
         return;
       }
 
@@ -3888,6 +4240,11 @@
     });
 
     canvas.addEventListener("pointerup", (e) => {
+      if (isRightErasing) {
+        isRightErasing = false;
+        return;
+      }
+
       if (isPanning) {
         isPanning = false;
         updateCursor();
@@ -3922,11 +4279,29 @@
 
       if (toolMode === "pen" && isDrawing && activeStroke) {
         isDrawing = false;
+        const rect = stage.getBoundingClientRect();
+        const endSx = e.clientX - rect.left;
+        const endSy = e.clientY - rect.top;
+        const lastPt = activeStroke[activeStroke.length - 1];
+        if (!lastPt || Math.hypot(endSx - (worldToScreen(lastPt.nx, lastPt.ny).sx), endSy - (worldToScreen(lastPt.nx, lastPt.ny).sy)) >= 1.0) {
+          activeStroke.push(screenToWorld(endSx, endSy));
+        }
         if (inkCtx) inkCtx.clearRect(0, 0, inkCanvas.width, inkCanvas.height);
         if (activeStroke.length >= 2) {
+          const scriptCircle = detectScriptCircle(activeStroke);
+          const finalPoints = scriptCircle || activeStroke.map(p => [p.nx, p.ny]);
           annotations.push({
             type: "path",
-            points: activeStroke.map(p => [p.nx, p.ny]),
+            points: finalPoints,
+            color: currentColor || "#48B2E9",
+            lineWidth: 3.5
+          });
+          saveAnnotations();
+        } else if (activeStroke.length === 1) {
+          const dot = activeStroke[0];
+          annotations.push({
+            type: "path",
+            points: [[dot.nx, dot.ny], [dot.nx + 0.0001, dot.ny + 0.0001]],
             color: currentColor || "#48B2E9",
             lineWidth: 3.5
           });
@@ -3992,6 +4367,18 @@
             closeViewerAction();
           })
           .catch(() => alert("Delete failed."));
+      });
+    }
+
+    const folderBtn = el.querySelector("#ssv-folder-btn");
+    if (folderBtn) {
+      folderBtn.addEventListener("click", () => {
+        apiFetch(`${API_BASE}/api/library/open_folder`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filename })
+        }).catch((err) => console.warn("Open folder failed:", err));
+        closeViewerAction();
       });
     }
 
@@ -4111,7 +4498,7 @@
 
     const onKeyDown = (e) => {
       if (activeTextBox) return; // Don't intercept while typing in label input
-      if (e.key === "Escape") {
+      if (e.key === "Escape" || e.key === "Backspace") {
         closeViewerAction();
       } else if (e.key === " " && !isSpacePanning) {
         isSpacePanning = true;
@@ -4158,7 +4545,7 @@
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
 
-    const closeViewerAction = () => {
+    function closeViewerAction() {
       if (isStandaloneWindow) {
         if (window.pywebview && window.pywebview.api) {
           if (window.pywebview.api.close_viewer) {
@@ -4185,6 +4572,11 @@
     };
 
     el.querySelector(".ssv-close").addEventListener("click", closeViewerAction);
+    el.querySelector("#ssv-back-btn").addEventListener("click", closeViewerAction);
+
+    el.addEventListener("mousedown", (e) => {
+      if (e.button === 3) { e.preventDefault(); e.stopPropagation(); closeViewerAction(); }
+    });
 
     if (typeof screensaverWakeOnEvent === "function") screensaverWakeOnEvent();
   }
@@ -4200,10 +4592,55 @@
       .catch(() => alert("Delete failed."));
   }
 
+  function sanitizeNoteHtml(html) {
+    if (!html) return "";
+    const hasTags = /<[a-z][\s\S]*>/i.test(html);
+    if (!hasTags) {
+      return escapeHtml(html).replace(/\r\n|\r|\n/g, "<br>");
+    }
+
+    const temp = document.createElement("div");
+    temp.innerHTML = html;
+
+    function cleanNode(node) {
+      const children = Array.from(node.childNodes);
+      for (const child of children) {
+        if (child.nodeType === Node.TEXT_NODE) {
+          continue;
+        } else if (child.nodeType === Node.ELEMENT_NODE) {
+          const tag = child.tagName.toLowerCase();
+          if (tag === "b" || tag === "strong" || tag === "i" || tag === "em" || tag === "br" || tag === "div" || tag === "p") {
+            cleanNode(child);
+            while (child.attributes.length > 0) {
+              child.removeAttribute(child.attributes[0].name);
+            }
+          } else {
+            cleanNode(child);
+            while (child.firstChild) {
+              node.insertBefore(child.firstChild, child);
+            }
+            node.removeChild(child);
+          }
+        } else {
+          node.removeChild(child);
+        }
+      }
+    }
+
+    cleanNode(temp);
+    return temp.innerHTML;
+  }
+
+  function isNoteContentEmpty(html) {
+    if (!html) return true;
+    const text = html.replace(/<[^>]*>/g, "").replace(/&nbsp;/g, " ").trim();
+    return text.length === 0;
+  }
+
   // ── Notepad Modal (Fixed 400x500, exact Edit Action Modal styling) ────────
 
   function openNotepad(filename, defaultApp, forceLocal = false, initialTitle = "", initialBody = "") {
-    if (!forceLocal && !document.body.classList.contains("standalone-notepad-mode") && (IS_APP || !IS_MOBILE)) {
+    if (!forceLocal && (IS_APP || !IS_MOBILE)) {
       apiFetch(`${API_BASE}/api/notepad/open?file=${encodeURIComponent(filename || "")}&app=${encodeURIComponent(defaultApp || "")}&title=${encodeURIComponent(initialTitle || "")}&body=${encodeURIComponent(initialBody || "")}`)
         .catch(() => openNotepad(filename, defaultApp, true, initialTitle, initialBody));
       return;
@@ -4211,6 +4648,7 @@
 
     const existing = document.getElementById("iris-notepad");
     if (existing) existing.remove();
+    window._activeNotepadClose = null;
 
     const noteApp = (defaultApp || (libraryFilter !== "all" ? libraryFilter : "general")).trim() || "general";
 
@@ -4218,28 +4656,63 @@
     el.id = "iris-notepad";
     el.innerHTML = `
       <div class="panel-modal panel-notepad-modal">
-        <div class="notepad-modal-header">
-          <div>
-            <h3>${filename ? 'Edit Note' : 'New Note'}</h3>
-            <span class="notepad-modal-subtitle">${filename ? esc(filename) : 'Iris Desktop Note'}</span>
+        <div class="notepad-chrome" id="notepad-chrome">
+          <div class="notepad-chrome-left">
+            <button type="button" class="notepad-chrome-btn notepad-hamburger-btn" id="notepad-hamburger-btn" title="Menu" aria-label="Menu">
+              <span class="material-icons-outlined">menu</span>
+            </button>
+            <span class="notepad-chrome-title">Iris Note</span>
           </div>
-          <button type="button" class="notepad-modal-close" id="notepad-close-btn" aria-label="Close">✕</button>
+          <div class="notepad-chrome-right">
+            <span class="notepad-chrome-app" id="notepad-chrome-app">${escapeHtml((noteApp || "general").toUpperCase())}</span>
+            <button type="button" class="notepad-chrome-btn notepad-theme-btn" id="notepad-theme-btn" title="Theme: Auto" aria-label="Theme: Auto">◐</button>
+            <button type="button" class="notepad-chrome-btn notepad-max-btn" id="notepad-max-btn" title="Maximize" aria-label="Maximize">
+              <svg class="notepad-icon-max" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="0.5" y="0.5" width="9" height="9" rx="1"/>
+              </svg>
+              <svg class="notepad-icon-restore" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round" style="display: none;">
+                <path d="M2.5 2.5V0.5H9.5V7.5H7.5"/>
+                <rect x="0.5" y="2.5" width="7" height="7" rx="0.75"/>
+              </svg>
+            </button>
+            <button type="button" class="notepad-chrome-btn notepad-close-btn" id="notepad-close-btn" title="Close Note" aria-label="Close">
+              <span class="material-icons-outlined">close</span>
+            </button>
+          </div>
+        </div>
+        <div class="notepad-menu" id="notepad-menu" role="menu" aria-label="Note options" style="display: none;">
+          <button type="button" class="notepad-menu-item" data-action="new">
+            <span class="material-icons-outlined">add</span>
+            <span>New Note</span>
+          </button>
+          <button type="button" class="notepad-menu-item" data-action="save">
+            <span class="material-icons-outlined">save</span>
+            <span>Save</span>
+          </button>
+          <div class="notepad-menu-divider"></div>
+          <button type="button" class="notepad-menu-item" data-action="bold">
+            <span class="material-icons-outlined">format_bold</span>
+            <span>Bold</span>
+          </button>
+          <button type="button" class="notepad-menu-item" data-action="italic">
+            <span class="material-icons-outlined">format_italic</span>
+            <span>Italic</span>
+          </button>
+          <div class="notepad-menu-divider"></div>
+          <button type="button" class="notepad-menu-item" data-action="library">
+            <span class="material-icons-outlined">photo_library</span>
+            <span>Open in Library</span>
+          </button>
+          <button type="button" class="notepad-menu-item notepad-menu-item-danger" data-action="delete">
+            <span class="material-icons-outlined">delete_outline</span>
+            <span>Delete Note</span>
+          </button>
         </div>
         <div class="notepad-modal-body">
-          <div class="settings-control" style="padding:0;">
-            <label class="settings-label">Title</label>
-            <input type="text" class="settings-input" id="notepad-title" placeholder="Note title…" autocomplete="off">
-          </div>
-          <div class="settings-control" style="padding:0; flex:1 1 auto; display:flex; flex-direction:column; min-height:0;">
-            <label class="settings-label">Note</label>
-            <textarea class="settings-input panel-notepad-textarea" id="notepad-body" placeholder="Write your note here…" spellcheck="true"></textarea>
-          </div>
-        </div>
-        <div class="notepad-modal-actions">
-          <span id="notepad-status-msg" style="font-size:11px; color:var(--fg-dim);"></span>
-          <div style="display:flex; gap:8px;">
-            <button type="button" class="settings-btn" id="notepad-cancel">Cancel</button>
-            <button type="button" class="settings-btn settings-btn-primary" id="notepad-save">Save</button>
+          <input type="text" class="notepad-doc-title" id="notepad-title" placeholder="Untitled note" autocomplete="off" spellcheck="false">
+          <div class="notepad-doc-body" id="notepad-body" contenteditable="true" spellcheck="true" role="textbox" aria-multiline="true" data-placeholder="…"></div>
+          <div class="notepad-status-bar">
+            <span class="notepad-status-msg" id="notepad-status-msg"></span>
           </div>
         </div>
       </div>`;
@@ -4249,69 +4722,455 @@
     const bodyEl = document.getElementById("notepad-body");
     const statusEl = document.getElementById("notepad-status-msg");
     const closeBtn = document.getElementById("notepad-close-btn");
-    const cancelBtn = document.getElementById("notepad-cancel");
-    const saveBtn = document.getElementById("notepad-save");
+    const chromeAppEl = document.getElementById("notepad-chrome-app");
+    const themeBtn = document.getElementById("notepad-theme-btn");
+    const maxBtn = document.getElementById("notepad-max-btn");
+    const chromeEl = document.getElementById("notepad-chrome");
+    const modalEl = el.querySelector(".panel-notepad-modal");
+
+    let isMaximized = false;
+
+    function updateMaxState(maxState) {
+      isMaximized = !!maxState;
+      if (modalEl) modalEl.classList.toggle("notepad-maximized", isMaximized);
+      if (maxBtn) {
+        maxBtn.title = isMaximized ? "Restore" : "Maximize";
+        maxBtn.setAttribute("aria-label", isMaximized ? "Restore" : "Maximize");
+        const maxIcon = maxBtn.querySelector(".notepad-icon-max");
+        const restoreIcon = maxBtn.querySelector(".notepad-icon-restore");
+        if (maxIcon) maxIcon.style.display = isMaximized ? "none" : "block";
+        if (restoreIcon) restoreIcon.style.display = isMaximized ? "block" : "none";
+      }
+    }
+
+    if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.is_maximized === "function") {
+      window.pywebview.api.is_maximized().then(m => updateMaxState(m)).catch(() => {});
+    }
+
+    async function toggleMaximize() {
+      if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.toggle_maximize === "function") {
+        try {
+          const res = await window.pywebview.api.toggle_maximize();
+          updateMaxState(res);
+          return;
+        } catch (_) {}
+      }
+      updateMaxState(!isMaximized);
+    }
+
+    if (maxBtn) {
+      maxBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        toggleMaximize();
+      });
+    }
+
+    if (chromeEl) {
+      chromeEl.addEventListener("dblclick", (e) => {
+        if (e.target.closest(".notepad-chrome-btn, .notepad-chrome-app")) return;
+        toggleMaximize();
+      });
+    }
+
+    const onNotepadResize = () => {
+      if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.is_maximized === "function") {
+        window.pywebview.api.is_maximized().then(m => updateMaxState(m)).catch(() => {});
+      }
+    };
+    window.addEventListener("resize", onNotepadResize);
+
+    const NOTEPAD_THEMES = ["auto", "light", "dark"];
+    const NOTEPAD_THEME_LABEL = { auto: "◐", light: "☼", dark: "☾" };
+    const NOTEPAD_THEME_NAME = { auto: "Auto", light: "Light", dark: "Dark" };
+
+    let notepadTheme = "auto";
+    const urlTheme = new URLSearchParams(window.location.search).get("theme");
+    if (urlTheme && NOTEPAD_THEMES.includes(urlTheme)) {
+      notepadTheme = urlTheme;
+      try { localStorage.setItem("iris_notepad_theme", notepadTheme); } catch (_) {}
+    } else {
+      try {
+        const stored = localStorage.getItem("iris_notepad_theme");
+        if (stored && NOTEPAD_THEMES.includes(stored)) notepadTheme = stored;
+      } catch (_) {}
+    }
+
+    let notepadLightMQ = null;
+    try { notepadLightMQ = window.matchMedia("(prefers-color-scheme: light)"); } catch (_) {}
+
+    function applyNotepadTheme() {
+      const effective = notepadTheme === "auto"
+        ? (notepadLightMQ && notepadLightMQ.matches ? "light" : "dark")
+        : notepadTheme;
+      const isLight = effective === "light";
+      el.classList.toggle("notepad-light", isLight);
+      document.body.classList.toggle("notepad-light", isLight);
+      if (themeBtn) {
+        themeBtn.textContent = NOTEPAD_THEME_LABEL[notepadTheme];
+        themeBtn.title = "Theme: " + NOTEPAD_THEME_NAME[notepadTheme];
+        themeBtn.setAttribute("aria-label", "Theme: " + NOTEPAD_THEME_NAME[notepadTheme]);
+      }
+    }
+
+    applyNotepadTheme();
+
+    // Reconcile with persistent server config if not explicitly set via URL param
+    if (!urlTheme) {
+      if (window.config && window.config.notepad_theme && NOTEPAD_THEMES.includes(window.config.notepad_theme)) {
+        if (notepadTheme !== window.config.notepad_theme) {
+          notepadTheme = window.config.notepad_theme;
+          try { localStorage.setItem("iris_notepad_theme", notepadTheme); } catch (_) {}
+          applyNotepadTheme();
+        }
+      } else {
+        apiFetch(`${API_BASE}/api/config`).then(r => r.json()).then(cfg => {
+          if (cfg && cfg.notepad_theme && NOTEPAD_THEMES.includes(cfg.notepad_theme)) {
+            if (notepadTheme !== cfg.notepad_theme) {
+              notepadTheme = cfg.notepad_theme;
+              try { localStorage.setItem("iris_notepad_theme", notepadTheme); } catch (_) {}
+              applyNotepadTheme();
+            }
+          }
+        }).catch(() => {});
+      }
+    }
+
+    if (themeBtn) {
+      themeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        notepadTheme = NOTEPAD_THEMES[(NOTEPAD_THEMES.indexOf(notepadTheme) + 1) % NOTEPAD_THEMES.length];
+        try { localStorage.setItem("iris_notepad_theme", notepadTheme); } catch (_) {}
+        applyNotepadTheme();
+        apiFetch(`${API_BASE}/api/config`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ notepad_theme: notepadTheme })
+        }).catch(() => {});
+        if (bodyEl) bodyEl.focus();
+      });
+    }
+
+    if (notepadLightMQ && typeof notepadLightMQ.addEventListener === "function") {
+      notepadLightMQ.addEventListener("change", () => {
+        if (notepadTheme === "auto") applyNotepadTheme();
+      });
+    }
+
+    const updateChromeApp = (app) => {
+      if (chromeAppEl) chromeAppEl.textContent = (app || "general").toUpperCase();
+    };
+
+    if (closeBtn) {
+      closeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        closeNotepad();
+      });
+    }
 
     let currentApp = noteApp;
+    updateChromeApp(currentApp);
+
+    let autoSaveTimer = null;
+    let isSaving = false;
+    let hasUnsavedChanges = false;
+
+    // Draft persistence: F5/Ctrl+R can't wipe the note because the current
+    // content is re-hydrated from localStorage whenever the note reloads.
+    const NOTEPAD_DRAFT_KEY = "iris_notepad_draft";
+    const noteIdentity = () => filename || ("new:" + (currentApp || noteApp || "general"));
+    let restoredDraft = null;
+    try {
+      const rawDraft = localStorage.getItem(NOTEPAD_DRAFT_KEY);
+      if (rawDraft) {
+        const parsed = JSON.parse(rawDraft);
+        if (parsed && parsed.key === noteIdentity()) restoredDraft = parsed;
+      }
+    } catch (_) {}
+    if (restoredDraft && restoredDraft.filename) {
+      filename = restoredDraft.filename;
+    }
+
+    function saveDraft() {
+      try {
+        localStorage.setItem(NOTEPAD_DRAFT_KEY, JSON.stringify({
+          key: noteIdentity(),
+          title: titleEl ? titleEl.value : "",
+          body: bodyEl ? bodyEl.innerHTML : "",
+          app: currentApp || noteApp || "general",
+          filename: filename || "",
+          ts: Date.now()
+        }));
+      } catch (_) {}
+    }
+
+    function clearDraft() {
+      try { localStorage.removeItem(NOTEPAD_DRAFT_KEY); } catch (_) {}
+    }
+
+    function triggerAutoSave() {
+      hasUnsavedChanges = true;
+      saveDraft();
+      if (statusEl) {
+        statusEl.textContent = "Saving…";
+        statusEl.style.opacity = "0.7";
+      }
+      clearTimeout(autoSaveTimer);
+      autoSaveTimer = setTimeout(() => {
+        saveNote(false);
+      }, 700);
+    }
+
+    if (titleEl) {
+      titleEl.addEventListener("input", triggerAutoSave);
+      titleEl.addEventListener("blur", () => {
+        if (hasUnsavedChanges) {
+          clearTimeout(autoSaveTimer);
+          saveNote(false);
+        }
+      });
+      titleEl.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          if (bodyEl) bodyEl.focus();
+        }
+      });
+    }
+
+    function execFormat(cmd) {
+      if (bodyEl) {
+        bodyEl.focus();
+        document.execCommand(cmd, false, null);
+        triggerAutoSave();
+      }
+    }
+
+    if (bodyEl) {
+      bodyEl.addEventListener("input", triggerAutoSave);
+      bodyEl.addEventListener("blur", () => {
+        if (hasUnsavedChanges) {
+          clearTimeout(autoSaveTimer);
+          saveNote(false);
+        }
+      });
+      bodyEl.addEventListener("keydown", (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
+          e.preventDefault();
+          execFormat("bold");
+        } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "i") {
+          e.preventDefault();
+          execFormat("italic");
+        }
+      });
+      bodyEl.addEventListener("paste", (e) => {
+        e.preventDefault();
+        const text = (e.clipboardData || window.clipboardData).getData("text/plain");
+        document.execCommand("insertText", false, text);
+        triggerAutoSave();
+      });
+    }
 
     if (filename) {
       apiFetch(`${API_BASE}/api/library/note/${encodeURIComponent(filename)}`)
         .then(r => r.json())
         .then(data => {
-          titleEl.value = data.title || "";
-          currentApp = data.app || noteApp;
-          bodyEl.value = data.content || "";
-          bodyEl.focus();
+          if (restoredDraft) {
+            if (titleEl) titleEl.value = restoredDraft.title || "";
+            if (bodyEl) bodyEl.innerHTML = restoredDraft.body || "";
+          } else {
+            if (titleEl) titleEl.value = data.title || "";
+            currentApp = data.app || noteApp;
+            updateChromeApp(currentApp);
+            if (bodyEl) bodyEl.innerHTML = sanitizeNoteHtml(data.content || "");
+          }
+          if (bodyEl) bodyEl.focus();
         }).catch(() => {});
     } else {
-      if (initialTitle) titleEl.value = initialTitle;
-      if (initialBody) {
-        bodyEl.value = initialBody;
+      if (restoredDraft) {
+        if (titleEl) titleEl.value = restoredDraft.title || initialTitle || "";
+        if (bodyEl) bodyEl.innerHTML = restoredDraft.body || "";
+      } else {
+        if (initialTitle && titleEl) titleEl.value = initialTitle;
+        if (initialBody && bodyEl) bodyEl.innerHTML = sanitizeNoteHtml(initialBody);
       }
       setTimeout(() => {
-        if (bodyEl && initialBody) {
+        if (initialTitle && bodyEl) {
           bodyEl.focus();
-          bodyEl.setSelectionRange(bodyEl.value.length, bodyEl.value.length);
         } else if (titleEl) {
           titleEl.focus();
         }
       }, 50);
     }
 
-    function closeNotepad() {
-      if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.close_window === "function") {
-        window.pywebview.api.close_window();
-        return;
+    const menuEl = document.getElementById("notepad-menu");
+    const hamburgerBtn = document.getElementById("notepad-hamburger-btn");
+
+    function isMenuOpen() {
+      return menuEl && menuEl.style.display !== "none";
+    }
+
+    function openMenu() {
+      if (menuEl) {
+        menuEl.style.display = "flex";
       }
-      if (document.body.classList.contains("standalone-notepad-mode")) {
-        window.close();
+    }
+
+    function closeMenu() {
+      if (menuEl && menuEl.style.display !== "none") {
+        menuEl.style.display = "none";
+      }
+    }
+
+    if (hamburgerBtn) {
+      hamburgerBtn.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+      });
+      hamburgerBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (isMenuOpen()) {
+          closeMenu();
+          if (bodyEl) bodyEl.focus();
+        } else {
+          openMenu();
+        }
+      });
+    }
+
+    function onDocClick(e) {
+      if (isMenuOpen()) {
+        if (menuEl && !menuEl.contains(e.target) && e.target !== hamburgerBtn && !hamburgerBtn.contains(e.target)) {
+          closeMenu();
+        }
+      }
+    }
+    document.addEventListener("click", onDocClick);
+
+    if (menuEl) {
+      menuEl.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+      });
+      menuEl.addEventListener("click", async (e) => {
+        const item = e.target.closest(".notepad-menu-item");
+        if (!item) return;
+        const action = item.dataset.action;
+        closeMenu();
+
+        if (action === "new") {
+          if (hasUnsavedChanges) {
+            await saveNote(false);
+          }
+          filename = null;
+          if (titleEl) titleEl.value = "";
+          if (bodyEl) bodyEl.innerHTML = "";
+          currentApp = noteApp;
+          updateChromeApp(currentApp);
+          hasUnsavedChanges = false;
+          clearDraft();
+          if (statusEl) statusEl.textContent = "";
+          if (titleEl) titleEl.focus();
+        } else if (action === "save") {
+          await saveNote(false);
+          if (bodyEl) bodyEl.focus();
+        } else if (action === "bold") {
+          execFormat("bold");
+        } else if (action === "italic") {
+          execFormat("italic");
+        } else if (action === "library") {
+          if (hasUnsavedChanges) {
+            await saveNote(false);
+          }
+          closeNotepad();
+          if (typeof window.irisSetPage === "function") {
+            window.irisSetPage("library", "notes");
+          } else {
+            currentPage = "library";
+            libraryTab = "notes";
+            navItems.forEach((n) => n.classList.toggle("active", n.dataset.page === "library"));
+            renderPage();
+          }
+        } else if (action === "delete") {
+          if (confirm("Delete this note? This cannot be undone.")) {
+            if (filename) {
+              try {
+                await apiFetch(`${API_BASE}/api/library/delete/${encodeURIComponent(filename)}`, { method: "POST" });
+              } catch (_) {}
+            }
+            hasUnsavedChanges = false;
+            closeNotepad();
+          } else {
+            if (bodyEl) bodyEl.focus();
+          }
+        }
+      });
+    }
+
+    function closeNotepad() {
+      document.removeEventListener("click", onDocClick);
+      window.removeEventListener("keydown", onNotepadKeyDown);
+      window.removeEventListener("resize", onNotepadResize);
+      document.body.classList.remove("notepad-light");
+      clearDraft();
+      if (hasUnsavedChanges) {
+        clearTimeout(autoSaveTimer);
+        saveNote(true);
         return;
       }
       if (el && el.parentNode) el.remove();
+      if (window._activeNotepadClose === closeNotepad) window._activeNotepadClose = null;
     }
-
-    if (closeBtn) closeBtn.addEventListener("click", closeNotepad);
-    if (cancelBtn) cancelBtn.addEventListener("click", closeNotepad);
+    window._activeNotepadClose = closeNotepad;
 
     el.addEventListener("click", (e) => {
       if (e.target === el) closeNotepad();
     });
 
-    el.addEventListener("keydown", (e) => {
+    function onNotepadKeyDown(e) {
       if (e.key === "Escape") {
         e.preventDefault();
+        if (isMenuOpen()) {
+          closeMenu();
+          if (bodyEl) bodyEl.focus();
+          return;
+        }
         closeNotepad();
+      } else if (e.key === "F5" || ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === "r" || e.key.toLowerCase() === "w"))) {
+        e.preventDefault();
+        e.stopPropagation();
       } else if (e.key === "s" && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
         saveNote(false);
+      } else if (e.key === "b" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        execFormat("bold");
+      } else if (e.key === "i" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        execFormat("italic");
       }
-    });
+    }
+    window.addEventListener("keydown", onNotepadKeyDown);
 
-    async function saveNote(closeOnSave = true) {
+    async function saveNote(closeOnSave = false) {
+      const curTitle = titleEl ? titleEl.value.trim() : "";
+      const rawBody = bodyEl ? bodyEl.innerHTML : "";
+      const curBody = sanitizeNoteHtml(rawBody);
+      if (!filename && !curTitle && isNoteContentEmpty(curBody)) {
+        hasUnsavedChanges = false;
+        if (statusEl) statusEl.textContent = "";
+        if (closeOnSave) {
+          hasUnsavedChanges = false;
+          closeNotepad();
+        }
+        return;
+      }
+
+      if (isSaving) return;
+      isSaving = true;
+      clearTimeout(autoSaveTimer);
+
+      const chosenApp = currentApp || "general";
       const payload = {
-        title: titleEl.value.trim(),
-        app: currentApp || "general",
-        content: bodyEl.value,
+        title: curTitle,
+        app: chosenApp,
+        content: curBody,
         filename: filename || ""
       };
       try {
@@ -4322,12 +5181,21 @@
         });
         const data = await r.json();
         if (data.ok) {
+          hasUnsavedChanges = false;
+          if (data.filename) filename = data.filename;
+          saveDraft();
           if (statusEl) {
-            statusEl.textContent = "✓ Saved to Library";
-            statusEl.style.color = "var(--neon-text, #48B2E9)";
+            statusEl.textContent = "Saved ✓";
+            statusEl.style.opacity = "1";
+            setTimeout(() => {
+              if (statusEl && !hasUnsavedChanges) statusEl.style.opacity = "0.45";
+            }, 2500);
           }
           if (closeOnSave) {
-            setTimeout(closeNotepad, 150);
+            setTimeout(() => {
+              hasUnsavedChanges = false;
+              closeNotepad();
+            }, 80);
           }
           if (currentPage === "library") {
             fetchLibraryItems();
@@ -4336,13 +5204,11 @@
       } catch (e) {
         if (statusEl) {
           statusEl.textContent = "Save failed";
-          statusEl.style.color = "#ff5555";
+          statusEl.style.opacity = "1";
         }
+      } finally {
+        isSaving = false;
       }
-    }
-
-    if (saveBtn) {
-      saveBtn.addEventListener("click", () => saveNote(true));
     }
   }
 
@@ -4473,7 +5339,7 @@
       container.innerHTML = `
         <div class="notif-empty-state">
           <span class="material-icons-outlined">${notifTab === 'archived' ? 'inventory_2' : 'notifications_none'}</span>
-          <div style="font-size:14px; font-weight:600; color:#fff;">
+          <div style="font-size:14px; font-weight:600; color:var(--badge-fg,#fff);">
             No ${notifTab === 'archived' ? 'archived' : 'inbox'} notifications
           </div>
           <div style="font-size:12px;">Incoming persistent alerts and toasts will appear here.</div>
@@ -5160,7 +6026,7 @@
     colour_picker: { name: "Colour Picker", icon: "eyedropper", label: "Colour Picker (Screen Eyedropper Magnifier)" },
     screenshot: { name: "Screenshot", icon: "camera", label: "Screenshot (Fullscreen Capture)" },
     screenshot_zone: { name: "Snipping Tool", icon: "crop", label: "Snipping Tool (Drag Rectangular Zone)" },
-    note: { name: "Quick Note", icon: "note-text", label: "Quick Note (Sticky Notepad / Log)" },
+    note: { name: "Iris Note", icon: "note-text", label: "Iris Note" },
     borderless_toggle: { name: "Borderless", icon: "window-maximize", label: "Toggle Borderless (Switch Game Window Mode)" },
     stopwatch: { name: "Stopwatch", icon: "timer-outline", label: "Stopwatch (Desktop Timer)" },
     countdown: { name: "Countdown Timer", icon: "timer-sand", label: "Countdown Timer (Alarm)" },
@@ -5521,9 +6387,13 @@
             '<h1>Profiles</h1>' +
           '</div>' +
         '</div>' +
-        '<button type="button" class="settings-btn settings-btn-primary" id="prof-add-new">+ New Profile</button>' +
+        '<button class="done-btn" id="done-btn">Done</button>' +
       '</header>' +
-      '<section class="settings-content profiles-page">' +
+      '<section class="content vision-content profiles-page">' +
+        '<div class="vision-toolbar">' +
+          '<span class="vision-toolbar-title">Game & App Profiles</span>' +
+          '<button class="settings-btn" id="prof-add-new">+ New Profile</button>' +
+        '</div>' +
         '<div class="profiles-grid">' +
           cardsHtml +
         '</div>' +
@@ -5531,6 +6401,9 @@
 
     main.innerHTML = html;
     rebindHamburger();
+
+    const doneBtn = document.getElementById("done-btn");
+    if (doneBtn) doneBtn.onclick = () => { currentPage = "dashboard"; renderPage(); };
 
     const addBtn = document.getElementById("prof-add-new");
     if (addBtn) {
@@ -5697,16 +6570,20 @@
   // Helper to match a profile to its underlying plugin adapter
   function findLinkedPluginForProfile(p) {
     if (!p || !pluginsConfig) return null;
-    const profExe = (p.exe || "").toLowerCase().replace(".exe", "");
-    const profName = (p.name || p.id || "").toLowerCase();
+    const norm = (s) => (s || "").toLowerCase().replace(/[\s_\-\.]/g, "").replace("exe", "");
+    const profExe = norm(p.exe);
+    const profName = norm(p.name || p.id);
+    const profId = norm(p.id);
     for (const [pluginKey, pluginDef] of Object.entries(pluginsConfig)) {
       if (pluginDef && (pluginDef.is_hardware || pluginKey === "ha" || pluginKey === "openrgb" || pluginKey === "matrix_display")) {
         continue;
       }
-      const plgExe = (pluginDef.exe_default || pluginDef.exe_path || "").toLowerCase().replace(".exe", "");
-      const plgName = (pluginDef.display_name || pluginKey).toLowerCase();
+      const plgExe = norm(pluginDef.exe_default || pluginDef.exe_path);
+      const plgName = norm(pluginDef.display_name || pluginKey);
+      const plgKey = norm(pluginKey);
       if ((profExe && plgExe && (profExe.includes(plgExe) || plgExe.includes(profExe))) ||
-          (profName && plgName && (profName.includes(plgName) || plgName.includes(profName)))) {
+          (profName && plgName && (profName.includes(plgName) || plgName.includes(profName))) ||
+          (profId && plgKey && (profId.includes(plgKey) || plgKey.includes(profId)))) {
         return { key: pluginKey, def: pluginDef };
       }
     }
@@ -7717,6 +8594,7 @@
   let _panelLiveConfigVersion = null;
   let _panelLiveCachedConfig = null;
   let _fetchPanelLiveBusy = false;
+  let _lastSeenScreenshotSeq = null;
 
   function fetchPanelLive() {
     if (_fetchPanelLiveBusy) return;
@@ -7743,6 +8621,26 @@
         }
         if (data.config && data.config.theme && typeof window.applyTheme === "function") {
           window.applyTheme(data.config.theme);
+        }
+
+        // Check if a new screenshot was captured while websocket was disconnected
+        if (typeof data.screenshot_seq === "number") {
+          if (_lastSeenScreenshotSeq === null) {
+            _lastSeenScreenshotSeq = data.screenshot_seq;
+          } else if (data.screenshot_seq > _lastSeenScreenshotSeq) {
+            _lastSeenScreenshotSeq = data.screenshot_seq;
+            if (!document.getElementById("iris-screenshot-viewer")) {
+              apiFetch(`${API_BASE}/api/screenshot/latest`)
+                .then((r) => r.json())
+                .then((sData) => {
+                  if (sData && sData.available && sData.img) {
+                    screensaverWakeOnEvent();
+                    openScreenshotViewer(sData);
+                  }
+                })
+                .catch(() => {});
+            }
+          }
         }
 
         // Live in-place DOM updates for all views (Desktop preview & Phone overlay)
@@ -7779,6 +8677,21 @@
         if (sig !== panelViewSig) {
           panelViewSig = sig;
           renderPanelView();
+        }
+        if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.get_pending_nav === "function") {
+          try {
+            window.pywebview.api.get_pending_nav().then(function (nav) {
+              if (nav && nav.page) {
+                window.irisSetPage(nav.page, nav.tab);
+                if (nav.action === "new_note" || nav.action === "note") {
+                  setTimeout(() => openNotepad(null, nav.app || "general"), 150);
+                }
+                if (nav.viewer_file) {
+                  setTimeout(() => openLibraryViewer(nav.viewer_file), 150);
+                }
+              }
+            }).catch(function () {});
+          } catch (_) {}
         }
       })
       .catch(() => {})
@@ -7967,7 +8880,24 @@
       const wsProto = loc.protocol === "https:" ? "wss:" : "ws:";
       const wsHost = loc.hostname || "127.0.0.1";
       const wsPort = 15501;
-      wsConn = new WebSocket(`${wsProto}//${wsHost}:${wsPort}`);
+
+      let tok = "";
+      try { tok = localStorage.getItem("iris_session") || ""; } catch (_) {}
+      if (!tok) {
+        try {
+          const m = document.cookie.match(/(?:^|;\s*)iris_session=([^;]+)/);
+          if (m) tok = decodeURIComponent(m[1]);
+        } catch (_) {}
+      }
+      const params = [];
+      if (tok) params.push("session=" + encodeURIComponent(tok));
+      if (typeof IRIS_TOKEN !== "undefined" && IRIS_TOKEN) params.push("token=" + encodeURIComponent(IRIS_TOKEN));
+      const qs = params.length ? "?" + params.join("&") : "";
+
+      wsConn = new WebSocket(`${wsProto}//${wsHost}:${wsPort}${qs}`);
+      wsConn.onopen = () => {
+        console.log("[Iris WS] connected");
+      };
       wsConn.onmessage = (e) => {
         try {
           const msg = JSON.parse(e.data);
@@ -7978,7 +8908,8 @@
         wsConn = null;
         setTimeout(connectWs, 2500);
       };
-      wsConn.onerror = () => {
+      wsConn.onerror = (err) => {
+        console.warn("[Iris WS] error", err);
         try { wsConn.close(); } catch (_) {}
       };
     } catch (_) {}
@@ -8027,12 +8958,17 @@
       }
     } else if (msg.type === "navigate") {
       if (msg.page) {
-        currentPage = msg.page;
         if (msg.page === "library" && msg.tab) {
           libraryTab = msg.tab;
         }
-        navItems.forEach((n) => n.classList.toggle("active", n.dataset.page === currentPage));
-        renderPage();
+        exitPanelView();
+        if (typeof window.irisSetPage === "function") {
+          window.irisSetPage(msg.page, msg.tab);
+        } else {
+          currentPage = msg.page;
+          navItems.forEach((n) => n.classList.toggle("active", n.dataset.page === currentPage));
+          renderPage();
+        }
       }
       if (msg.action === "new_note" || msg.action === "note") {
         setTimeout(() => openNotepad(null, msg.app || "general"), 150);
@@ -8045,6 +8981,9 @@
         fetchLibraryItems();
       }
     } else if (msg.type === "screenshot_ready") {
+      if (typeof msg.seq === "number") {
+        _lastSeenScreenshotSeq = msg.seq;
+      }
       screensaverWakeOnEvent();
       openScreenshotViewer(msg);
     } else if (msg.type === "reload") {
@@ -8706,7 +9645,8 @@
     const showName = (s.show_name !== false);
     const showIcon = (s.show_icon !== false);
     const showState = (s.show_state !== false);
-    const useAppIcon = (s.use_app_icon !== false && (s.use_app_icon || s.type === "SHORTCUT" || !!s.app_icon_path));
+    const isMediaBtn = (s.entity === "media.player" || s.entity === "media.eject" || s.type === "MEDIA_EJECT");
+    const useAppIcon = (s.use_app_icon !== false && (s.use_app_icon || s.type === "SHORTCUT" || !!s.app_icon_path || isMediaBtn));
     const showAlbumArt = !!s.show_album_art;
 
     let appPath = s.app_icon_path || (s.type === "SHORTCUT" ? s.shortcut_path : "") || "";
@@ -8770,9 +9710,15 @@
         tileTitle = curDevName;
       }
       bState = {
-        active: isAlt,
+        active: false,
         label: isAlt ? ((s.labels && s.labels.on) || s.audio_input_device_name_alt || "ALT") : ((s.labels && s.labels.off) || s.audio_input_device_name || "PRIMARY")
       };
+    } else if (s.entity === "system.mic_mute" || (s.plugin === "system" && s.button_id === "mic_mute")) {
+      const isMuted = !!(bState && bState.active);
+      icon = isMuted ? "microphone-off" : (s.icon || "microphone");
+      if (isMuted) {
+        extraTileClass += " pdev-muted";
+      }
     }
 
     if (showAlbumArt && mediaState.has_art) {
@@ -8782,10 +9728,11 @@
     }
 
     const isElite = (s.plugin === "elite_dangerous");
+    const isAudioOutput = (s.type === "AUDIO OUTPUT");
     const hasLiveState = (bState.active !== undefined || bState.label !== undefined || bState.value !== undefined);
-    const isOn = !!bState.active;
+    const isOn = isAudioOutput ? false : !!bState.active;
     if (isOn && !isElite) extraTileClass += " pdev-active has-halo";
-    if (isElite) extraTileClass += " pdev-no-halo";
+    if (isElite || isAudioOutput) extraTileClass += " pdev-no-halo";
 
     const labels = s.labels || {};
     const colors = s.colors || {};
@@ -8851,13 +9798,18 @@
     }
 
     const warnMap = (panelLive && panelLive.warnings) || {};
-    const warn = warnMap[entKey] || warnMap[(s.plugin || "") + ":" + (s.button_id || "")];
+    const warnKeyCol = entKey ? entKey.replace(".", ":") : "";
+    const warnKeyDot = entKey ? entKey.replace(":", ".") : "";
+    const warnKeyPlg = (s.plugin || "") + ":" + (s.button_id || "");
+    const warnKeyPlgDot = (s.plugin || "") + "." + (s.button_id || "");
+    const warn = warnMap[entKey] || (warnKeyCol && warnMap[warnKeyCol]) || (warnKeyDot && warnMap[warnKeyDot]) || (warnKeyPlg !== ":" && warnMap[warnKeyPlg]) || (warnKeyPlgDot !== "." && warnMap[warnKeyPlgDot]);
     if (warn && warn.color) {
       extraTileClass += " pdev-warning";
       const warnText = isLightColor(warn.color) ? "#0a0a0a" : "#ffffff";
       extraTileStyle = ' style="--warn-color:' + esc(warn.color) + '; color:' + warnText + ';"';
       glyphStyle = ' style="color:' + warnText + ';"';
       warnFlashOverlay = '<span class="pdev-warn-flash"></span>';
+      colorPlate = ""; // Suppress base button plate while warning is active so flash takes full priority
       if (warn.message) {
         topBar = '<span class="pdev-group-bar pdev-status-bar" style="color:' + warnText + ';">' + esc(warn.message) + '</span>';
         extraTileClass += " has-group-bar has-status-bar";
@@ -8969,7 +9921,7 @@
           if (!ic) ic = def.icon;
         } else if (act === "mic" || act === "mic_mute") {
           if (isMicMuted) activeCls = " pdev-active pdev-muted";
-          if (!ic) ic = isMicMuted ? "microphone-off" : "microphone";
+          ic = isMicMuted ? "microphone-off" : (s.icon || "microphone");
         } else if (act === "toolbar") {
           const isTb = !!(data && data.entity_states && data.entity_states["system.toolbar"] && data.entity_states["system.toolbar"].active);
           if (isTb) activeCls = " pdev-active";
@@ -9066,19 +10018,137 @@
     el.innerHTML =
       `<div class="ssv-bar">` +
         `<span class="ssv-ts">${ts}</span>` +
-        `<button class="ssv-close" aria-label="Close">&#x2715;</button>` +
+        `<div style="display:flex;align-items:center;gap:8px;">` +
+          `<button type="button" class="ssv-btn-icon ssv-folder-btn" title="Open in File Explorer">` +
+            `<span class="material-icons-outlined" style="font-size:18px;">folder_open</span>` +
+          `</button>` +
+          `<button type="button" class="ssv-btn-icon ssv-back-btn" title="Back (Backspace)">` +
+            `<span class="material-icons-outlined" style="font-size:18px;">arrow_back</span>` +
+          `</button>` +
+          `<button class="ssv-close" aria-label="Close">&#x2715;</button>` +
+        `</div>` +
       `</div>` +
       `<img src="data:image/jpeg;base64,${data.img}" alt="Screenshot" draggable="false">`;
     document.body.appendChild(el);
-    el.querySelector(".ssv-close").addEventListener("click", () => el.remove());
-    // Swipe-down to dismiss
+
+    const bar = el.querySelector(".ssv-bar");
+    let hideTimer = null;
+
+    const scheduleHide = () => {
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(() => {
+        if (bar) bar.classList.add("ssv-bar-hidden");
+      }, 3000);
+    };
+
+    const toggleBar = () => {
+      if (!bar) return;
+      if (bar.classList.contains("ssv-bar-hidden")) {
+        bar.classList.remove("ssv-bar-hidden");
+        scheduleHide();
+      } else {
+        clearTimeout(hideTimer);
+        bar.classList.add("ssv-bar-hidden");
+      }
+    };
+
+    // Auto-hide after 3 seconds initially
+    scheduleHide();
+
+    // Folder button in Explorer
+    const folderBtn = el.querySelector(".ssv-folder-btn");
+    if (folderBtn) {
+      folderBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        apiFetch(`${API_BASE}/api/library/open_folder`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filename: data.filename || "" })
+        }).catch((err) => console.warn("Open folder failed:", err));
+        clearTimeout(hideTimer);
+        el.remove();
+      });
+    }
+
+    // Close button dismiss
+    const closeBtn = el.querySelector(".ssv-close");
+    if (closeBtn) {
+      closeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        clearTimeout(hideTimer);
+        el.remove();
+      });
+    }
+
+    // Back button dismiss
+    const backBtn = el.querySelector(".ssv-back-btn");
+    if (backBtn) {
+      backBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        clearTimeout(hideTimer);
+        el.remove();
+      });
+    }
+
+    // Mouse back button dismiss
+    el.addEventListener("mousedown", (e) => {
+      if (e.button === 3) {
+        e.preventDefault();
+        e.stopPropagation();
+        clearTimeout(hideTimer);
+        el.remove();
+      }
+    });
+
+    // Touch handling: swipe down to dismiss, or single tap to toggle toolbar
+    let touchStartTime = 0;
+    let startX = 0;
     let startY = 0;
+    let touchMoved = false;
+
     el.addEventListener("touchstart", (e) => {
-      startY = e.touches[0].clientY;
+      if (e.touches.length === 1) {
+        touchStartTime = Date.now();
+        startX = e.touches[0].clientX;
+        startY = e.touches[0].clientY;
+        touchMoved = false;
+      }
     }, { passive: true });
+
+    el.addEventListener("touchmove", (e) => {
+      if (e.touches.length === 1) {
+        const dx = e.touches[0].clientX - startX;
+        const dy = e.touches[0].clientY - startY;
+        if (Math.hypot(dx, dy) > 10) touchMoved = true;
+      }
+    }, { passive: true });
+
     el.addEventListener("touchend", (e) => {
-      if (e.changedTouches[0].clientY - startY > 80) el.remove();
+      if (e.changedTouches.length === 1) {
+        const dx = e.changedTouches[0].clientX - startX;
+        const dy = e.changedTouches[0].clientY - startY;
+        const dt = Date.now() - touchStartTime;
+
+        // Swipe down (> 80px vertical) -> dismiss viewer
+        if (dy > 80 && Math.abs(dy) > Math.abs(dx)) {
+          clearTimeout(hideTimer);
+          el.remove();
+          return;
+        }
+
+        // Tap (under 300ms, didn't drag, not clicking action buttons)
+        if (dt < 300 && !touchMoved && (!e.target || (!e.target.closest(".ssv-close") && !e.target.closest(".ssv-folder-btn") && !e.target.closest(".ssv-back-btn")))) {
+          toggleBar();
+        }
+      }
     }, { passive: true });
+
+    // Click fallback for desktop / mouse interactions
+    el.addEventListener("click", (e) => {
+      if (e.target && (e.target.closest(".ssv-close") || e.target.closest(".ssv-folder-btn") || e.target.closest(".ssv-back-btn"))) return;
+      toggleBar();
+    });
+
     // Wake screensaver if needed
     if (typeof screensaverWakeOnEvent === "function") screensaverWakeOnEvent();
   }
@@ -9538,10 +10608,11 @@
     const ov = document.querySelectorAll('.pdev-core-tile[data-core="overlay"]');
     ov.forEach((o) => o.classList.toggle("pdev-active", !!data.overlay_on));
 
-    const mic = document.querySelectorAll('.pdev-core-tile[data-core="mic"]');
+    const mic = document.querySelectorAll('.pdev-core-tile[data-core="mic"], .pdev-core-tile[data-core="mic_mute"]');
     const isMicMuted = !!(data.entity_states && data.entity_states["system.mic_mute"] && data.entity_states["system.mic_mute"].active);
     mic.forEach((m) => {
       m.classList.toggle("pdev-active", isMicMuted);
+      m.classList.toggle("pdev-muted", isMicMuted);
       const mIcon = m.querySelector(".md");
       if (mIcon) {
         const ic = isMicMuted ? "microphone-off" : "microphone";
@@ -9589,7 +10660,9 @@
         const idx = parseInt(tile.getAttribute("data-idx"), 10);
         const list = tile.getAttribute("data-list");
         if (isNaN(idx) || !list) return;
-        const board = (list === "util") ? ((panelDraft && panelDraft.panel_utility) || []) : currentBoard();
+        const board = (list === "util") ? ((panelDraft && panelDraft.panel_utility) || []) :
+                      (list === "core") ? ((panelDraft && panelDraft.panel_core) || (panelViewConfig().panel_core) || defaultCoreSlots()) :
+                      currentBoard();
         const s = board[idx];
         if (s) {
           const entKey = s.entity || (s.plugin && s.button_id ? (s.plugin + "." + s.button_id) : "");
@@ -9605,8 +10678,8 @@
             const audTitle = (!s.name || s.name === "Audio") ? curDevName : s.name;
             const audLabel = isAlt ? ((s.labels && s.labels.on) || s.audio_input_device_name_alt || "ALT") : ((s.labels && s.labels.off) || s.audio_input_device_name || "PRIMARY");
 
-            isOn = isAlt;
-            bState = { active: isAlt, label: audLabel };
+            isOn = false;
+            bState = { active: false, label: audLabel };
 
             const iconEl = tile.querySelector(".md");
             if (iconEl && iconEl.getAttribute("data-md") !== audIcon) {
@@ -9622,6 +10695,17 @@
             const textOnlyEl = tile.querySelector(".pdev-text-only");
             if (textOnlyEl) {
               textOnlyEl.textContent = formatTileTitle(audTitle);
+            }
+          } else if (s.entity === "system.mic_mute" || (s.plugin === "system" && s.button_id === "mic_mute")) {
+            const isMuted = !!bState.active;
+            const micIcon = isMuted ? "microphone-off" : (s.icon || "microphone");
+            tile.classList.toggle("pdev-muted", isMuted);
+            const iconEl = tile.querySelector(".md");
+            if (iconEl && iconEl.getAttribute("data-md") !== micIcon) {
+              iconEl.setAttribute("data-md", micIcon);
+              iconEl.textContent = mdiChar(micIcon);
+              mdiPreload([micIcon]);
+              applyMdiIcons(tile);
             }
           }
 
@@ -9689,7 +10773,11 @@
           const isValueMode = (bState.display_mode === "value" || s.display_mode === "value");
 
           // Warning state overlay & status override
-          const warn = warnStates[entKey] || warnStates[(s.plugin || "") + ":" + (s.button_id || "")];
+          const warnKeyCol = entKey ? entKey.replace(".", ":") : "";
+          const warnKeyDot = entKey ? entKey.replace(":", ".") : "";
+          const warnKeyPlg = (s.plugin || "") + ":" + (s.button_id || "");
+          const warnKeyPlgDot = (s.plugin || "") + "." + (s.button_id || "");
+          const warn = warnStates[entKey] || (warnKeyCol && warnStates[warnKeyCol]) || (warnKeyDot && warnStates[warnKeyDot]) || (warnKeyPlg !== ":" && warnStates[warnKeyPlg]) || (warnKeyPlgDot !== "." && warnStates[warnKeyPlgDot]);
           let warnFlashEl = tile.querySelector(".pdev-warn-flash");
 
           if (warn && warn.color) {
@@ -9697,15 +10785,17 @@
             const warnText = isLightColor(warn.color) ? "#0a0a0a" : "#ffffff";
             tile.style.setProperty("--warn-color", warn.color);
             tile.style.color = warnText;
+            if (colorPlateEl) colorPlateEl.style.display = "none";
             if (!warnFlashEl) {
               warnFlashEl = document.createElement("span");
               warnFlashEl.className = "pdev-warn-flash";
-              tile.insertBefore(warnFlashEl, tile.firstChild);
+              tile.appendChild(warnFlashEl);
             }
           } else {
             tile.classList.remove("pdev-warning");
             tile.style.removeProperty("--warn-color");
             tile.style.color = "";
+            if (colorPlateEl && !isProgressActive) colorPlateEl.style.display = "";
             if (warnFlashEl) warnFlashEl.remove();
           }
 
@@ -11381,7 +12471,7 @@
     main.querySelectorAll(".dash-plugin").forEach((el) => {
       el.addEventListener("click", () => {
         const plgName = el.dataset.name;
-        if (pluginsConfig[plgName] && (pluginsConfig[plgName].is_hardware || plgName === "ha" || plgName === "openrgb" || plgName === "matrix_display")) {
+        if (pluginsConfig[plgName] && (pluginsConfig[plgName].is_hardware || plgName === "ha" || plgName === "openrgb" || plgName === "matrix_display" || plgName === "pc_stats")) {
           selectedHardwarePlugin = plgName;
           currentPage = "hardware";
           navItems.forEach((n) => n.classList.toggle("active", n.dataset.page === "hardware"));
@@ -11391,12 +12481,17 @@
         }
         // Check if there is a profile matching this plugin
         const profilesList = (panelDraft && panelDraft.panel_profiles) || [];
+        const norm = (s) => (s || "").toLowerCase().replace(/[\s_\-\.]/g, "").replace("exe", "");
+        const targetNorm = norm(plgName);
         const match = profilesList.find((prof) => {
-          const profExe = (prof.exe || "").toLowerCase().replace(".exe", "");
-          const profName = (prof.name || prof.id || "").toLowerCase();
-          const targetKey = plgName.toLowerCase();
-          return profExe.includes(targetKey) || targetKey.includes(profExe) ||
-                 profName.includes(targetKey) || targetKey.includes(profName);
+          if (!prof) return false;
+          if (prof.id === `prof_${plgName}` || prof.id === plgName) return true;
+          const profExeNorm = norm(prof.exe);
+          const profNameNorm = norm(prof.name);
+          const profIdNorm = norm(prof.id);
+          return (profExeNorm && (profExeNorm.includes(targetNorm) || targetNorm.includes(profExeNorm))) ||
+                 (profNameNorm && (profNameNorm.includes(targetNorm) || targetNorm.includes(profNameNorm))) ||
+                 (profIdNorm && (profIdNorm.includes(targetNorm) || targetNorm.includes(profIdNorm)));
         });
 
         if (match) {
@@ -11553,7 +12648,7 @@
     if (isInteractive) return;
 
     // Allow window drag across all non-interactive areas in panel view mode, or headers in settings
-    const inDraggableArea = panelViewMode || !!e.target.closest("header, .header-left, .logo, .ssv-bar, .panel-view-overlay, .pv-screen, .pv-scroll, .pv-frame, .pv-gauges, .pv-side, .pv-util, .pv-box, .pv-track");
+    const inDraggableArea = panelViewMode || !!e.target.closest("header, .header-left, .logo, .ssv-bar, .panel-view-overlay, .pv-screen, .pv-scroll, .pv-frame, .pv-gauges, .pv-side, .pv-util, .pv-box, .pv-track, .notepad-chrome");
     if (!inDraggableArea) return;
 
     dragState = { startX: e.screenX, startY: e.screenY };
@@ -11583,11 +12678,11 @@
     let val = 2; // Default 2 minutes
     try {
       const stored = localStorage.getItem("iris_screensaver_timeout");
-      if (stored) {
+      if (stored !== null && stored !== undefined) {
         let n = Number(stored);
         if (!isNaN(n)) {
           if (n >= 60) n = Math.round(n / 60); // Migrate legacy seconds -> minutes
-          val = Math.max(1, Math.min(10, n));
+          val = Math.max(0, Math.min(20, n));
         }
       }
     } catch (e) {}
@@ -11597,11 +12692,12 @@
       let n = Number(cfg.screensaver_timeout);
       if (!isNaN(n)) {
         if (n >= 60) n = Math.round(n / 60); // Migrate legacy seconds -> minutes
-        val = Math.max(1, Math.min(10, n));
+        val = Math.max(0, Math.min(20, n));
         try { localStorage.setItem("iris_screensaver_timeout", String(val)); } catch (e) {}
       }
     }
-    if (isNaN(val) || val < 1) val = 1;
+    if (isNaN(val) || val < 0) val = 0;
+    if (val === 0) return 0; // 0 = Disabled / Indefinite / Always On
     return val * 60 * 1000; // minutes to ms
   }
 
@@ -11939,6 +13035,54 @@
     setTimeout(updateViewportMode, 100);
     setTimeout(updateViewportMode, 300);
   });
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "F5" || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "r")) {
+      e.preventDefault();
+      window.location.reload();
+    }
+  });
+
+  // ── Global Back Navigation (mouse button 4 / Backspace) ─────
+
+  function globalBack(e) {
+    if (e) e.preventDefault();
+    if (ssActive) { hideScreensaver(); return; }
+    const viewer = document.getElementById("iris-screenshot-viewer");
+    if (viewer) {
+      if (document.body.classList.contains("standalone-viewer-mode")) {
+        if (window.pywebview && window.pywebview.api) {
+          if (window.pywebview.api.close_viewer) { window.pywebview.api.close_viewer(); return; }
+          if (window.pywebview.api.close_panel) { window.pywebview.api.close_panel(); return; }
+        }
+        try { window.close(); } catch (_) {}
+        return;
+      }
+      const closeBtn = viewer.querySelector(".ssv-close");
+      if (closeBtn) { closeBtn.click(); return; }
+      if (typeof viewer.remove === "function") viewer.remove();
+      return;
+    }
+    if (typeof window._activeNotepadClose === "function" && document.getElementById("iris-notepad")) {
+      window._activeNotepadClose();
+      return;
+    }
+    if (document.getElementById("panel-view")) { exitPanelView(); doNavBack(); return; }
+    doNavBack();
+  }
+
+  window.addEventListener("mousedown", (e) => {
+    if (e.button !== 3) return;
+    globalBack(e);
+  });
+
+  window.addEventListener("keydown", (e) => {
+    if (e.key !== "Backspace") return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const t = (e.target && e.target.tagName) || "";
+    if (t === "INPUT" || t === "TEXTAREA" || t === "SELECT" || (e.target && e.target.isContentEditable)) return;
+    globalBack(e);
+  });
+
   updateViewportMode();
   startPolling();
 })();

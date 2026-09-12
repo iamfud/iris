@@ -218,6 +218,11 @@ class LightingService:
             log.info("[lighting] alert expired -> reverting to baseline")
             self.evaluate_state(force=True)
 
+    def is_alert_active(self) -> bool:
+        """Return True if a critical alert (e.g. Shields down / red alert) is active."""
+        with self._lock:
+            return bool(self._active_alert is not None and self._alert_critical)
+
     # ── State Evaluation & Dispatch ─────────────────────────────
 
     def evaluate_state(self, force: bool = False):
@@ -227,7 +232,7 @@ class LightingService:
 
         # 1. Alert always passes through
         if active_alert:
-            self._dispatch_actions(active_alert)
+            self._dispatch_actions(active_alert, is_alert=True)
             return
 
         # 2. OpenRGB baseline (startup) unless a per-app override is active
@@ -246,20 +251,25 @@ class LightingService:
         actions = {}
         actions.update(openrgb_actions)
         actions.update(ha_actions)
-        self._dispatch_actions(actions)
+        self._dispatch_actions(actions, is_alert=False)
 
-    def _dispatch_actions(self, actions: Dict[str, str]):
+    def _dispatch_actions(self, actions: Dict[str, str], is_alert: bool = False):
         if not actions:
             return
         try:
             import plugin_manager
+            import inspect
             for pid, preset_id in actions.items():
                 if not preset_id:
                     continue
                 inst = plugin_manager.get(pid)
                 if inst and hasattr(inst, "apply_lighting_preset"):
                     try:
-                        inst.apply_lighting_preset(preset_id)
+                        sig = inspect.signature(inst.apply_lighting_preset)
+                        if "is_alert" in sig.parameters:
+                            inst.apply_lighting_preset(preset_id, is_alert=is_alert)
+                        else:
+                            inst.apply_lighting_preset(preset_id)
                     except Exception as ex:
                         log.warning("[lighting] %s apply_lighting_preset(%s) failed: %s", pid, preset_id, ex)
         except Exception as ex:

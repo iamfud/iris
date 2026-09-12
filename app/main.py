@@ -21,7 +21,8 @@ if not any(isinstance(h, RotatingFileHandler) for h in _root_logger.handlers):
 if __name__ == "__main__":
     multiprocessing.freeze_support()
 
-    from win_platform import init_dpi_awareness, ensure_rtss_exclusions
+    from win_platform import init_dpi_awareness, ensure_rtss_exclusions, apply_process_mitigation_policies
+    apply_process_mitigation_policies()
     init_dpi_awareness()
     ensure_rtss_exclusions()
 
@@ -448,6 +449,21 @@ if __name__ == "__main__":
                     return a
             return None
 
+        def _overheat_alarm_enabled(self):
+            try:
+                pcfg = (self.cfg.get("plugins") or {}).get("pc_stats") or {}
+            except Exception:
+                return True
+            return bool(pcfg.get("overheat_alarm", True))
+
+        def _on_overheat_alarm(self):
+            import overheat_alarm
+            overheat_alarm.fire(
+                serial_sender,
+                self._overlays,
+                enabled=self._overheat_alarm_enabled(),
+            )
+
         def _on_serial_line(self, line):
             if line.startswith("ALARM:"):
                 state = line[6:].strip().lower()
@@ -470,8 +486,8 @@ if __name__ == "__main__":
                         log.info("[alarm] alarm cleared")
                         self._root.after(0, self._alarm_popup.hide)
             elif line.startswith("OVERHEAT:active"):
-                alarm_sound.play("annoy")
-                log.info("[overheat] OVERHEAT:active — playing annoy")
+                self._on_overheat_alarm()
+
             elif line.startswith("SAFETY:led_overload"):
                 log.warning("[safety] SAFETY:led_overload — display shut down by firmware")
             elif line.startswith("TIMEOUT:display_off"):

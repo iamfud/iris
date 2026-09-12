@@ -50,6 +50,31 @@ def init_dpi_awareness():
     return False
 
 
+def apply_process_mitigation_policies() -> bool:
+    """Enforce OS-level process isolation to block third-party hook DLLs (e.g. RTSSHooks64.dll).
+    
+    Sets ProcessExtensionPointDisablePolicy (policy=6) via SetProcessMitigationPolicy.
+    This instructs the Windows NT kernel to reject all global hooks, AppInit DLLs, and legacy extension points
+    from injecting into Iris or its child WebView2 processes, regardless of whether RTSS or other overlays are installed.
+    Requires no administrator privileges.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        k32 = ctypes.windll.kernel32
+        policy = ctypes.c_uint32(1)  # DisableExtensionPoints = 1
+        res = k32.SetProcessMitigationPolicy(6, ctypes.byref(policy), ctypes.sizeof(policy))
+        if res:
+            log.info("[platform] ProcessExtensionPointDisablePolicy applied (third-party hook injection blocked)")
+            return True
+        else:
+            err = ctypes.GetLastError()
+            log.debug("[platform] SetProcessMitigationPolicy(6) returned error: %s", err)
+    except Exception as ex:
+        log.debug("[platform] apply_process_mitigation_policies failed: %s", ex)
+    return False
+
+
 def ensure_rtss_exclusions():
     """Ensure RivaTuner Statistics Server (RTSS) does not inject hooks into Iris or WebView2.
     
@@ -98,7 +123,7 @@ def ensure_rtss_exclusions():
             "HookOpenGL=0\n"
             "HookVulkan=0\n"
         )
-        for name in ("Iris.exe.cfg", "msedgewebview2.exe.cfg"):
+        for name in ("Iris.exe.cfg", "msedgewebview2.exe.cfg", "python.exe.cfg"):
             target = os.path.join(prof_dir, name)
             if not os.path.isfile(target):
                 try:
@@ -1411,5 +1436,76 @@ def copy_to_clipboard(text):
     except Exception as ex:
         log.warning("[win_platform] copy_to_clipboard error: %s", ex)
     return False
+
+
+def setup_webview_environment(profile_name: str = "WebView2_Default"):
+    """Standardized environment setup for all pywebview WebView2 windows.
+    
+    Ensures:
+      - Independent user data folder per profile (preventing profile locks).
+      - Purges corrupt/stale GPU shader caches and Crashpad dumps that cause black screen hangs.
+      - Sets resilient Chromium flags across all Windows and GPU configurations.
+    """
+    try:
+        import os
+        import shutil
+        import paths
+        wv_data = paths.get_webview_data_dir(profile_name)
+        os.environ["WEBVIEW2_USER_DATA_FOLDER"] = wv_data
+
+        # Purge stale or corrupt shader caches and crashpad reports
+        eb = os.path.join(wv_data, "EBWebView")
+        if os.path.isdir(eb):
+            for sub in ("GPUPersistentCache", "ShaderCache", "GrShaderCache", os.path.join("Default", "GPUCache")):
+                target = os.path.join(eb, sub)
+                if os.path.isdir(target):
+                    shutil.rmtree(target, ignore_errors=True)
+            crash_dir = os.path.join(eb, "Crashpad", "reports")
+            if os.path.isdir(crash_dir):
+                for f in os.listdir(crash_dir):
+                    fp = os.path.join(crash_dir, f)
+                    if os.path.isfile(fp):
+                        try:
+                            os.remove(fp)
+                        except Exception:
+                            pass
+
+        # Enforce kernel-level hook blocking on this process and child instances
+        apply_process_mitigation_policies()
+
+        # Strip harmful flags that break DWM composition or disable code integrity
+        harmful_flags = {
+            "--disable-gpu-compositing",
+            "--disable-direct-composition",
+            "--disable-features=RendererCodeIntegrity",
+            "--no-sandbox",
+        }
+        existing = os.environ.get("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "")
+        cleaned_flags = [f for f in existing.split() if f not in harmful_flags]
+
+        # Enforce Chromium flags to reject third-party hooks and avoid GPU timeout aborts
+        for flag in ("--enable-features=BlockThirdPartyDlls", "--disable-gpu-watchdog"):
+            if flag not in cleaned_flags:
+                cleaned_flags.append(flag)
+
+        os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = " ".join(cleaned_flags).strip()
+    except Exception as ex:
+        log.warning("[win_platform] setup_webview_environment error: %s", ex)
+
+
+def wait_for_http_server(url: str = "http://127.0.0.1:15502/api/status", timeout: float = 1.5) -> bool:
+    """Pre-flight check: ensure local HTTP server is responding before launching any webview window."""
+    import time
+    import urllib.request
+    start = time.time()
+    while (time.time() - start) < timeout:
+        try:
+            with urllib.request.urlopen(url, timeout=0.2) as resp:
+                if resp.status == 200:
+                    return True
+        except Exception:
+            time.sleep(0.04)
+    return False
+
 
 

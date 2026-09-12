@@ -61,21 +61,10 @@ def _clean_stale_caches(wv_dir: str):
 
 def _run_viewer(filename):
     try:
-        from win_platform import init_dpi_awareness
+        from win_platform import init_dpi_awareness, setup_webview_environment, wait_for_http_server
         init_dpi_awareness()
-    except Exception:
-        pass
-
-    try:
-        import os
-        import paths
-        wv_data = paths.get_webview_data_dir("WebView2_Viewer")
-        os.environ["WEBVIEW2_USER_DATA_FOLDER"] = wv_data
-        _clean_stale_caches(wv_data)
-        safe_args = "--disable-gpu-compositing --disable-direct-composition"
-        existing = os.environ.get("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "")
-        if safe_args not in existing:
-            os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = f"{existing} {safe_args}".strip()
+        setup_webview_environment("WebView2_Viewer")
+        wait_for_http_server()
     except Exception:
         pass
 
@@ -109,7 +98,9 @@ def _run_viewer(filename):
             pass
 
     w.events.closed += _on_closed
-    webview.start(debug=False)
+    import paths
+    wv_data = paths.get_webview_data_dir("WebView2_Viewer")
+    webview.start(debug=False, private_mode=False, storage_path=wv_data)
 
     try:
         import ws_bridge

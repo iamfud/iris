@@ -31,10 +31,18 @@ class Plugin:
         presets.extend([{"id": p, "name": p} for p in profs])
         return presets
 
-    def apply_lighting_preset(self, preset_id: str):
+    def apply_lighting_preset(self, preset_id: str, is_alert: bool = False):
         """Apply OpenRGB profile or color."""
         if not preset_id:
             return
+        if not is_alert:
+            try:
+                from lighting_service import get_lighting_service
+                if get_lighting_service().is_alert_active():
+                    log.info("[openrgb] critical alert active -> ignoring non-alert preset '%s'", preset_id)
+                    return
+            except Exception:
+                pass
         if preset_id == "__theme__":
             # Read the live in-memory theme — game overrides (e.g. Elite orange)
             # are applied to _cfg in memory by sync_plugin_themes but are never

@@ -238,25 +238,54 @@ def _sync_next_alarm(serial_sender, alarms):
 
 async def handler(websocket):
     CLIENTS.add(websocket)
+    peer = getattr(websocket, "remote_address", None)
+    log.info("WS client connected from %s (%d active)", peer, len(CLIENTS))
     try:
         await websocket.wait_closed()
     finally:
-        CLIENTS.remove(websocket)
+        CLIENTS.discard(websocket)
+        log.info("WS client disconnected from %s (%d active)", peer, len(CLIENTS))
 
 
 def _ws_process_request(connection, request):
-    """Reject WS connections from non-local peers without the auth token."""
+    """Reject WS connections from non-local peers without auth token or valid session."""
     try:
         path = getattr(request, "path", "") or ""
     except Exception:
         path = ""
     query = path.split("?", 1)[1] if "?" in path else ""
     token = ""
+    session = ""
     for part in query.split("&"):
         if part.startswith("token="):
             token = part[len("token="):]
-    if token == _HTTP_TOKEN:
+        elif part.startswith("session="):
+            session = part[len("session="):]
+
+    if token and hmac.compare_digest(token, _HTTP_TOKEN):
         return None
+    if session and _valid_session(session):
+        return None
+
+    try:
+        headers = getattr(request, "headers", None)
+        if headers:
+            cookie_hdr = headers.get("Cookie", "") or headers.get("cookie", "")
+            if cookie_hdr:
+                for chunk in cookie_hdr.split(";"):
+                    chunk = chunk.strip()
+                    if chunk.startswith("iris_session="):
+                        c_sess = chunk[len("iris_session="):].strip()
+                        if _valid_session(c_sess):
+                            return None
+            hdr_sess = headers.get("X-Iris-Session", "") or headers.get("X-Iris-Token", "")
+            if hdr_sess and _valid_session(hdr_sess):
+                return None
+            if hdr_sess and hmac.compare_digest(hdr_sess, _HTTP_TOKEN):
+                return None
+    except Exception:
+        pass
+
     try:
         peer = getattr(connection, "remote_address", None)
         peer = peer[0] if peer else ""
@@ -264,8 +293,10 @@ def _ws_process_request(connection, request):
         peer = ""
     if _is_loopback_address(peer):
         return None
+
     from websockets.datastructures import Headers
     from websockets.http11 import Response
+    log.warning("WS connection rejected from %s (missing or invalid auth)", peer)
     return Response(401, "Unauthorized", Headers(), b"unauthorized")
 
 
@@ -445,7 +476,7 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "font-src 'self' data: https://fonts.gstatic.com; "
         "img-src 'self' data: blob:; "
-        "connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com; "
+        "connect-src 'self' ws: wss: https://fonts.googleapis.com https://fonts.gstatic.com; "
         "media-src 'self'; "
         "frame-src 'self'; "
         "base-uri 'none'; "
@@ -540,6 +571,8 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             self._handle_library_get_note(self.path[len("/api/library/note/"):])
         elif self.path == "/api/library/running_apps":
             self._handle_library_running_apps()
+        elif self.path == "/api/library/open_folder" or self.path.startswith("/api/library/open_folder?"):
+            self._handle_library_open_folder()
         elif self.path == "/api/volume/master":
             self._send_json(_get_master_volume())
         elif self.path == "/api/volume":
@@ -551,6 +584,8 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             qs = parse_qs(urlparse(self.path).query)
             client_cv = (qs.get("cv") or [""])[0] or None
             self._send_json(_get_panel_live(client_cv))
+        elif self.path == "/api/kraken/detect":
+            self._send_json(_get_kraken_usb())
         elif self.path == "/api/panel/password/status":
             self._handle_password_status()
         elif self.path == "/api/panel/entities":
@@ -671,6 +706,8 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             self._handle_panel_core()
         elif self.path == "/api/panel/password":
             self._handle_save_panel_password()
+        elif self.path == "/api/panel/open_library":
+            self._handle_panel_open_library()
         elif self.path == "/api/open_url":
             self._handle_open_url()
         elif self.path.startswith("/api/library/sidecar/"):
@@ -683,6 +720,8 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             self._handle_clipboard()
         elif self.path.startswith("/api/library/delete/"):
             self._handle_library_delete(self.path[len("/api/library/delete/"):])
+        elif self.path == "/api/library/open_folder":
+            self._handle_library_open_folder()
         else:
             self.send_error(404)
 
@@ -1246,6 +1285,11 @@ class _RequestHandler(SimpleHTTPRequestHandler):
 
                     if "alarms" in body:
                         _sync_next_alarm(serial_sender, body.get("alarms", []))
+
+                    if "pc_stats_manual" in body or "pc_disp" in body:
+                        manual = bool(body.get("pc_stats_manual", _app.cfg.get("pc_stats_manual", False)))
+                        flags = body.get("pc_disp", _app.cfg.get("pc_disp", 7))
+                        serial_sender.set_live("pc_disp", str(int(flags)) if manual else "0")
                 except Exception as e:
                     log.warning("[http] device push failed: %s", e)
 
@@ -1445,8 +1489,10 @@ class _RequestHandler(SimpleHTTPRequestHandler):
                                 if idx == 0 and line.startswith("title:"):
                                     title = line[6:].strip()
                                 else:
-                                    if line.strip():
-                                        body_lines.append(line)
+                                    clean_line = re.sub(r"<[^>]+>", " ", line)
+                                    clean_line = clean_line.replace("&nbsp;", " ").strip()
+                                    if clean_line:
+                                        body_lines.append(clean_line)
                             preview = body_lines[0][:80] if body_lines else ""
                         except Exception:
                             pass
@@ -1605,6 +1651,37 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         except Exception as e:
             log.warning("library delete error: %s", e)
             self.send_error(500)
+
+    def _handle_library_open_folder(self):
+        """Open the screenshots library folder in Explorer, optionally selecting a specific file."""
+        try:
+            fname = None
+            if self.command == "POST":
+                body = self._read_json()
+                fname = body.get("filename") if isinstance(body, dict) else None
+            elif "?" in self.path:
+                from urllib.parse import parse_qs, urlparse
+                qs = parse_qs(urlparse(self.path).query)
+                files = qs.get("file") or qs.get("filename")
+                if files:
+                    fname = files[0]
+
+            folder = self._screenshots_folder()
+            if not os.path.isdir(folder):
+                os.makedirs(folder, exist_ok=True)
+            if fname:
+                _, full_path = self._find_library_file(fname)
+                if full_path and os.path.isfile(full_path):
+                    import subprocess
+                    norm_path = os.path.normpath(full_path)
+                    subprocess.Popen(f'explorer.exe /select,"{norm_path}"')
+                    self._send_json({"ok": True, "path": norm_path})
+                    return
+            os.startfile(folder)
+            self._send_json({"ok": True, "path": folder})
+        except Exception as e:
+            log.warning("library open folder error: %s", e)
+            self.send_error(500, str(e))
 
     def _handle_library_running_apps(self):
         """Return a list of currently running process names for the note app picker."""
@@ -2158,9 +2235,10 @@ class _RequestHandler(SimpleHTTPRequestHandler):
                     initial_body = body.get("body") or initial_body
             except Exception:
                 pass
+        toggle = self._get_query_param("toggle") in ("1", "true", "yes")
         try:
             import notepad_window
-            notepad_window.open_notepad(app_tag=app_tag, filename=filename, initial_title=initial_title, initial_body=initial_body)
+            notepad_window.open_notepad(app_tag=app_tag, filename=filename, initial_title=initial_title, initial_body=initial_body, toggle=toggle)
             self._send_json({"ok": True})
         except Exception as ex:
             log.warning("[http] failed to open notepad window: %s", ex)
@@ -2261,6 +2339,16 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             self._send_json({"ok": True, "url": url})
         except Exception as ex:
             log.exception("[ws_bridge] Failed to open URL on PC: %s", ex)
+            self.send_error(500, str(ex))
+
+    def _handle_panel_open_library(self):
+        """Open the Iris settings app directly on the Library > Notes tab (same as toolbar Library button)."""
+        try:
+            import panel_window
+            panel_window.open_panel(page="library", tab="notes")
+            self._send_json({"ok": True})
+        except Exception as ex:
+            log.warning("[http] open library failed: %s", ex)
             self.send_error(500, str(ex))
 
     def _handle_panel_action(self):
@@ -2377,11 +2465,11 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             except Exception as e:
                 log.warning("[http] screenshot zone failed: %s", e)
             self._send_json({"ok": True})
-        elif tile == "note":
+        elif tile in ("note", "note_native", "note_webview"):
             try:
                 mw = _app._ensure_main_win() if hasattr(_app, "_ensure_main_win") else getattr(_app, "_main_win", None)
                 if mw:
-                    _app._root.after(0, mw.start_quick_note)
+                    _app._root.after(0, lambda: mw.start_quick_note(toggle=True))
             except Exception as e:
                 log.warning("[http] quick note failed: %s", e)
             self._send_json({"ok": True})
@@ -2533,12 +2621,22 @@ class _RequestHandler(SimpleHTTPRequestHandler):
 
     def _handle_panel_entities(self):
         try:
-            from panel_entities import get_entity_registry
+            from panel_entities import get_entity_registry, get_live_entity_states
             entities = get_entity_registry()
-            self._send_json({"ok": True, "entities": entities})
+            live = {}
+            try:
+                live_raw = get_live_entity_states()
+                for k, v in live_raw.items():
+                    if isinstance(v, dict) and "value" in v:
+                        live[k] = v.get("value")
+                    else:
+                        live[k] = v
+            except Exception:
+                pass
+            self._send_json({"ok": True, "entities": entities, "live_states": live})
         except Exception as e:
             log.warning("[http] panel entities failed: %s", e)
-            self._send_json({"ok": False, "entities": []})
+            self._send_json({"ok": False, "entities": [], "live_states": {}})
 
     def _handle_save_plugin_config(self, name):
         try:
@@ -2727,6 +2825,10 @@ def _get_plugins_config():
     matrix_status_code = "active" if is_matrix_online else "inactive"
     matrix_status_label = f"Connected ({port})" if (is_matrix_online and port) else ("Connected" if is_matrix_online else "Offline")
     matrix_cfg = dict(_app.cfg) if _app and hasattr(_app, "cfg") else {}
+    try:
+        matrix_cfg["pc_disp"] = int(matrix_cfg.get("pc_disp", 7))
+    except Exception:
+        matrix_cfg["pc_disp"] = 7
     matrix_settings = [
         {
             "title": "Clock Display",
@@ -2801,15 +2903,38 @@ def _get_plugins_config():
                 },
                 {
                     "type": "toggle",
-                    "key": "pc_stats_enabled",
-                    "label": "PC Stats",
-                    "description": "Show PC hardware stats on the matrix display."
-                },
-                {
-                    "type": "toggle",
                     "key": "feature_notifications",
                     "label": "Notifications",
                     "description": "Show phone and PC notifications on the matrix display."
+                }
+            ]
+        },
+        {
+            "title": "PC Stats Display",
+            "controls": [
+                {
+                    "type": "toggle",
+                    "key": "pc_stats_enabled",
+                    "label": "Automatic game detection",
+                    "description": "Show CPU/GPU/FPS automatically when a detected game is running or a temperature alert fires."
+                },
+                {
+                    "type": "toggle",
+                    "key": "pc_stats_manual",
+                    "label": "Persistent stats display",
+                    "description": "Override the clock and keep PC stats on the matrix display permanently."
+                },
+                {
+                    "type": "select",
+                    "key": "pc_disp",
+                    "label": "Number of stats",
+                    "value_from": "pc_disp",
+                    "description": "How many stats to show on the matrix display.",
+                    "options": [
+                        { "value": 1, "label": "1 stat (CPU)" },
+                        { "value": 3, "label": "2 stats (CPU + GPU)" },
+                        { "value": 7, "label": "3 stats (CPU + GPU + FPS)" }
+                    ]
                 }
             ]
         }
@@ -3057,6 +3182,78 @@ def _get_panel_live(client_cv=None):
     if _app is None:
         return live_payload({}, client_cv=client_cv)
     return live_payload(_app.cfg, client_cv=client_cv)
+
+
+# NZXT Kraken LCD USB PIDs (VID 1E71) -> (model family, native resolution, shape).
+# NZXT's own CAM software does not report which Kraken is installed, so we probe
+# the Windows PnP device tree instead.
+_KRAKEN_MODELS = {
+    # Z53 / Z63 / Z73  -- 2.36" circular edge-to-edge LCD
+    "3008": ("Kraken Z", 320, "circle"),
+    # Kraken 2023 non-Elite -- 1.54" square LCD
+    "300e": ("Kraken (2023)", 240, "square"),
+    # Kraken 2023+ Elite -- 2.17" circular LCD
+    "300c": ("Kraken 2023 Elite", 640, "circle"),
+    # Kraken 2024 (may also surface as 300e/300c variants)
+    "3012": ("Kraken RX (2024)", 640, "circle"),
+    "3014": ("Kraken (2024)", 240, "square"),
+}
+
+_KRAKEN_PROBE_CACHE = {"at": 0.0, "res": None}
+_KRAKEN_PROBE_LOCK = threading.Lock()
+
+
+def _get_kraken_usb():
+    """Detect the attached NZXT Kraken LCD via USB PnP enumeration.
+
+    Runs a short-lived PowerShell Get-PnpDevice query for VID_1E71 (NZXT),
+    maps the PID to a known model/resolution/shape, and caches the result
+    for a few seconds so the web panel is not hammering PowerShell on a 1 Hz
+    poll. Returns the device record, or None when no Kraken is present.
+    """
+    now = time.time()
+    with _KRAKEN_PROBE_LOCK:
+        if _KRAKEN_PROBE_CACHE["res"] is not None and now - _KRAKEN_PROBE_CACHE["at"] < 5.0:
+            return _KRAKEN_PROBE_CACHE["res"]
+        import subprocess
+        try:
+            ps = (
+                "Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | "
+                "Where-Object { $_.InstanceId -match 'VID_1E71' } | "
+                "ForEach-Object { $_.InstanceId }"
+            )
+            out = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+                capture_output=True, text=True, timeout=6,
+                creationflags=0x08000000,  # CREATE_NO_WINDOW
+            )
+            pids = set()
+            for line in (out.stdout or "").splitlines():
+                m = re.search(r"VID_1E71&PID_([0-9A-Fa-f]{4})", line)
+                if m:
+                    pids.add(m.group(1).lower())
+            pick = next(iter(pids), None)
+            if not pick:
+                _KRAKEN_PROBE_CACHE["res"] = {"found": False}
+                _KRAKEN_PROBE_CACHE["at"] = now
+                return _KRAKEN_PROBE_CACHE["res"]
+            name, res, shape = _KRAKEN_MODELS.get(
+                pick, ("NZXT Kraken", 640, "circle"))
+            record = {
+                "found": True,
+                "pid": pick,
+                "model": name,
+                "resolution": res,
+                "shape": shape,
+            }
+            _KRAKEN_PROBE_CACHE["res"] = record
+            _KRAKEN_PROBE_CACHE["at"] = now
+            return record
+        except Exception as e:
+            log.warning("[kraken] USB probe failed: %s", e)
+            _KRAKEN_PROBE_CACHE["res"] = {"found": False}
+            _KRAKEN_PROBE_CACHE["at"] = now
+            return _KRAKEN_PROBE_CACHE["res"]
 
 
 def _get_vision_sensors():

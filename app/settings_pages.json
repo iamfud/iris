@@ -126,11 +126,12 @@
               "type": "slider",
               "key": "screensaver_timeout",
               "label": "Screensaver Timeout",
-              "min": 1,
-              "max": 10,
+              "min": 0,
+              "max": 20,
               "step": 1,
-              "unit": "min",
-              "description": "Idle duration on companion phone before dimming to OLED black (1 to 10 min)"
+              "unit": " min",
+              "zero_label": "Disabled (Always On)",
+              "description": "Idle duration on companion phone before dimming to OLED black (0 to disable, up to 20 min)"
             },
             {
               "type": "hotkey",

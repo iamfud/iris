@@ -109,6 +109,86 @@ def get_core_entities() -> List[Dict[str, Any]]:
             "description": "Open Iris web settings and portal",
         },
         {
+            "id": "time.str",
+            "domain": "Time",
+            "plugin": "time",
+            "button_id": "str",
+            "state_key": "str",
+            "name": "Time of Day (HH:MM)",
+            "type": "data",
+            "data_type": "string",
+            "icon": "clock-outline",
+            "color": "#48B2E9",
+            "unit": "",
+            "writable": False,
+            "default_action": "",
+            "description": "Current wall-clock time in 24-hour HH:MM format (e.g. 16:00)",
+        },
+        {
+            "id": "time.hour",
+            "domain": "Time",
+            "plugin": "time",
+            "button_id": "hour",
+            "state_key": "hour",
+            "name": "Hour (0-23)",
+            "type": "data",
+            "data_type": "number",
+            "icon": "clock-outline",
+            "color": "#48B2E9",
+            "unit": "h",
+            "writable": False,
+            "default_action": "",
+            "description": "Current hour of day, 0-23",
+        },
+        {
+            "id": "time.minute",
+            "domain": "Time",
+            "plugin": "time",
+            "button_id": "minute",
+            "state_key": "minute",
+            "name": "Minute (0-59)",
+            "type": "data",
+            "data_type": "number",
+            "icon": "clock-outline",
+            "color": "#48B2E9",
+            "unit": "min",
+            "writable": False,
+            "default_action": "",
+            "description": "Current minute of the hour, 0-59",
+        },
+        {
+            "id": "time.now",
+            "domain": "Time",
+            "plugin": "time",
+            "button_id": "now",
+            "state_key": "now",
+            "name": "Clock Time (seconds)",
+            "type": "data",
+            "data_type": "number",
+            "icon": "clock-outline",
+            "color": "#48B2E9",
+            "unit": "",
+            "writable": False,
+            "default_action": "",
+            "description": "Current epoch time in seconds",
+        },
+        {
+            "id": "time.hourminute",
+            "domain": "Time",
+            "plugin": "time",
+            "button_id": "hourminute",
+            "state_key": "hourminute",
+            "name": "Time (HHMM numeric)",
+            "type": "data",
+            "data_type": "number",
+            "icon": "clock-outline",
+            "color": "#48B2E9",
+            "unit": "",
+            "writable": False,
+            "default_action": "",
+            "description": "Current time as 4-digit number: 1400 = 2:00 PM, 900 = 9:00 AM",
+        },
+        {
             "id": "system.colour_picker",
             "domain": "System",
             "plugin": "system",
@@ -501,6 +581,20 @@ def get_live_entity_states(plugin_button_states=None) -> Dict[str, Dict[str, Any
     """Return dictionary of {entity_id: {"active": bool, "label": str, ...}} for live UI binding."""
     states: Dict[str, Dict[str, Any]] = {}
 
+    # Synthetic Time entities (wall-clock, Core/Time domain — no plugin dependency)
+    try:
+        import time as _time
+        _lt = _time.localtime()
+        _hhmm = f"{_lt.tm_hour:02d}:{_lt.tm_min:02d}"
+        _hhmm_num = _lt.tm_hour * 100 + _lt.tm_min
+        states["time.str"] = {"value": _hhmm, "label": _hhmm}
+        states["time.hour"] = {"value": _lt.tm_hour, "label": f"{_lt.tm_hour}h"}
+        states["time.minute"] = {"value": _lt.tm_min, "label": f"{_lt.tm_min}min"}
+        states["time.hourminute"] = {"value": _hhmm_num, "label": str(_hhmm_num)}
+        states["time.now"] = {"value": int(_time.time()), "label": str(int(_time.time()))}
+    except Exception:
+        pass
+
     # Hardware connected
     try:
         from main import get_serial_comm
@@ -567,25 +661,32 @@ def get_live_entity_states(plugin_button_states=None) -> Dict[str, Dict[str, Any
 
     # Media Player
     try:
-        from providers.media import get_media_payload
-        m_data = get_media_payload()
-        if m_data and m_data.get("available"):
-            status = m_data.get("playback_status") or m_data.get("status")
-            is_playing = (status == "playing")
-            states["media.player"] = {
-                "active": is_playing,
-                "status": status,
-                "title": m_data.get("title", ""),
-                "artist": m_data.get("artist", ""),
-                "album": m_data.get("album", ""),
-                "has_art": bool(m_data.get("has_art")),
-                "art_id": m_data.get("art_id", ""),
-                "label": (m_data.get("title") or "Player")[:14],
-            }
-            states["media.play_pause"] = {
-                "active": is_playing,
-                "label": "PAUSE" if is_playing else "PLAY",
-            }
+        from ws_bridge import _app as _app_ref
+        media_prov = getattr(_app_ref, "_media_provider", None)
+        if media_prov is None and getattr(_app_ref, "_providers", None):
+            for p in _app_ref._providers:
+                if hasattr(p, "get_artwork"):
+                    media_prov = p
+                    break
+        if media_prov is not None:
+            m_data = media_prov.poll_data() if hasattr(media_prov, "poll_data") else {}
+            if m_data:
+                status = m_data.get("playback_status") or m_data.get("status")
+                is_playing = (status == "playing")
+                states["media.player"] = {
+                    "active": is_playing,
+                    "status": status,
+                    "title": m_data.get("title", ""),
+                    "artist": m_data.get("artist", ""),
+                    "album": m_data.get("album", ""),
+                    "has_art": bool(m_data.get("has_art")),
+                    "art_id": m_data.get("art_id", ""),
+                    "label": (m_data.get("title") or "Player")[:14],
+                }
+                states["media.play_pause"] = {
+                    "active": is_playing,
+                    "label": "PAUSE" if is_playing else "PLAY",
+                }
     except Exception:
         pass
 

@@ -3,6 +3,7 @@
 import ctypes
 import logging
 import math
+import os
 import struct
 import threading
 import time
@@ -195,7 +196,8 @@ class Plugin:
         self._connector.connect()
         self._running = True
         if self._serial:
-            self._serial.queue_on_connect("temp_alert", "1")
+            alarm_on = bool(self._pcfg().get("overheat_alarm", True))
+            self._serial.queue_on_connect("temp_alert", "1" if alarm_on else "0")
             self._serial.set_live("pc_disp", "0")
             self._serial.queue_on_connect("pc_disp", "0")
         threading.Thread(target=self._loop, daemon=True, name="pc-stats-plugin").start()
@@ -250,14 +252,26 @@ class Plugin:
     @staticmethod
     def _foreground_exe():
         try:
-            import win32gui
-            import win32process
+            import os
             import psutil
-            hwnd = win32gui.GetForegroundWindow()
+            user32 = ctypes.windll.user32
+            hwnd = user32.GetForegroundWindow()
+            if not hwnd:
+                try:
+                    desk = user32.OpenDesktopW("Default", 0, False, 0x01FF)
+                    if desk:
+                        user32.SetThreadDesktop(desk)
+                        hwnd = user32.GetForegroundWindow()
+                except Exception:
+                    pass
             if not hwnd:
                 return ""
-            _, pid = win32process.GetWindowThreadProcessId(hwnd)
-            return psutil.Process(pid).name()
+            pid = ctypes.c_ulong()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if not pid.value:
+                return ""
+            proc = psutil.Process(pid.value)
+            return os.path.basename(proc.name()).lower().strip()
         except Exception:
             return ""
 
@@ -268,6 +282,7 @@ class Plugin:
             self._serial.send_stats(cpu, cpu_temp, gpu_temp, fps)
 
     def _loop(self):
+        import overheat_alarm
         import psutil
         from win_platform import get_monitor_refresh_rate
 
@@ -282,6 +297,7 @@ class Plugin:
         temp_alert_active = False
         _temp_cooldown_s = 10.0
         cooldown_until = 0.0
+        was_overheat = False
 
         while self._running:
             fps_data = None
@@ -328,10 +344,12 @@ class Plugin:
             with self._lock:
                 self._snapshot = Snapshot(cpu_temp, gpu_temp, fps, exe, cpu_pct, refresh_rate)
 
-            game_active = fps is not None and exe and self._foreground_exe().lower() == exe.lower()
+            rtss_name = os.path.basename(exe).lower().strip() if exe else ""
+            fg_name = self._foreground_exe()
+            game_active = bool(fps is not None and rtss_name and fg_name and fg_name == rtss_name)
             pcfg = self._pcfg()
             cpu_lim = pcfg.get("cpu_temp_lim", 90)
-            gpu_lim = pcfg.get("gpu_temp_lim", 90)
+            gpu_lim = pcfg.get("gpu_temp_lim", 75)
             if pcfg.get("use_fahrenheit", False):
                 cpu_t = self._to_f(cpu_temp)
                 gpu_t = self._to_f(gpu_temp)
@@ -339,6 +357,14 @@ class Plugin:
                 cpu_t, gpu_t = cpu_temp, gpu_temp
             over_limit = (cpu_t is not None and cpu_t >= cpu_lim) or \
                          (gpu_t is not None and gpu_t >= gpu_lim)
+
+            if over_limit and not was_overheat:
+                overheat_alarm.fire(
+                    self._serial,
+                    self.overlays,
+                    enabled=bool(pcfg.get("overheat_alarm", True)),
+                )
+            was_overheat = over_limit
 
             if over_limit:
                 temp_alert_active = True

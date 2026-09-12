@@ -5,6 +5,8 @@ returns current state for Iris; ``snapshot()`` adds debug/event-log
 data for the journal explorer.
 """
 
+import os
+import json
 import logging
 import threading
 import time
@@ -26,7 +28,7 @@ FUEL_LOW_PCT = 30.0
 # distinct from the per-button STATUS border colour the panel derives from the
 # button profile. Kept as a single constant here: once the core exposes a
 # semantic (colour-less) alert API, this constant can be dropped.
-ALERT_COLOR = "#ff3355"
+ALERT_COLOR = "#FF0000"
 
 LAYOUT = [
     {"title": "Navigation & Location", "fields": [
@@ -250,182 +252,53 @@ class Plugin:
                 if "elite" in exe or "elite" in name or "EliteDangerous64" in (p.get("exe") or ""):
                     return
 
-            default_board = [
-                {
-                    "type": "TOGGLE",
-                    "name": "Landing Gear",
-                    "icon": "airplane-landing",
-                    "icon_off": "airplane-takeoff",
-                    "color": "#ffb703",
-                    "plugin": "elite_dangerous",
-                    "button_id": "landing_gear",
-                    "widget_type": "status_toggle",
-                    "state_key": "landing_gear",
-                    "labels": {"on": "DOWN", "off": "UP"},
-                    "colors": {"on": "#ffaa00", "off": "#444444"},
-                    "hotkey": self._binds_watcher.get_key("landing_gear", "L"),
-                    "show_name": True, "show_icon": True, "show_state": True,
-                },
-                {
-                    "type": "TOGGLE",
-                    "name": "Cargo Scoop",
-                    "icon": "bag-personal",
-                    "color": "#ffb703",
-                    "plugin": "elite_dangerous",
-                    "button_id": "cargo_scoop",
-                    "widget_type": "status_toggle",
-                    "state_key": "cargo_scoop",
-                    "labels": {"on": "DEPLOYED", "off": "RETRACTED"},
-                    "colors": {"on": "#ffaa00", "off": "#444444"},
-                    "hotkey": self._binds_watcher.get_key("cargo_scoop", "Home"),
-                    "show_name": True, "show_icon": True, "show_state": True,
-                },
-                {
-                    "type": "TOGGLE",
-                    "name": "Flight Assist",
-                    "icon": "steering",
-                    "color": "#ffb703",
-                    "plugin": "elite_dangerous",
-                    "button_id": "flight_assist",
-                    "widget_type": "status_toggle",
-                    "state_key": "flight_assist",
-                    "labels": {"on": "OFF", "off": "ON"},
-                    "colors": {"on": "#ff3355", "off": "#00ff88"},
-                    "hotkey": self._binds_watcher.get_key("flight_assist", "Z"),
-                    "show_name": True, "show_icon": True, "show_state": True,
-                },
-                {
-                    "type": "TOGGLE",
-                    "name": "Ship Lights",
-                    "icon": "flare",
-                    "color": "#ffb703",
-                    "plugin": "elite_dangerous",
-                    "button_id": "lights",
-                    "widget_type": "status_toggle",
-                    "state_key": "lights_on",
-                    "labels": {"on": "ON", "off": "OFF"},
-                    "colors": {"on": "#ffaa00", "off": "#444444"},
-                    "hotkey": self._binds_watcher.get_key("lights", "Insert"),
-                    "show_name": True, "show_icon": True, "show_state": True,
-                },
-                {
-                    "type": "TOGGLE",
-                    "name": "Hardpoints",
-                    "icon": "crosshairs",
-                    "color": "#ffb703",
-                    "plugin": "elite_dangerous",
-                    "button_id": "hardpoints",
-                    "widget_type": "status_toggle",
-                    "state_key": "hardpoints",
-                    "labels": {"on": "DEPLOYED", "off": "RETRACTED"},
-                    "colors": {"on": "#ff3355", "off": "#444444"},
-                    "hotkey": self._binds_watcher.get_key("hardpoints", "U"),
-                    "show_name": True, "show_icon": True, "show_state": True,
-                },
-                {
-                    "type": "TOGGLE",
-                    "name": "Night Vision",
-                    "icon": "eye",
-                    "color": "#ffb703",
-                    "plugin": "elite_dangerous",
-                    "button_id": "night_vision",
-                    "widget_type": "status_toggle",
-                    "state_key": "night_vision",
-                    "labels": {"on": "ON", "off": "OFF"},
-                    "colors": {"on": "#00ff88", "off": "#444444"},
-                    "hotkey": self._binds_watcher.get_key("night_vision", "N"),
-                    "show_name": True, "show_icon": True, "show_state": True,
-                },
-                {
-                    "type": "TOGGLE",
-                    "name": "Silent Running",
-                    "icon": "ghost",
-                    "color": "#ffb703",
-                    "plugin": "elite_dangerous",
-                    "button_id": "silent_running",
-                    "widget_type": "status_toggle",
-                    "state_key": "silent_running",
-                    "labels": {"on": "ACTIVE", "off": "OFF"},
-                    "colors": {"on": "#ff3355", "off": "#444444"},
-                    "hotkey": self._binds_watcher.get_key("silent_running", "Delete"),
-                    "show_name": True, "show_icon": True, "show_state": True,
-                },
-                {
-                    "type": "TOGGLE",
-                    "name": "Supercruise",
-                    "icon": "rocket-launch",
-                    "color": "#ffb703",
-                    "plugin": "elite_dangerous",
-                    "button_id": "supercruise",
-                    "widget_type": "status_toggle",
-                    "state_key": "supercruise",
-                    "labels": {"on": "ACTIVE", "off": "IDLE"},
-                    "colors": {"on": "#48b2e9", "off": "#444444"},
-                    "hotkey": self._binds_watcher.get_key("supercruise", "J"),
-                    "show_name": True, "show_icon": True, "show_state": True,
-                },
-                {
-                    "type": "TOGGLE",
-                    "name": "Shields",
-                    "icon": "shield",
-                    "color": "#ffb703",
-                    "plugin": "elite_dangerous",
-                    "button_id": "shields",
-                    "widget_type": "display",
-                    "state_key": "shields_up",
-                    "labels": {"on": "ONLINE", "off": "DOWN"},
-                    "colors": {"on": "#00ff88", "off": "#ff3355"},
-                    "show_name": True, "show_icon": True, "show_state": True,
-                },
-                {
-                    "type": "TOGGLE",
-                    "name": "Mass Lock",
-                    "icon": "weight",
-                    "color": "#ffb703",
-                    "plugin": "elite_dangerous",
-                    "button_id": "mass_lock",
-                    "widget_type": "display",
-                    "state_key": "mass_locked",
-                    "labels": {"on": "LOCKED", "off": "CLEAR"},
-                    "colors": {"on": "#ff3355", "off": "#00ff88"},
-                    "show_name": True, "show_icon": True, "show_state": True,
-                },
-                {
-                    "type": "TOGGLE",
-                    "name": "FSD Charge",
-                    "icon": "speedometer",
-                    "color": "#ffb703",
-                    "plugin": "elite_dangerous",
-                    "button_id": "fsd_status",
-                    "widget_type": "display",
-                    "state_key": "fsd_charging",
-                    "labels": {"on": "CHARGING", "off": "READY"},
-                    "colors": {"on": "#ffaa00", "off": "#555555"},
-                    "show_name": True, "show_icon": True, "show_state": True,
-                },
-                {
-                    "type": "TOGGLE",
-                    "name": "Fuel Scoop",
-                    "icon": "gas-station",
-                    "color": "#ffb703",
-                    "plugin": "elite_dangerous",
-                    "button_id": "fuel_scoop",
-                    "widget_type": "display",
-                    "state_key": "scooping_fuel",
-                    "labels": {"on": "SCOOPING", "off": "IDLE"},
-                    "colors": {"on": "#ffee00", "off": "#555555"},
-                    "show_name": True, "show_icon": True, "show_state": True,
-                },
-            ]
+            # Dynamically import default buttons and metadata from the plugin's own plugin.json manifest
+            manifest_path = os.path.join(os.path.dirname(__file__), "plugin.json")
+            manifest = {}
+            if os.path.isfile(manifest_path):
+                try:
+                    import json
+                    with open(manifest_path, "r", encoding="utf-8") as f:
+                        manifest = json.load(f)
+                except Exception as ex:
+                    log.warning("[ed] could not read plugin.json: %s", ex)
 
+            default_board = []
+            for btn in manifest.get("buttons", []):
+                wtype = btn.get("widget_type", "status_toggle")
+                slot = {
+                    "type": "TOGGLE" if "toggle" in wtype else "ACTION",
+                    "name": btn.get("name", ""),
+                    "icon": btn.get("icon", ""),
+                    "color": btn.get("color", "#ffb703"),
+                    "plugin": manifest.get("name", "elite_dangerous"),
+                    "button_id": btn.get("id", ""),
+                    "widget_type": wtype,
+                    "state_key": btn.get("state_key", btn.get("id", "")),
+                    "show_name": True,
+                    "show_icon": True,
+                    "show_state": True,
+                }
+                if "icon_off" in btn:
+                    slot["icon_off"] = btn["icon_off"]
+                if "labels" in btn:
+                    slot["labels"] = btn["labels"]
+                if "colors" in btn:
+                    slot["colors"] = btn["colors"]
+                if "default_hotkey" in btn:
+                    slot["default_hotkey"] = btn["default_hotkey"]
+                    slot["hotkey"] = btn["default_hotkey"]
+                default_board.append(slot)
+
+            theme = manifest.get("theme", {})
             new_profile = {
-                "id": "prof_elite_dangerous",
-                "name": "Elite Dangerous",
-                "exe": ed_exe,
+                "id": f"prof_{manifest.get('name', 'elite_dangerous')}",
+                "name": manifest.get("display_name", "Elite Dangerous"),
+                "exe": manifest.get("exe_default", ed_exe),
                 "enabled": True,
                 "theme": {
-                    "accent": "#ff5500",
-                    "neon": "#ffaa00",
+                    "accent": theme.get("accent", "#ff5500"),
+                    "neon": theme.get("neon", "#ffaa00"),
                 },
                 "theme_override": True,
                 "lighting_enabled": True,
@@ -437,7 +310,7 @@ class Plugin:
             profiles.append(new_profile)
             cfg["panel_profiles"] = profiles
             save_config(cfg)
-            log.info("[ed] installed default button-box profile")
+            log.info("[ed] installed default button-box profile from plugin.json")
 
         except Exception as e:
             log.warning("[ed] could not install default profile: %s", e)
@@ -587,12 +460,11 @@ class Plugin:
                             )
                     prev[key] = cur
 
-                # Shield-down alert: STATE-driven, not edge-triggered. Only fire
-                # during active flight when the game is running and player is undocked.
-                in_flight = not st.get("docked", False) and not st.get("landed", False) and not st.get("on_foot", False)
+                # Shield-down alert: STATE-driven, not edge-triggered. Fire whenever shields are down
+                # regardless of whether on foot or in ship.
                 shields = st.get("shields_up")
                 if shields is not None:
-                    if shields is False and in_flight:
+                    if shields is False:
                         if not shield_alert_active:
                             self._alert_shields_down()
                             self._set_shields_warning()

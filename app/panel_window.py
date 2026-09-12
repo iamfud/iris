@@ -29,6 +29,12 @@ class _JSApi:
     def __init__(self, state):
         self._window = None
         self._state = state
+        self._pending_nav = None
+
+    def get_pending_nav(self):
+        nav = self._pending_nav
+        self._pending_nav = None
+        return nav
 
     def move_window(self, dx, dy):
         if not self._window:
@@ -142,7 +148,7 @@ def _find_windows_for_pid(pid: int) -> list:
             cname = buf.value or ""
 
             # Exclude helper / hook / crashpad / message windows
-            if any(ign in cname for ign in ("GDI+", ".NET", "MSCTFIME", "Default IME", "Message", "Chrome_WidgetWin")):
+            if any(ign in cname for ign in ("GDI+", "MSCTFIME", "Default IME", "Message")):
                 return True
 
             tbuf = ctypes.create_unicode_buffer(256)
@@ -151,8 +157,10 @@ def _find_windows_for_pid(pid: int) -> list:
 
             rect = ctypes.wintypes.RECT()
             user32.GetWindowRect(hwnd, ctypes.byref(rect))
-            if (rect.right - rect.left > 80) and (rect.bottom - rect.top > 80):
-                if title == "Iris":
+            w = rect.right - rect.left
+            h = rect.bottom - rect.top
+            if user32.IsIconic(hwnd) or (w > 80 and h > 80):
+                if title == "Iris" or "Iris" in title:
                     hwnds.insert(0, hwnd)
                 else:
                     hwnds.append(hwnd)
@@ -255,14 +263,11 @@ def open_panel(width=_DEFAULT_WIDTH, height=_DEFAULT_HEIGHT, query_params=None, 
         _NAV_QUEUE = multiprocessing.Queue()
 
     if _proc is not None and _proc.is_alive():
-        if nav_targets:
-            try:
-                # Deterministic IPC to the panel subprocess, independent of the
-                # websocket broadcast (which can drop when the WS server restarts
-                # or the webview has not connected yet).
-                _NAV_QUEUE.put(nav_targets)
-            except Exception:
-                pass
+        try:
+            # Deterministic IPC to the panel subprocess
+            _NAV_QUEUE.put(nav_targets or {"bring_to_front": True})
+        except Exception:
+            pass
             # Broadcast live navigation to all connected webviews
             try:
                 import ws_bridge
@@ -470,27 +475,40 @@ def _build_nav_js(item):
     )
 
 
-def _nav_loop(nav_queue, state, window):
+def _nav_loop(nav_queue, state, window, api=None):
     """Consume navigation directives from the parent process and apply them in the webview."""
+    log.info("[panel-nav] worker thread started")
     while True:
         try:
             item = nav_queue.get()
-        except Exception:
+        except Exception as e:
+            log.info("[panel-nav] queue closed or failed: %s", e)
             return
         if not isinstance(item, dict):
             continue
         try:
+            log.info("[panel-nav] received directive: %s", item)
+            if item.get("bring_to_front", True):
+                try:
+                    if hasattr(window, "restore"):
+                        window.restore()
+                    elif hasattr(window, "show"):
+                        window.show()
+                except Exception:
+                    pass
+            if api is not None:
+                api._pending_nav = item
             js = _build_nav_js(item)
             if not js:
                 continue
             deadline = time.time() + 30
             while not state.get("ready") and time.time() < deadline:
                 time.sleep(0.1)
-            if not state.get("ready"):
-                continue
-            window.evaluate_js(js)
-        except Exception:
-            pass
+            log.info("[panel-nav] evaluating js (ready=%s): %s", state.get("ready"), js)
+            res = window.evaluate_js(js)
+            log.info("[panel-nav] evaluate_js result: %s", res)
+        except Exception as ex:
+            log.warning("[panel-nav] evaluate_js failed: %s", ex)
 
 
 def _clean_stale_caches(wv_dir: str):
@@ -522,24 +540,12 @@ def _run(width, height, x=None, y=None, query_params=None, nav_queue=None):
     _ensure_child_logger()
 
     try:
-        from win_platform import init_dpi_awareness
+        from win_platform import init_dpi_awareness, setup_webview_environment, wait_for_http_server, apply_process_mitigation_policies
+        apply_process_mitigation_policies()
         init_dpi_awareness()
-    except Exception:
-        pass
-
-    try:
-        import os
-        import paths
-        wv_data = paths.get_webview_data_dir("WebView2_panel")
-        os.environ["WEBVIEW2_USER_DATA_FOLDER"] = wv_data
-        _clean_stale_caches(wv_data)
-        # Prevent third-party overlay/hook crashes (e.g. RTSSHooks64.dll) by disabling DirectComposition hooks
-        safe_args = "--disable-gpu-compositing --disable-direct-composition"
-        existing = os.environ.get("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "")
-        if safe_args not in existing:
-            os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = f"{existing} {safe_args}".strip()
+        setup_webview_environment("WebView2_panel")
     except Exception as exc:
-        log.error("[panel] WebView2 data-folder setup failed: %s", exc)
+        log.error("[panel] WebView2 environment setup failed: %s", exc)
 
     try:
         import webview
@@ -573,13 +579,7 @@ def _run(width, height, x=None, y=None, query_params=None, nav_queue=None):
         panel_url = f"http://127.0.0.1:15502/index.html?_t={ts}"
 
     # Pre-flight check: ensure local HTTP server is responding before launching webview
-    for _ in range(25):
-        try:
-            with urllib.request.urlopen("http://127.0.0.1:15502/api/status", timeout=0.2) as resp:
-                if resp.status == 200:
-                    break
-        except Exception:
-            time.sleep(0.04)
+    wait_for_http_server()
 
     log.info("[panel] loading %s (%dx%d)", panel_url, width, height)
     try:
@@ -622,8 +622,13 @@ def _run(width, height, x=None, y=None, query_params=None, nav_queue=None):
             # Ignore resize events so settings window geometry stays clean and fixed
             pass
 
+        def _on_loaded():
+            state["ready"] = True
+            log.info("[panel] webview loaded event fired")
+
         def _on_shown():
             state["ready"] = True
+            log.info("[panel] webview shown event fired")
             # Capture centred position after first show if none was saved.
             if state["x"] is None or state["y"] is None:
                 try:
@@ -639,18 +644,21 @@ def _run(width, height, x=None, y=None, query_params=None, nav_queue=None):
 
         w.events.moved += _on_moved
         w.events.resized += _on_resized
+        w.events.loaded += _on_loaded
         w.events.shown += _on_shown
         w.events.closing += _on_closing
 
         if nav_queue is not None:
             threading.Thread(
                 target=_nav_loop,
-                args=(nav_queue, state, api._window),
+                args=(nav_queue, state, api._window, api),
                 daemon=True,
                 name="panel-nav",
             ).start()
 
-        webview.start(debug=False)
+        import paths
+        wv_data = paths.get_webview_data_dir("WebView2_panel")
+        webview.start(debug=False, private_mode=False, storage_path=wv_data)
 
         # Fallback if closing event did not fire.
         _save_geometry(state)

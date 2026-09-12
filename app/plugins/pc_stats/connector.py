@@ -25,10 +25,13 @@ class PCStatsConnector(BaseConnector):
 
     def connect(self) -> bool:
         if self._serial:
+            alarm_on = bool(self._pcfg().get("overheat_alarm", True))
             self._serial.queue_on_connect("cpu_temp_lim",
                                           self._serial_limit("cpu_temp_lim", 90))
             self._serial.queue_on_connect("gpu_temp_lim",
-                                          self._serial_limit("gpu_temp_lim", 90))
+                                          self._serial_limit("gpu_temp_lim", 75))
+            self._serial.queue_on_connect("temp_alert",
+                                          "1" if alarm_on else "0")
         return True
 
     def disconnect(self):
@@ -60,14 +63,16 @@ class PCStatsConnector(BaseConnector):
                 "controls": [
                     {"type": "toggle", "key": "enabled", "label": "Enabled",
                      "description": "Show PC hardware stats on the display"},
+                    {"type": "toggle", "key": "overheat_alarm", "label": "Overheat alarm",
+                     "description": "Play a coin sound and send a red overheat alert when CPU/GPU exceeds its limit", "default": True},
                     {"type": "toggle", "key": "use_fahrenheit",
                      "label": "Use Fahrenheit (\u00b0F)",
                      "description": "Set temperature limits in degrees Fahrenheit"},
                     {"type": "slider", "key": "cpu_temp_lim",
-                     "label": "CPU Temperature Limit",
+                     "label": "CPU Temperature Limit", "default": 90,
                      "min": lo, "max": hi, "step": 5, "unit": unit},
                     {"type": "slider", "key": "gpu_temp_lim",
-                     "label": "GPU Temperature Limit",
+                     "label": "GPU Temperature Limit", "default": 75,
                      "min": lo, "max": hi, "step": 5, "unit": unit},
                 ],
             }

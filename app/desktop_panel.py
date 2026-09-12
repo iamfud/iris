@@ -344,16 +344,12 @@ def _save_geometry(state):
 def _run(width, height, x=None, y=None, pinned=False):
     """Entry point for the pywebview desktop companion process."""
     try:
-        import os
-        import paths
-        wv_data = paths.get_webview_data_dir("WebView2_Companion")
-        os.environ["WEBVIEW2_USER_DATA_FOLDER"] = wv_data
-        safe_args = "--disable-gpu-compositing --disable-direct-composition"
-        existing = os.environ.get("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "")
-        if safe_args not in existing:
-            os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = f"{existing} {safe_args}".strip()
-    except Exception:
-        pass
+        from win_platform import init_dpi_awareness, setup_webview_environment, wait_for_http_server
+        init_dpi_awareness()
+        setup_webview_environment("WebView2_Companion")
+        wait_for_http_server()
+    except Exception as exc:
+        log.warning("[desktop_panel] WebView2 setup error: %s", exc)
 
     try:
         import webview
@@ -425,7 +421,9 @@ def _run(width, height, x=None, y=None, pinned=False):
         w.events.moved += _on_moved
         w.events.shown += _on_shown
         w.events.closing += _on_closing
-        webview.start(debug=False)
+        import paths
+        wv_data = paths.get_webview_data_dir("WebView2_Companion")
+        webview.start(debug=False, private_mode=False, storage_path=wv_data)
         _save_geometry(state)
     except Exception as e:
         print(f"[desktop_panel] error: {e}")

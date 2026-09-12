@@ -303,6 +303,28 @@ class CaptureToolbar:
         self._btn_close.bind("<Leave>", lambda e: self._btn_close.config(bg=bg_surface))
         ToolTip(self._btn_close, "Close Toolbar")
 
+    def refresh_theme(self):
+        """Rebuild toolbar UI with freshly-read theme colors (live theme changes)."""
+        try:
+            t_colors = get_current_theme_colors()
+            self._win.configure(bg=t_colors["theme_bg_hex"])
+            if getattr(self, "_bar_frame", None) is not None:
+                self._bar_frame.destroy()
+            self._build_ui()
+            if self._visible:
+                self._win.update_idletasks()
+                req_w = self._bar_frame.winfo_reqwidth()
+                req_h = self._bar_frame.winfo_reqheight()
+                w = max(180, req_w + 2)
+                h = max(38, req_h + 2)
+                m = self._current_monitor
+                if m:
+                    center_x = int(m["x"] + (m["w"] - w) // 2)
+                    target_y = int(m["y"] + 4)
+                    self._win.geometry(f"{w}x{h}+{center_x}+{target_y}")
+        except Exception as ex:
+            log.warning("Failed to refresh capture toolbar theme: %s", ex)
+
     def _resolve_foreground_app(self):
         """Identify the foreground application before toolbar steals focus."""
         try:
@@ -483,10 +505,13 @@ class CaptureToolbar:
     def capture_fullscreen_direct(self, app_tag=None, notify=True):
         """Silently capture active game/monitor, save PNG + OCR, with zero focus stealing and no game minimization."""
         tag = app_tag or self._resolve_foreground_app() or "game"
+        self.hide()
         self._clear_screenshot_last()
 
         def _capture():
             try:
+                # Allow 150ms for Windows DWM to clear the hidden toolbar
+                time.sleep(0.15)
                 img, monitor = vision.capture_active_monitor()
                 if img:
                     fname = self._save_screenshot_and_ocr(img, tag)
@@ -535,8 +560,12 @@ class CaptureToolbar:
                         except Exception as ex:
                             log.warning("Failed to open screenshot annotation editor: %s", ex)
 
-                # Reopen toolbar after capture or cancel
-                self._root.after(100, lambda: self._reopen_after_screenshot(bool(rect)))
+                # Reopen toolbar only if capture was cancelled (if captured, viewer is open)
+                if not rect:
+                    self._root.after(100, lambda: self._reopen_after_screenshot(False))
+                else:
+                    self._has_spawned_children = True
+                    self._start_child_watcher()
             except Exception as ex:
                 log.warning("Capture failed: %s", ex)
                 self._root.after(100, self.show)

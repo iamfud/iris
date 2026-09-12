@@ -40,14 +40,85 @@ class AutomationsEngine:
         self._cooldown_tracker: Dict[str, float] = {}
         self._last_matched_states: Dict[str, Any] = {}
         self._active_alert_rules: set[str] = set()
+        self._fired_days: Dict[str, str] = {}
         self._lock = threading.Lock()
         self._disclaimer_acknowledged = False
+        self._tick_thread: Optional[threading.Thread] = None
+        self._tick_stop = threading.Event()
+        self._tick_started = False
+
+    def start(self):
+        """Start the periodic state-sourcing tick (sensor/time rule evaluation)."""
+        with self._lock:
+            if self._tick_started:
+                return
+            self._tick_started = True
+            self._tick_stop.clear()
+        self._tick_thread = threading.Thread(target=self._tick_loop, daemon=True, name="iris-automations-tick")
+        self._tick_thread.start()
+
+    def stop(self):
+        """Stop the periodic tick thread."""
+        self._tick_stop.set()
+        t = self._tick_thread
+        if t is not None and t is not threading.current_thread():
+            t.join(timeout=3)
+            self._tick_thread = None
+        with self._lock:
+            self._tick_started = False
+
+    def _tick_loop(self):
+        while not self._tick_stop.is_set():
+            try:
+                self._source_all_states()
+            except Exception as ex:
+                log.warning("[automations] tick sourcing error: %s", ex)
+            self._tick_stop.wait(1.0)
+
+    def _source_all_states(self):
+        """Merge live entity values (including Time) into the engine state and re-evaluate."""
+        merged = {}
+        try:
+            from panel_entities import get_live_entity_states
+            live = get_live_entity_states()
+            if isinstance(live, dict):
+                for key, valdict in live.items():
+                    if isinstance(valdict, dict) and "value" in valdict:
+                        merged[key.split(":")[-1]] = valdict.get("value")
+                        merged[key] = valdict.get("value")
+                    elif isinstance(valdict, dict):
+                        for k2, v2 in valdict.items():
+                            if k2 == "value":
+                                merged[key] = v2
+            # Plugin raw polls for full sensor coverage
+            try:
+                import plugin_manager
+                polled = plugin_manager.poll_all()
+                if isinstance(polled, dict):
+                    for pname, pdata in polled.items():
+                        if not isinstance(pdata, dict):
+                            continue
+                        for k, v in pdata.items():
+                            if k in ("available", "state", "status", "layout", "fields"):
+                                continue
+                            if isinstance(v, (int, float, bool, str)) and not isinstance(v, dict):
+                                merged[f"{pname}.{k}"] = v
+            except Exception:
+                pass
+        except Exception as ex:
+            log.warning("[automations] tick state source failed: %s", ex)
+            return
+
+        if not merged:
+            return
+        self.dispatch_state("live", "all", merged)
 
     def load_config(self, cfg: Dict[str, Any]):
         with self._lock:
             self._rules = list(cfg.get("automations", []))
             self._disclaimer_acknowledged = bool(cfg.get("automations_disclaimer_ack", False))
             log.info("[automations] loaded %d rules (disclaimer_ack=%s)", len(self._rules), self._disclaimer_acknowledged)
+        self.start()
 
     def set_disclaimer_ack(self, ack: bool = True):
         with self._lock:
@@ -170,6 +241,19 @@ class AutomationsEngine:
                     log.warning("[automations] auto pop_alert failed: %s", ex)
             return
 
+        # ── TIME TRIGGER RISING-EDGE ────────────────────────
+        # For time-based triggers (time.*): fire once when condition
+        # transitions from false → true; suppress while true.
+        is_time_trigger = trigger_key.startswith("time.")
+
+        with self._lock:
+            was_active = rule_id in self._active_alert_rules
+            self._active_alert_rules.add(rule_id)
+
+        if is_time_trigger and was_active:
+            return
+
+        # ── STANDARD DISPATCH GATE ──────────────────────────
         with self._lock:
             last_state = self._last_matched_states.get(rule_id)
             last_fired = self._cooldown_tracker.get(rule_id, 0.0)
@@ -203,9 +287,28 @@ class AutomationsEngine:
 
             val_s = str(val).strip().lower()
             tgt_s = str(target).strip().lower()
+
+            if op == "contains":
+                return tgt_s in val_s
+
+            try:
+                val_f = float(val)
+                tgt_f = float(target)
+                if op == "==": return abs(val_f - tgt_f) < 0.001
+                if op == "!=": return abs(val_f - tgt_f) >= 0.001
+                if op == "<":  return val_f < tgt_f
+                if op == "<=": return val_f <= tgt_f
+                if op == ">":  return val_f > tgt_f
+                if op == ">=": return val_f >= tgt_f
+            except (ValueError, TypeError):
+                pass
+
             if op == "==": return val_s == tgt_s
             if op == "!=": return val_s != tgt_s
-            if op == "contains": return tgt_s in val_s
+            if op == "<":  return val_s < tgt_s
+            if op == "<=": return val_s <= tgt_s
+            if op == ">":  return val_s > tgt_s
+            if op == ">=": return val_s >= tgt_s
 
         except Exception:
             pass
@@ -259,14 +362,18 @@ class AutomationsEngine:
             except Exception as ex:
                 log.warning("[automations] pop_alert failed: %s", ex)
         elif lighting_actions:
-            with self._lock:
-                if max_duration == 0:
-                    self._active_alert_rules.add(rule_id)
-                else:
-                    self._active_alert_rules.discard(rule_id)
             try:
                 from lighting_service import get_lighting_service
-                get_lighting_service().push_alert(lighting_actions, max_duration)
+                ls = get_lighting_service()
+                if ls.is_alert_active():
+                    log.info("[automations] critical alert active -> ignoring automation lighting actions %s", lighting_actions)
+                else:
+                    with self._lock:
+                        if max_duration == 0:
+                            self._active_alert_rules.add(rule_id)
+                        else:
+                            self._active_alert_rules.discard(rule_id)
+                    ls.push_alert(lighting_actions, max_duration)
             except Exception as ex:
                 log.warning("[automations] failed to push lighting actions: %s", ex)
 
@@ -298,11 +405,21 @@ class AutomationsEngine:
         threading.Thread(target=_exec, daemon=True, name="iris-auto-slot").start()
 
     def _act_openrgb(self, act: Dict[str, Any]):
+        try:
+            from lighting_service import get_lighting_service
+            if get_lighting_service().is_alert_active():
+                log.info("[automations] critical alert active -> skipping OpenRGB automation action")
+                return
+        except Exception:
+            pass
         profile = act.get("profile", "")
         if not profile or profile == "inherit":
             return
         def _set_rgb():
             try:
+                from lighting_service import get_lighting_service
+                if get_lighting_service().is_alert_active():
+                    return
                 import plugin_manager
                 inst = plugin_manager.get("openrgb")
                 if inst and hasattr(inst, "apply_lighting_preset"):
@@ -312,11 +429,21 @@ class AutomationsEngine:
         threading.Thread(target=_set_rgb, daemon=True, name="iris-auto-openrgb").start()
 
     def _act_home_assistant(self, act: Dict[str, Any]):
+        try:
+            from lighting_service import get_lighting_service
+            if get_lighting_service().is_alert_active():
+                log.info("[automations] critical alert active -> skipping HA automation action")
+                return
+        except Exception:
+            pass
         entity_id = act.get("entity", "") or act.get("script", "")
         if not entity_id or entity_id == "inherit":
             return
         def _call_ha():
             try:
+                from lighting_service import get_lighting_service
+                if get_lighting_service().is_alert_active():
+                    return
                 import plugin_manager
                 inst = plugin_manager.get("ha")
                 if inst and hasattr(inst, "apply_lighting_preset"):

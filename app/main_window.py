@@ -456,6 +456,13 @@ class MainWindow:
             self._render_core_row()
             self._render_buttons()
             self._reflow_panel()
+
+            toolbar = getattr(self, "_capture_toolbar", None)
+            if toolbar is not None:
+                try:
+                    toolbar.refresh_theme()
+                except Exception as ex:
+                    log.warning("reload_theme toolbar refresh error: %s", ex)
         except Exception as e:
             log.warning("reload_theme error: %s", e)
 
@@ -1328,14 +1335,14 @@ class MainWindow:
         except Exception as ex:
             log.warning("Failed to start direct screenshot: %s", ex)
 
-    def start_quick_note(self, app_tag=None):
-        """Open the dedicated HTML Notepad window."""
+    def start_quick_note(self, app_tag=None, engine=None, toggle=False):
+        """Open or toggle the dedicated Notepad window."""
         try:
             if not app_tag:
                 saved = getattr(self, "_saved_foreground_hwnd", None)
                 app_tag = _get_foreground_app_name(saved)
             import notepad_window
-            notepad_window.open_notepad(app_tag=app_tag)
+            notepad_window.open_notepad(app_tag=app_tag, engine=engine, toggle=toggle)
         except Exception as ex:
             log.warning("Failed to open quick note: %s", ex)
 
@@ -1790,8 +1797,8 @@ class MainWindow:
             elif core_act == "screenshot_zone":
                 self.start_screenshot(slot, mode="zone")
                 return
-            elif core_act == "note":
-                self.start_quick_note()
+            elif core_act in ("note", "note_native", "note_webview"):
+                self.start_quick_note(toggle=True)
                 return
             elif core_act == "borderless_toggle":
                 from win_platform import toggle_borderless_window

@@ -20,7 +20,10 @@ Plugins reach this via the serial sender they already hold::
     self._serial.clear_warning("elite_dangerous:shields")
 """
 
+import logging
 import threading
+
+log = logging.getLogger("iris.warning_state")
 
 _lock = threading.Lock()
 _warnings = {}  # key -> {"color": str | None, "message": str}
@@ -69,7 +72,13 @@ def clear_all():
 def snapshot():
     """Thread-safe copy of the current warnings for the live payload."""
     with _lock:
-        return dict(_warnings)
+        res = dict(_warnings)
+        for k, v in list(_warnings.items()):
+            if ":" in k:
+                res[k.replace(":", ".")] = v
+            elif "." in k:
+                res[k.replace(".", ":")] = v
+        return res
 
 
 def _sync_warning_lighting():
@@ -80,7 +89,21 @@ def _sync_warning_lighting():
 
         alerts_enabled = True
         try:
-            cfg = getattr(plugin_manager, "_cfg", None) or {}
+            cfg = getattr(plugin_manager, "_cfg", None)
+            if not cfg:
+                try:
+                    from lighting_service import get_lighting_service
+                    cfg = get_lighting_service()._cfg
+                except Exception:
+                    pass
+            if not cfg:
+                try:
+                    import config
+                    cfg = config.load_config()
+                except Exception:
+                    pass
+            cfg = cfg or {}
+
             active_id = getattr(plugin_manager, "_active_themed_plugin", None)
             profiles = cfg.get("panel_profiles") or []
             # Extract plugins that currently hold warnings (e.g. 'elite_dangerous' from 'elite_dangerous:shields')
@@ -101,16 +124,31 @@ def _sync_warning_lighting():
                     alerts_enabled = bool(p.get("lighting_alerts_enabled", True))
                     if not alerts_enabled:
                         break
-        except Exception:
-            pass
+        except Exception as ex:
+            log.debug("[warning_state] error evaluating alerts_enabled: %s", ex)
 
         with _lock:
             has_warnings = bool(_warnings)
+            warn_color = "#FF0000"
+            for w in _warnings.values():
+                if isinstance(w, dict) and w.get("color"):
+                    warn_color = w.get("color")
+                    break
 
         ls = get_lighting_service()
         if has_warnings and alerts_enabled:
-            ls.push_alert({"openrgb": "#FF0000"}, duration_s=0, is_critical=True)
+            actions = {}
+            for prov in ls.get_providers():
+                pid = prov.get("id")
+                if prov.get("connected") or pid == "openrgb":
+                    actions[pid] = warn_color
+            if not actions:
+                actions = {"openrgb": warn_color}
+            log.info("[warning_state] pushing critical alert to lighting: %s", actions)
+            ls.push_alert(actions, duration_s=0, is_critical=True)
         else:
+            if has_warnings and not alerts_enabled:
+                log.info("[warning_state] warnings active but lighting alerts disabled for profile")
             ls.pop_alert(force=True)
-    except Exception:
-        pass
+    except Exception as ex:
+        log.warning("[warning_state] _sync_warning_lighting failed: %s", ex)

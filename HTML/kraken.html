@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="color-scheme" content="dark">
+<title>Iris Kraken</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    background: #000;
+    font-family: "Segoe UI", "Helvetica Neue", Roboto, Arial, sans-serif;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  /* The physical Kraken LCD is edge-to-edge circular (Elite/Z) or square (2023).
+     We replicate both by drawing the full square buffer, then clipping it to the
+     inscribed circle for circular models (`.shape-circle`). */
+  #screen {
+    width: min(94vmin, 94vh);
+    height: min(94vmin, 94vh);
+    aspect-ratio: 1 / 1;
+    flex: none;
+    background: #000;
+  }
+  #screen.shape-circle {
+    border-radius: 50%;
+    overflow: hidden;
+    box-shadow: inset 0 0 80px rgba(0, 0, 0, 0.7);
+  }
+  #screen.shape-square {
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: inset 0 0 80px rgba(0, 0, 0, 0.7);
+  }
+  #screen svg { display: block; width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+  <div id="screen" class="shape-circle"></div>
+  <script src="kraken.js"></script>
+</body>
+</html>

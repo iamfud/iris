@@ -23,6 +23,7 @@ SOUNDS = {
     "remind":  os.path.join(_media_dir, "remind.mp3"),
     "annoy":   os.path.join(_media_dir, "annoy.mp3"),
     "melody":  os.path.join(_media_dir, "melody.mp3"),
+    "coin":    os.path.join(_media_dir, "pickupCoin.wav"),
 }
 
 _proc = None

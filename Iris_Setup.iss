@@ -219,6 +219,7 @@ begin
                   'HookVulkan=0' + #13#10;
     SaveStringToFile(ProfilesDir + '\Iris.exe.cfg', CfgContent, False);
     SaveStringToFile(ProfilesDir + '\msedgewebview2.exe.cfg', CfgContent, False);
+    SaveStringToFile(ProfilesDir + '\python.exe.cfg', CfgContent, False);
   end;
 end;
 
