@@ -3,7 +3,9 @@
 [![Download Windows Installer](https://img.shields.io/badge/Download-Windows%20Installer-00ff88?style=for-the-badge&logo=windows&logoColor=black)](https://e.pcloud.link/publink/show?code=XZ5Wg77ZETccmrFfhx7pDqtnauRWtLck45dk)
 [![Setup Guide](https://img.shields.io/badge/Setup%20Guide-iamfud.github.io%2Firis-48B2E9?style=for-the-badge)](https://iamfud.github.io/iris/)
 
-A dynamic, control-and-automation utility that turns your PC into a command centre. Control and automate **lighting**, run a **screen-capture toolbar with annotations and OCR**, mix **media and per-app volumes**, monitor **PC statistics** (FPS live from RTSS), run an **alarm, stopwatch, and countdown timer**, and drive custom **button boxes** in games, simulators, and apps. A **conditional macro system** with hotkey injection and reactive events ties it together — for example, change your lighting to red when you enter combat.
+A dynamic, context-aware control and automation utility that turns your PC into a command centre. Iris continuously detects which game or application is in focus and **automatically tags and organizes every screenshot, quick note, color sample, and OCR text clip under that specific title** — zero folder sorting, zero file dialogs, and no Alt-Tabbing required.
+
+Control and automate **lighting**, summon an ultra-fast **in-game notepad**, run a **screen-capture toolbar with annotations and OCR**, mix **media and per-app volumes**, monitor **PC statistics** (FPS live from RTSS), run an **alarm, stopwatch, and countdown timer**, and drive custom **button boxes** in games, simulators, and apps. A **conditional macro system** with hotkey injection and reactive events ties it together — for example, switch lighting or inject commands on game state changes.
 
 Everything you capture, OCR, and note is collected into an **integrated library browser**, and the whole thing is extended by **plugins and addons including Home Assistant**. Iris can also drive an optional ESP8266/ESP32 + MAX7219 LED matrix display, a floating overlay, and a phone/PWA panel.
 
@@ -32,19 +34,19 @@ Display type: `FC16_HW` — 4 daisy-chained 8×8 LED matrix modules.
 
 ## Features
 
-- **Control & automate lighting** — OpenRGB and Home Assistant that react to your PC and your games
-- **Capture toolbar + annotations** — fullscreen/zone screenshots with pixel annotations
-- **OCR on every capture** — every capture is OCR'd to your clipboard and stored
+- **Automatic app-linked organization** — every note, screenshot, OCR clip, and color sample is automatically tagged and filed by the active game or application in focus
+- **Foreground-locked Iris Note** — summon a persistent floating notepad directly over 3D games with immediate typing focus and zero lag; automatically bound to the active session
+- **Capture toolbar + annotations** — fullscreen/zone screenshots with pixel annotations and automatic app filing
+- **OCR on every capture** — every capture is OCR'd to your clipboard and stored in your app library
 - **Capture text to clipboard** — standalone OCR that grabs text from any screen region, no screenshot needed
 - **Color picker** — system-wide pixel colour grab with HEX/RGB to clipboard
-- **Notepad & quick notes** — collected into the integrated library browser
 - **Media mixing & app volume** — full transport controls plus per-application volume/mute
 - **Live PC stats** — CPU/GPU temperature (MSI Afterburner) and FPS, read live from RTSS
 - **Alarm, stopwatch & countdown** — alarms from your PC, plus an on-screen stopwatch and countdown timer
 - **Game / app button boxes** — custom button-box overlays in simulators, games, and apps
 - **Vision system** — screen sensors firing events on colour conditions (colour % / pixel match / brightness)
-- **Conditional macros & hotkeys** — reactive events with hotkey injection (e.g. lighting turns red in combat)
-- **Home Assistant & plugins** — extensible addons/plugins, including HA
+- **Conditional macros & hotkeys** — reactive events with hotkey injection (e.g. lighting changes on state events)
+- **Home Assistant & plugins** — extensible addons/plugins for smart home, lighting, simulators, and telemetry
 - **Phone / PWA panel** — pair and control from your phone
 - **Optional MAX7219 display** — clock, notification mirroring, stats on a physical LED matrix
 - **Global hotkey** — `Ctrl+Alt+I` to toggle the overlay
@@ -64,7 +66,7 @@ Download and run the Windows installer:
 
 The installer automatically configures:
 - Iris desktop application and startup shortcuts
-- Built-in plugins (`elite_dangerous`, `ha`, `openrgb`, `pc_stats`, `vision`)
+- Built-in plugins for simulators, smart home, lighting, PC stats, and vision
 - Visual C++ 2015–2022 and Edge WebView2 runtime dependencies
 - Low-latency keyboard interception driver
 
