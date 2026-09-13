@@ -45,7 +45,7 @@ DEFAULT_CONFIG = {
     "mirror_enabled": True,
     "media_player_path": "",
     "screenshot_dir": "",
-    "lan_access": True,
+    "lan_access": False,
     "keep_alive": True,
     "alarms": [],
     "panel_board": DEFAULT_BOARD,

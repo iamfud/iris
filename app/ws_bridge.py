@@ -314,11 +314,11 @@ def _bind_host():
     """Return the bind host for HTTP/WS: loopback unless LAN access is on."""
     try:
         if _app is not None:
-            if _app.cfg.get("lan_access", True):
+            if _app.cfg.get("lan_access", False):
                 return "0.0.0.0"
         else:
             from config import load_config
-            if load_config().get("lan_access", True):
+            if load_config().get("lan_access", False):
                 return "0.0.0.0"
     except Exception:
         pass
@@ -384,6 +384,90 @@ def _qr_bytes():
         return buf.getvalue()
     except Exception:
         return None
+
+
+_LOGIN_FAILURES = {}  # ip -> (count, lockout_until)
+
+
+def _check_auth_rate_limit(ip):
+    """Return (allowed: bool, retry_after: int)."""
+    now = time.time()
+    record = _LOGIN_FAILURES.get(ip)
+    if not record:
+        return True, 0
+    count, lockout_until = record
+    if now < lockout_until:
+        return False, max(1, int(lockout_until - now))
+    if count >= 5 and now >= lockout_until:
+        _LOGIN_FAILURES.pop(ip, None)
+        return True, 0
+    return True, 0
+
+
+def _record_auth_failure(ip):
+    now = time.time()
+    record = _LOGIN_FAILURES.get(ip, (0, 0))
+    count = record[0] + 1
+    lockout_until = record[1]
+    if count >= 5:
+        lockout_until = now + 60.0  # 60s lockout after 5 consecutive failures
+    _LOGIN_FAILURES[ip] = (count, lockout_until)
+
+
+def _record_auth_success(ip):
+    _LOGIN_FAILURES.pop(ip, None)
+
+
+def _is_authorized_slot(slot, cfg):
+    """Verify that an action slot requested by a remote peer matches a pre-configured button."""
+    if not isinstance(slot, dict) or not isinstance(cfg, dict):
+        return False
+    stype = str(slot.get("type") or "").strip()
+    if not stype:
+        return False
+
+    # Safe built-in controls that only affect media transport or audio toggling
+    if stype in ("MEDIA_PLAY", "MEDIA_NEXT", "MEDIA_PREV", "MEDIA_EJECT", "AUDIO OUTPUT", "EMPTY"):
+        return True
+
+    candidates = []
+    candidates.extend(cfg.get("panel_board") or [])
+    candidates.extend(cfg.get("panel_utility") or [])
+    candidates.extend(cfg.get("panel_core") or [])
+    for prof in cfg.get("panel_profiles") or []:
+        if isinstance(prof, dict):
+            candidates.extend(prof.get("board") or [])
+
+    spath = str(slot.get("shortcut_path") or "").strip()
+    sargs = str(slot.get("shortcut_args") or "").strip()
+    saction = str(slot.get("core_action") or "").strip()
+    sentity = str(slot.get("entity") or slot.get("entity_id") or "").strip()
+    shotkey = str(slot.get("hotkey") or "").strip()
+    sbtn = str(slot.get("button_id") or "").strip()
+    sname = str(slot.get("name") or "").strip()
+
+    for c in candidates:
+        if not isinstance(c, dict):
+            continue
+        if str(c.get("type") or "").strip() != stype:
+            continue
+        if stype in ("SHORTCUT", "GROUP"):
+            cpath = str(c.get("shortcut_path") or "").strip()
+            cargs = str(c.get("shortcut_args") or "").strip()
+            if cpath == spath and cargs == sargs:
+                return True
+        elif stype == "CORE":
+            if str(c.get("core_action") or "").strip() == saction:
+                return True
+        elif stype in ("TOGGLE", "HOTKEY", "ACTION", "SENSOR"):
+            centity = str(c.get("entity") or c.get("entity_id") or "").strip()
+            cbtn = str(c.get("button_id") or "").strip()
+            chotkey = str(c.get("hotkey") or "").strip()
+            if (centity and centity == sentity) or (cbtn and cbtn == sbtn) or (chotkey and chotkey == shotkey):
+                return True
+            if sname and str(c.get("name") or "").strip() == sname:
+                return True
+    return False
 
 
 class _RequestHandler(SimpleHTTPRequestHandler):
@@ -813,12 +897,26 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         if not self._host_ok():
             self._reject_unauthorized()
             return
+
+        client_ip = getattr(self, "client_address", [None])[0] or "unknown"
+        allowed, retry_after = _check_auth_rate_limit(client_ip)
+        if not allowed:
+            body = (f'{{"ok":false,"error":"rate_limited","retry_after":{retry_after}}}').encode("utf-8")
+            self.send_response(429)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Retry-After", str(retry_after))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
         query = self.path.split("?", 1)[1] if "?" in self.path else ""
         token = ""
         for part in query.split("&"):
             if part.startswith("token="):
                 token = part[len("token="):]
         if not isinstance(token, str) or not token or not hmac.compare_digest(token, _HTTP_TOKEN):
+            _record_auth_failure(client_ip)
             body = b'{"ok":false,"error":"invalid access token"}'
             self.send_response(403)
             self.send_header("Content-Type", "application/json")
@@ -826,6 +924,8 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+
+        _record_auth_success(client_ip)
         tok = secrets.token_urlsafe(32)
         ua = self.headers.get("User-Agent", "")
         existing_key = None
@@ -862,6 +962,16 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             self._send_json({"ok": False, "error": "password_unavailable"}, status=400)
             return
 
+        client_ip = getattr(self, "client_address", [None])[0] or "unknown"
+        allowed, retry_after = _check_auth_rate_limit(client_ip)
+        if not allowed:
+            self._send_json({
+                "ok": False,
+                "error": "rate_limited",
+                "message": f"Too many failed attempts. Try again in {retry_after} seconds."
+            }, status=429)
+            return
+
         length = int(self.headers.get("Content-Length", 0))
         body_raw = self.rfile.read(length) if length > 0 else b""
         try:
@@ -888,9 +998,11 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             return
 
         if not panel_auth.verify_password(stored_hash, password):
+            _record_auth_failure(client_ip)
             self._send_json({"ok": False, "error": "incorrect_password"}, status=401)
             return
 
+        _record_auth_success(client_ip)
         ua = self.headers.get("User-Agent", "")
         existing_key = None
         for k, d in list(_DEVICES.items()):
@@ -939,6 +1051,10 @@ class _RequestHandler(SimpleHTTPRequestHandler):
 
     def _handle_save_panel_password(self):
         """Handle POST /api/panel/password to set or update the Argon2id hash."""
+        if not self._is_loopback_peer():
+            self._send_json({"ok": False, "error": "forbidden"})
+            return
+
         try:
             import panel_auth
         except Exception:
@@ -1177,6 +1293,9 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             self.send_error(500, str(e))
 
     def _handle_save_config(self):
+        if not self._is_loopback_peer():
+            self.send_error(403, "Forbidden")
+            return
         try:
             length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(length)) if length else {}
@@ -1297,6 +1416,9 @@ class _RequestHandler(SimpleHTTPRequestHandler):
 
     def _handle_plugins_open_folder(self):
         """Open the user plugins folder in Explorer, creating it first if needed."""
+        if not self._is_loopback_peer():
+            self._send_json({"ok": False, "error": "forbidden"})
+            return
         try:
             import plugin_manager
             folder = plugin_manager.user_plugins_dir()
@@ -1614,16 +1736,25 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             app = _re.sub(r'[^a-z0-9]+', '_', app.lower()).strip('_') or "general"
             title = str(body.get("title", "")).strip()
             content = str(body.get("content", ""))
-            filename = body.get("filename", "")
+            raw_filename = str(body.get("filename", "")).strip()
 
             folder = self._notes_folder()
             os.makedirs(folder, exist_ok=True)
 
-            if not filename:
+            if not raw_filename:
                 ts = _t.strftime("%Y%m%d_%H%M%S")
                 filename = "iris_note_%s_%s.txt" % (app, ts)
+            else:
+                base = os.path.basename(raw_filename)
+                # Strip extension and sanitize base name
+                if base.lower().endswith(".txt"):
+                    base = base[:-4]
+                base = _re.sub(r'[^a-zA-Z0-9_\-\. ]+', '_', base).strip('._ ')
+                if not base:
+                    base = f"note_{int(_t.time())}"
+                filename = f"{base}.txt"
 
-            path = os.path.join(folder, os.path.basename(filename))
+            path = os.path.join(folder, filename)
             with open(path, "w", encoding="utf-8") as f:
                 f.write("title:%s\n%s" % (title, content))
             broadcast({"type": "library_update"})
@@ -1634,6 +1765,9 @@ class _RequestHandler(SimpleHTTPRequestHandler):
 
     def _handle_library_delete(self, filename):
         """Delete a library item (PNG + sidecar, or note txt)."""
+        if not self._is_loopback_peer():
+            self._send_json({"ok": False, "error": "forbidden"})
+            return
         filename = os.path.basename(filename)
         folder, path = self._find_library_file(filename)
         try:
@@ -1654,6 +1788,9 @@ class _RequestHandler(SimpleHTTPRequestHandler):
 
     def _handle_library_open_folder(self):
         """Open the screenshots library folder in Explorer, optionally selecting a specific file."""
+        if not self._is_loopback_peer():
+            self._send_json({"ok": False, "error": "forbidden"})
+            return
         try:
             fname = None
             if self.command == "POST":
@@ -1674,7 +1811,7 @@ class _RequestHandler(SimpleHTTPRequestHandler):
                 if full_path and os.path.isfile(full_path):
                     import subprocess
                     norm_path = os.path.normpath(full_path)
-                    subprocess.Popen(f'explorer.exe /select,"{norm_path}"')
+                    subprocess.Popen(["explorer.exe", f"/select,{norm_path}"], shell=False)
                     self._send_json({"ok": True, "path": norm_path})
                     return
             os.startfile(folder)
@@ -1759,6 +1896,9 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         })
 
     def _handle_vision_create_sensor(self):
+        if not self._is_loopback_peer():
+            self.send_error(403, "Forbidden")
+            return
         try:
             body = self._read_json()
         except Exception as e:
@@ -1773,6 +1913,9 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         self._send_json({"ok": True, "sensor": sensor})
 
     def _handle_vision_update_sensor(self, sensor_id):
+        if not self._is_loopback_peer():
+            self.send_error(403, "Forbidden")
+            return
         try:
             body = self._read_json()
         except Exception as e:
@@ -1791,6 +1934,9 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         self._send_json({"ok": True, "sensor": sensor})
 
     def _handle_vision_delete_sensor(self, sensor_id):
+        if not self._is_loopback_peer():
+            self.send_error(403, "Forbidden")
+            return
         sensors = _vision_sensors()
         before = len(sensors)
         _vision_sensors()[:] = [s for s in sensors if s.get("id") != sensor_id]
@@ -1809,6 +1955,9 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         })
 
     def _handle_save_automation(self):
+        if not self._is_loopback_peer():
+            self.send_error(403, "Forbidden")
+            return
         try:
             body = self._read_json()
         except Exception as e:
@@ -1837,6 +1986,9 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         self._send_json({"ok": True, "rule": rule})
 
     def _handle_delete_automation(self, rule_id):
+        if not self._is_loopback_peer():
+            self.send_error(403, "Forbidden")
+            return
         if _app is None:
             self.send_error(503, "App not registered")
             return
@@ -1847,6 +1999,9 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         self._send_json({"ok": True})
 
     def _handle_automations_disclaimer_ack(self):
+        if not self._is_loopback_peer():
+            self.send_error(403, "Forbidden")
+            return
         if _app is None:
             self.send_error(503, "App not registered")
             return
@@ -1862,6 +2017,9 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         self._send_json({"ok": True, "disclaimer_acknowledged": True})
 
     def _handle_test_automation(self):
+        if not self._is_loopback_peer():
+            self.send_error(403, "Forbidden")
+            return
         try:
             body = self._read_json()
         except Exception as e:
@@ -1873,6 +2031,9 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         self._send_json({"ok": True})
 
     def _handle_export_automation_button(self, rule_id):
+        if not self._is_loopback_peer():
+            self.send_error(403, "Forbidden")
+            return
         if _app is None:
             self.send_error(503, "App not registered")
             return
@@ -1975,6 +2136,9 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         self._send_json({"ok": ok})
 
     def _handle_save_panel(self):
+        if not self._is_loopback_peer():
+            self.send_error(403, "Forbidden")
+            return
         try:
             body = self._read_json()
         except Exception as e:
@@ -2298,6 +2462,9 @@ class _RequestHandler(SimpleHTTPRequestHandler):
 
     def _handle_dialog_browse(self):
         """Open a native Windows file dialog to pick an .ico, .exe, .png, etc."""
+        if not self._is_loopback_peer():
+            self._send_json({"ok": False, "path": "", "error": "forbidden"})
+            return
         from urllib.parse import urlparse, parse_qs
         qs = parse_qs(urlparse(self.path).query)
         browse_type = (qs.get("type") or ["icon"])[0]
@@ -2317,6 +2484,9 @@ class _RequestHandler(SimpleHTTPRequestHandler):
 
     def _handle_open_url(self):
         """Open an HTTP/HTTPS URL in the host PC's default browser."""
+        if not self._is_loopback_peer():
+            self.send_error(403, "Forbidden")
+            return
         try:
             body = self._read_json()
         except Exception as e:
@@ -2357,9 +2527,16 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         except Exception as e:
             self.send_error(400, str(e))
             return
+        slot = body.get("slot")
+        if not self._is_loopback_peer():
+            cfg = _app.cfg if _app is not None else {}
+            if not _is_authorized_slot(slot, cfg):
+                log.warning("[http] rejected unauthorized slot execution from remote peer: %s", slot)
+                self.send_error(403, "Slot not authorized for remote execution")
+                return
         try:
             from panel_runtime import execute_slot
-            self._send_json(execute_slot(body.get("slot")))
+            self._send_json(execute_slot(slot))
         except Exception as e:
             log.warning("[http] panel action failed: %s", e)
             self.send_error(500, str(e))
@@ -2639,6 +2816,9 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             self._send_json({"ok": False, "entities": [], "live_states": {}})
 
     def _handle_save_plugin_config(self, name):
+        if not self._is_loopback_peer():
+            self.send_error(403, "Forbidden")
+            return
         try:
             body = self._read_json()
         except Exception as e:
@@ -2670,6 +2850,9 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         self._send_json({"ok": True})
 
     def _handle_save_plugin_outputs(self, name):
+        if not self._is_loopback_peer():
+            self.send_error(403, "Forbidden")
+            return
         try:
             body = self._read_json()
         except Exception as e:

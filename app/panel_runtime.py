@@ -558,7 +558,8 @@ def _open_path(path, args=None):
             if hasattr(os, "startfile"):
                 os.startfile(exe, arguments=raw_args)
             else:
-                subprocess.Popen(f'"{exe}" {raw_args}', shell=True)
+                import shlex
+                subprocess.Popen([exe, *shlex.split(raw_args)], shell=False)
         else:
             if hasattr(os, "startfile"):
                 os.startfile(exe)
