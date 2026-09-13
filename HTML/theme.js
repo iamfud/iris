@@ -144,3 +144,33 @@ requestAnimationFrame(function start(now) {
   prevTime = now;
   tick(now);
 });
+
+(function () {
+  var healthyAt = Date.now();
+  var loadedAt = Date.now();
+  var lastReload = 0;
+  try { lastReload = Number(sessionStorage.getItem("irisLcdLastReload") || 0); } catch (_) {}
+
+  function markHealthy() { healthyAt = Date.now(); }
+
+  setInterval(function () {
+    fetch("/api/config", { headers: { "Accept": "application/json" } })
+      .then(function (r) {
+        if (!r.ok) return null;
+        markHealthy();
+        return r.json();
+      })
+      .then(function (d) { if (d && d.theme) applyTheme(d.theme); })
+      .catch(function () {});
+  }, 5000);
+
+  setInterval(function () {
+    if (document.hidden) return;
+    if (Date.now() - healthyAt < 30000) return;
+    if (Date.now() - loadedAt < 10000) return;
+    if (Date.now() - lastReload < 60000) return;
+    lastReload = Date.now();
+    try { sessionStorage.setItem("irisLcdLastReload", String(lastReload)); } catch (_) {}
+    window.location.reload();
+  }, 1500);
+})();

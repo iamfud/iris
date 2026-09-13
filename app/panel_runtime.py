@@ -238,6 +238,59 @@ def execute_slot(slot):
     ent = str(slot.get("entity") or "").strip()
     app = _app()
     try:
+        if btype == "MACRO":
+            actions = slot.get("actions") or []
+            if not actions and slot.get("macro"):
+                actions = slot.get("macro")
+            # If actions list is empty but shortcut_path exists, fallback to shortcut
+            if not actions and slot.get("shortcut_path"):
+                _open_path(slot.get("shortcut_path"), slot.get("shortcut_args"))
+                return {"ok": True}
+
+            def _run_macro():
+                for step in actions:
+                    if not isinstance(step, dict):
+                        continue
+                    stype = step.get("type")
+                    try:
+                        if stype in ("shortcut", "app", "exe"):
+                            _open_path(step.get("path") or step.get("shortcut_path"), step.get("args") or step.get("shortcut_args"))
+                        elif stype == "openrgb" or step.get("openrgb_profile"):
+                            prof = step.get("profile") or step.get("openrgb_profile")
+                            if prof:
+                                _openrgb_action({"openrgb_profile": prof})
+                        elif stype in ("home_assistant", "ha"):
+                            script = step.get("entity") or step.get("script") or step.get("entity_id")
+                            if script:
+                                _rest_action(app, {"entity_id": script})
+                        elif stype == "hotkey":
+                            hk = step.get("hotkey") or step.get("key")
+                            if hk:
+                                _hotkey_action({"hotkey": hk})
+                        elif stype == "sound":
+                            try:
+                                from automations import get_engine
+                                get_engine()._act_sound(step)
+                            except Exception:
+                                pass
+                        elif stype == "notification":
+                            try:
+                                from automations import get_engine
+                                get_engine()._act_notification(step, "")
+                            except Exception:
+                                pass
+                        elif stype == "slot" and step.get("slot"):
+                            execute_slot(step.get("slot"))
+                    except Exception as step_ex:
+                        log.warning("[panel_runtime] macro step %s error: %s", stype, step_ex)
+
+                    dur = float(step.get("delay_s", 0) or 0)
+                    if dur > 0:
+                        time.sleep(dur)
+
+            threading.Thread(target=_run_macro, daemon=True, name="iris-macro-slot").start()
+            return {"ok": True}
+
         if btype == "GROUP":
             _open_path(slot.get("shortcut_path"), slot.get("shortcut_args"))
             return {"ok": True, "nav": True}

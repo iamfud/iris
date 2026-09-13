@@ -459,6 +459,12 @@ def _is_authorized_slot(slot, cfg):
         elif stype == "CORE":
             if str(c.get("core_action") or "").strip() == saction:
                 return True
+        elif stype == "MACRO":
+            # Match on slot name or matching actions count
+            if sname and str(c.get("name") or "").strip() == sname:
+                return True
+            if c.get("actions") and slot.get("actions") and len(c.get("actions")) == len(slot.get("actions")):
+                return True
         elif stype in ("TOGGLE", "HOTKEY", "ACTION", "SENSOR"):
             centity = str(c.get("entity") or c.get("entity_id") or "").strip()
             cbtn = str(c.get("button_id") or "").strip()

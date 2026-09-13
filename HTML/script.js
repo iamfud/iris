@@ -7562,6 +7562,7 @@
       { type: "HOTKEY", label: "Button" },
       { type: "TOGGLE", label: "Toggle Button" },
       { type: "SHORTCUT", label: "App / Shortcut" },
+      { type: "MACRO", label: "Multi-Action Macro" },
       { type: "AUDIO OUTPUT", label: "Audio Device Switcher" },
       { type: "SENSOR", label: "Status / Sensor" },
       { type: "EMPTY", label: "Empty / Spacer" },
@@ -7724,6 +7725,15 @@
               '<input type="text" class="settings-input" id="pe-audio-alt-icon" value="' + esc(slot.audio_alt_icon || "headphones") + '" placeholder="headphones" style="width:85px;" title="Alternate Icon (MDI glyph)">' +
             '</div>' +
             '<span class="settings-hint">Tapping this button switches Windows playback between these two devices.</span>' +
+          '</div>' +
+
+          '<div class="settings-control" id="pe-macro-wrap" style="display:none">' +
+            '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">' +
+              '<label class="settings-label" style="margin:0;">Macro Action Sequence</label>' +
+              '<button type="button" class="settings-btn settings-btn-mini" id="pe-macro-add-btn">+ Add Step</button>' +
+            '</div>' +
+            '<div id="pe-macro-list" style="display:flex;flex-direction:column;gap:6px;"></div>' +
+            '<span class="settings-hint">Executes all actions sequentially in one tap (e.g. Launch Game + Switch Lighting).</span>' +
           '</div>' +
 
           '<div class="settings-control" id="pe-keys-wrap"' + (showKeys ? "" : ' style="display:none"') + '>' +
@@ -11578,16 +11588,19 @@
       const isMediaPlayPause = (entId === "media.play_pause");
       const isMediaEject = (entId === "media.player" || entId === "media.eject" || t === "MEDIA_EJECT");
       const isAnyMediaControl = (isMediaPlayPause || entId === "media.next" || entId === "media.prev" || isMediaEject);
+      const isMacro = t === "MACRO";
       const isAudio = t === "AUDIO OUTPUT";
+      const macroWrap = document.getElementById("pe-macro-wrap");
+      if (macroWrap) macroWrap.style.display = isMacro ? "" : "none";
       const audioWrap = document.getElementById("pe-audio-output-wrap");
       if (audioWrap) audioWrap.style.display = isAudio ? "" : "none";
 
-      const showKeys = (t !== "EMPTY" && t !== "AUDIO OUTPUT" && !isCore) && !isAnyMediaControl;
+      const showKeys = (t !== "EMPTY" && t !== "AUDIO OUTPUT" && t !== "MACRO" && !isCore) && !isAnyMediaControl;
       const keysWrap = document.getElementById("pe-keys-wrap");
       if (keysWrap) keysWrap.style.display = showKeys ? "" : "none";
 
       const modeAutoTab = document.getElementById("pe-mode-auto");
-      const hasAutoIcon = (isAppShortcut || isMediaEject);
+      const hasAutoIcon = (isAppShortcut || isMediaEject || isMacro);
       if (modeAutoTab) modeAutoTab.style.display = hasAutoIcon ? "" : "none";
       if (!hasAutoIcon && currentIconMode === "auto") {
         setIconMode("mdi");
@@ -11609,6 +11622,149 @@
       } else if (appIconPreview) appIconPreview.hidden = true;
     };
     typeEl.addEventListener("change", syncFields);
+
+    // Macro action pipeline wiring
+    let macroActions = Array.isArray(modalSlot.actions) ? JSON.parse(JSON.stringify(modalSlot.actions)) : (Array.isArray(modalSlot.macro) ? JSON.parse(JSON.stringify(modalSlot.macro)) : []);
+    if (modalSlot.shortcut_path && macroActions.length === 0) {
+      macroActions.push({ type: "shortcut", path: modalSlot.shortcut_path, args: modalSlot.shortcut_args || "" });
+    }
+    const macroListEl = document.getElementById("pe-macro-list");
+    const macroAddBtn = document.getElementById("pe-macro-add-btn");
+
+    function renderMacroList() {
+      if (!macroListEl) return;
+      if (macroActions.length === 0) {
+        macroListEl.innerHTML = '<div style="font-size:12px;color:var(--fg-dim);padding:10px;text-align:center;background:rgba(0,0,0,0.2);border:1px dashed var(--border);border-radius:6px;">No macro steps added. Click "+ Add Step" above.</div>';
+        return;
+      }
+      const openrgbEntities = (panelEntities || []).filter(e => e.plugin === "openrgb" || (e.id && e.id.startsWith("openrgb.")));
+      const haEntities = (panelEntities || []).filter(e => e.plugin === "ha" || (e.id && e.id.startsWith("ha.")));
+
+      macroListEl.innerHTML = macroActions.map((step, idx) => {
+        const stype = step.type || "shortcut";
+        let detailHtml = "";
+        if (stype === "shortcut") {
+          detailHtml = `
+            <div style="display:flex;gap:4px;flex:1;min-width:0;">
+              <input type="text" class="settings-input pe-mstep-path" data-idx="${idx}" value="${esc(step.path || step.shortcut_path || "")}" placeholder="Path to .exe, URL, or command" style="flex:1;">
+              <button type="button" class="settings-btn pe-mstep-browse" data-idx="${idx}" title="Browse EXE"><span class="material-icons-outlined" style="font-size:15px;">folder_open</span></button>
+            </div>
+          `;
+        } else if (stype === "openrgb") {
+          const curP = step.profile || step.openrgb_profile || "Sync Active Theme (Neon 1)";
+          detailHtml = `
+            <select class="settings-select pe-mstep-val" data-idx="${idx}" style="flex:1;">
+              <option value="__theme__" ${curP === "__theme__" ? "selected" : ""}>Sync Active Theme (Neon 1)</option>
+              ${openrgbEntities.filter(e => e.openrgb_profile || e.name).map(e => {
+                const pn = e.openrgb_profile || e.name;
+                return `<option value="${esc(pn)}" ${curP === pn ? "selected" : ""}>Profile: ${esc(pn)}</option>`;
+              }).join("")}
+            </select>
+          `;
+        } else if (stype === "home_assistant" || stype === "ha") {
+          const curS = step.entity || step.script || "";
+          detailHtml = `
+            <select class="settings-select pe-mstep-val" data-idx="${idx}" style="flex:1;">
+              <option value="">Select HA scene / script...</option>
+              ${haEntities.map(e => {
+                const label = e.name || e.id;
+                return `<option value="${esc(e.id)}" ${curS === e.id ? "selected" : ""}>${esc(label)}</option>`;
+              }).join("")}
+            </select>
+          `;
+        } else if (stype === "sound") {
+          const curSnd = step.sound || "chime";
+          detailHtml = `
+            <select class="settings-select pe-mstep-val" data-idx="${idx}" style="flex:1;">
+              <option value="chime" ${curSnd === "chime" ? "selected" : ""}>Chime</option>
+              <option value="alarm_fast" ${curSnd === "alarm_fast" ? "selected" : ""}>Fast Alarm</option>
+              <option value="remind" ${curSnd === "remind" ? "selected" : ""}>Remind</option>
+            </select>
+          `;
+        } else {
+          detailHtml = `<input type="text" class="settings-input pe-mstep-val" data-idx="${idx}" value="${esc(step.hotkey || "")}" placeholder="Key (e.g. F13)" style="flex:1;">`;
+        }
+
+        return `
+          <div style="display:flex;align-items:center;gap:6px;background:rgba(0,0,0,0.25);border:1px solid var(--border);border-radius:6px;padding:6px 8px;">
+            <select class="settings-select pe-mstep-type" data-idx="${idx}" style="width:130px;flex:0 0 auto;">
+              <option value="shortcut" ${stype === "shortcut" ? "selected" : ""}>Launch App</option>
+              <option value="openrgb" ${stype === "openrgb" ? "selected" : ""}>OpenRGB Light</option>
+              <option value="home_assistant" ${(stype === "home_assistant" || stype === "ha") ? "selected" : ""}>Home Assistant</option>
+              <option value="sound" ${stype === "sound" ? "selected" : ""}>Play Sound</option>
+              <option value="hotkey" ${stype === "hotkey" ? "selected" : ""}>Hotkey</option>
+            </select>
+            ${detailHtml}
+            <button type="button" class="settings-btn settings-btn-danger pe-mstep-del" data-idx="${idx}" title="Remove step" style="padding:4px 8px;">✕</button>
+          </div>
+        `;
+      }).join("");
+
+      macroListEl.querySelectorAll(".pe-mstep-type").forEach(sel => {
+        sel.onchange = (e) => {
+          const i = parseInt(e.target.dataset.idx, 10);
+          const ntype = e.target.value;
+          if (ntype === "shortcut") macroActions[i] = { type: "shortcut", path: "", args: "" };
+          else if (ntype === "openrgb") macroActions[i] = { type: "openrgb", profile: "__theme__" };
+          else if (ntype === "home_assistant") macroActions[i] = { type: "home_assistant", entity: "" };
+          else if (ntype === "sound") macroActions[i] = { type: "sound", sound: "chime" };
+          else if (ntype === "hotkey") macroActions[i] = { type: "hotkey", hotkey: "" };
+          renderMacroList();
+        };
+      });
+
+      macroListEl.querySelectorAll(".pe-mstep-path").forEach(inp => {
+        inp.oninput = (e) => {
+          const i = parseInt(e.target.dataset.idx, 10);
+          macroActions[i].path = e.target.value.trim();
+        };
+      });
+
+      macroListEl.querySelectorAll(".pe-mstep-browse").forEach(btn => {
+        btn.onclick = () => {
+          const i = parseInt(btn.dataset.idx, 10);
+          browseExe((p) => {
+            if (p) {
+              macroActions[i].path = p;
+              const nameInp = document.getElementById("pe-name");
+              if (nameInp && (!nameInp.value || nameInp.value === "New Action")) {
+                const rawBase = p.split(/[\\/]/).pop() || "";
+                nameInp.value = rawBase.replace(/\.[^/.]+$/, "");
+              }
+              renderMacroList();
+              loadAppIcon();
+            }
+          });
+        };
+      });
+
+      macroListEl.querySelectorAll(".pe-mstep-val").forEach(el => {
+        el.onchange = (e) => {
+          const i = parseInt(e.target.dataset.idx, 10);
+          const val = e.target.value;
+          if (macroActions[i].type === "openrgb") macroActions[i].profile = val;
+          else if (macroActions[i].type === "home_assistant" || macroActions[i].type === "ha") macroActions[i].entity = val;
+          else if (macroActions[i].type === "sound") macroActions[i].sound = val;
+          else if (macroActions[i].type === "hotkey") macroActions[i].hotkey = val;
+        };
+      });
+
+      macroListEl.querySelectorAll(".pe-mstep-del").forEach(btn => {
+        btn.onclick = () => {
+          const i = parseInt(btn.dataset.idx, 10);
+          macroActions.splice(i, 1);
+          renderMacroList();
+        };
+      });
+    }
+
+    if (macroAddBtn) {
+      macroAddBtn.onclick = () => {
+        macroActions.push({ type: "openrgb", profile: "__theme__" });
+        renderMacroList();
+      };
+    }
+    renderMacroList();
     syncFields();
 
     const coreActSelect = document.getElementById("pe-core-act");
@@ -12038,12 +12194,26 @@
         slot.icon = slot.audio_primary_icon;
         if (!slot.name) slot.name = "Audio";
       }
+      if (t === "MACRO") {
+        slot.actions = macroActions;
+        slot.macro = macroActions;
+        // If first step is a shortcut, allow app icon auto-extraction from it
+        const firstShortcut = macroActions.find(a => a.type === "shortcut" && (a.path || a.shortcut_path));
+        if (firstShortcut) {
+          slot.shortcut_path = firstShortcut.path || firstShortcut.shortcut_path;
+          if (firstShortcut.args) slot.shortcut_args = firstShortcut.args;
+          if (currentIconMode === "auto") {
+            slot.app_icon_path = slot.shortcut_path || null;
+          }
+        }
+        if (!slot.name) slot.name = "Macro";
+      }
       if (t === "GROUP") {
         const grpProfEl = document.getElementById("pe-group-profile");
         slot.target_profile = (grpProfEl && grpProfEl.value) ? grpProfEl.value : "";
         slot.profile_id = slot.target_profile;
       }
-      if (t !== "EMPTY" && t !== "AUDIO OUTPUT" && !isCore) {
+      if (t !== "EMPTY" && t !== "AUDIO OUTPUT" && t !== "MACRO" && !isCore) {
         let val = document.getElementById("pe-keys") ? document.getElementById("pe-keys").value.trim() : "";
         if (val === "Conflict !!") val = "";
         slot.hotkey = val;
