@@ -6299,6 +6299,11 @@
       return;
     }
 
+    if (panelEdit) {
+      renderSlotEditorPage();
+      return;
+    }
+
     if (profilesViewMode === "edit") {
       if (panelProfileSel === "__default__") {
         renderDefaultProfileEditor();
@@ -6308,6 +6313,79 @@
     } else {
       renderProfilesList();
     }
+  }
+
+  // ── Full-Page Slot / Action Editor ──────────────────────────
+
+  function renderSlotEditorPage() {
+    const ctx = panelEdit;
+    if (!ctx) return;
+    const isCore = ctx.scope === "core";
+    const isUtil = ctx.scope === "utility" || ctx.scope === "util" || isCore;
+
+    let profName = "Profile";
+    if (currentPage === "profiles") {
+      if (panelProfileSel === "__default__") {
+        profName = "Default Profile";
+      } else {
+        const p = ((panelDraft && panelDraft.panel_profiles) || []).find((x) => x.id === panelProfileSel);
+        if (p) profName = p.name || p.id;
+      }
+    } else if (currentPage === "panel") {
+      profName = "Panel Editor";
+    }
+
+    let slotName = "";
+    if (isCore) {
+      const coreList = (panelDraft && panelDraft.panel_core) || defaultCoreSlots();
+      if (coreList[ctx.index] && coreList[ctx.index].name) slotName = coreList[ctx.index].name;
+    } else if (isUtil) {
+      const utilList = (panelDraft && panelDraft.panel_utility) || [];
+      if (utilList[ctx.index] && utilList[ctx.index].name) slotName = utilList[ctx.index].name;
+    } else {
+      const list = boardAtPath(ctx.path || []);
+      if (ctx.index >= 0 && list[ctx.index] && list[ctx.index].name) slotName = list[ctx.index].name;
+    }
+
+    const titleText = isCore
+      ? ("Core Button · Slot " + (ctx.index + 1) + (slotName ? " · " + slotName : ""))
+      : isUtil
+      ? ("Utility Button · Slot " + (ctx.index + 1) + (slotName ? " · " + slotName : ""))
+      : ctx.index < 0
+      ? ("Add Action · " + profName)
+      : ("Slot " + (ctx.index + 1) + (slotName ? " · " + slotName : "") + " · " + profName);
+
+    const subtitleText = "Configure button function, target entity, icon, and appearance";
+
+    let html =
+      '<header>' +
+        '<div class="header-left">' +
+          '<button class="hamburger" id="hamburger" aria-label="Menu">' +
+            '<span class="material-icons-outlined">menu</span>' +
+          '</button>' +
+          '<div>' +
+            '<h1>' + esc(titleText) + '</h1>' +
+            '<p>' + esc(subtitleText) + '</p>' +
+          '</div>' +
+        '</div>' +
+        '<div style="display:flex;gap:10px;align-items:center;">' +
+          '<button type="button" class="settings-btn" id="prof-slot-cancel-top">Cancel</button>' +
+          '<button type="button" class="settings-btn settings-btn-primary" id="prof-slot-save-top">Save</button>' +
+        '</div>' +
+      '</header>' +
+      '<section class="settings-content slot-editor-full-page">' +
+        '<div class="slot-editor-container">' +
+          '<div class="profile-editor-header-bar">' +
+            '<span class="profile-back-link" id="prof-slot-back-link"><span class="material-icons-outlined" style="font-size:16px;">arrow_back</span> Back to ' + esc(profName) + '</span>' +
+          '</div>' +
+          renderActionModal() +
+        '</div>' +
+      '</section>';
+
+    main.innerHTML = html;
+    rebindHamburger();
+    wireActionModal();
+    paintPanelRanges(main);
   }
 
   function renderProfilesList() {
@@ -6505,20 +6583,16 @@
               sectionCard("Default Button Deck", "apps",
                 '<p class="settings-hint" style="margin-bottom:12px;">Active when no game profile is running.</p>' +
                 renderBoardEditor(board, [])) +
-              (panelEdit && panelEdit.scope === "board" ? renderActionModal() : '') +
 
               // Card 4: Persistent 2-Row Utility / Core Dock
               sectionCard("Persistent Utility Row", "grid_view",
                 '<p class="settings-hint" style="margin-bottom:12px;">Persistent custom actions at the base of the panel.</p>' +
                 renderUtilityEditor(util)) +
-              (panelEdit && (panelEdit.scope === "utility" || panelEdit.scope === "util") ? renderActionModal() : '') +
 
               // Card 5: Core System Row
               sectionCard("Core System Row", "build_circle",
                 '<p class="settings-hint" style="margin-bottom:12px;">Dedicated system toggles & controls (PC Stats, Overlay, Mic, Settings, or custom shortcuts).</p>' +
                 renderCoreEditor(core)) +
-              (panelEdit && panelEdit.scope === "core" ? renderActionModal() : '') +
-              (panelEdit && panelEdit.scope !== "board" && panelEdit.scope !== "utility" && panelEdit.scope !== "util" && panelEdit.scope !== "core" ? renderActionModal() : '') +
             '</div>' +
           '</div>' +
         '</div>' +
@@ -6528,15 +6602,6 @@
     rebindHamburger();
     wireDefaultProfileEditor();
     paintPanelRanges(main);
-
-    if (panelEdit) {
-      const activeEditCard = document.getElementById("panel-modal");
-      if (activeEditCard) {
-        setTimeout(() => {
-          activeEditCard.scrollIntoView({ behavior: "smooth", block: "nearest" });
-        }, 50);
-      }
-    }
   }
 
   function wireDefaultProfileEditor() {
@@ -6761,7 +6826,6 @@
               sectionCard("Button Deck", "apps",
                 '<p class="settings-hint" style="margin-bottom:14px;">Buttons displayed on companion screen when this profile is active. Click to configure or drag to reorder.</p>' +
                 renderBoardEditor(board, [])) +
-              (panelEdit ? renderActionModal() : '') +
             '</div>' +
           '</div>' +
 
@@ -6773,15 +6837,6 @@
     main.innerHTML = html;
     rebindHamburger();
     wireGameProfileEditor();
-
-    if (panelEdit) {
-      const activeEditCard = document.getElementById("panel-modal");
-      if (activeEditCard) {
-        setTimeout(() => {
-          activeEditCard.scrollIntoView({ behavior: "smooth", block: "nearest" });
-        }, 50);
-      }
-    }
   }
 
   function wireGameProfileEditor() {
@@ -7120,6 +7175,10 @@
       rebindHamburger();
       return;
     }
+    if (panelEdit) {
+      renderSlotEditorPage();
+      return;
+    }
     const prevContentScroll = main.querySelector('.settings-content') ? main.querySelector('.settings-content').scrollTop : 0;
     const prevEditorScroll = main.querySelector('.panel-editor-col') ? main.querySelector('.panel-editor-col').scrollTop : 0;
 
@@ -7155,7 +7214,6 @@
             targetToggleRow("Button box", "button_box") +
             profileSelectHtml() +
             renderBoardEditor(board, [])) +
-          (panelEdit && panelEdit.scope === "board" ? renderActionModal() : '') +
           // Sliders (brightness only when hardware is connected)
           sectionCard("Sliders", "tune",
             targetToggleRow("Sliders section", "sliders") +
@@ -7167,13 +7225,10 @@
           sectionCard("Utility row", "grid_view",
             targetToggleRow("Utility row", "utility") +
             renderUtilityEditor(util)) +
-          (panelEdit && (panelEdit.scope === "utility" || panelEdit.scope === "util") ? renderActionModal() : '') +
           // Core
           sectionCard("Core row", "build_circle",
             targetToggleRow("Core row", "core") +
             renderCoreEditor(core)) +
-          (panelEdit && panelEdit.scope === "core" ? renderActionModal() : '') +
-          (panelEdit && panelEdit.scope !== "board" && panelEdit.scope !== "utility" && panelEdit.scope !== "util" && panelEdit.scope !== "core" ? renderActionModal() : '') +
         '</div>' +
         (panelProfileModal ? renderProfileModal() : '') +
       '</section>';
@@ -7187,15 +7242,6 @@
     if (newContent && prevContentScroll) newContent.scrollTop = prevContentScroll;
     const newEditor = main.querySelector('.panel-editor-col');
     if (newEditor && prevEditorScroll) newEditor.scrollTop = prevEditorScroll;
-
-    if (panelEdit) {
-      const activeEditCard = document.getElementById("panel-modal");
-      if (activeEditCard) {
-        setTimeout(() => {
-          activeEditCard.scrollIntoView({ behavior: "smooth", block: "nearest" });
-        }, 50);
-      }
-    }
   }
 
   function targetToggleRow(label, sectionId) {
@@ -7819,7 +7865,7 @@
           '</div>' +
         '</div>' +
         '<div class="slot-editor-header-actions">' +
-          '<button type="button" class="settings-btn slot-editor-close-btn" id="pe-cancel" title="Close editor">✕</button>' +
+          '<button type="button" class="settings-btn slot-editor-close-btn" id="pe-cancel-close" title="Close editor">✕</button>' +
         '</div>' +
       '</div>' +
       '<div class="panel-modal-body-grid" id="pe-body-grid">' +
@@ -12384,8 +12430,22 @@
 
     const cancelTop = document.getElementById("pe-cancel");
     if (cancelTop) cancelTop.addEventListener("click", () => finishModalEdit());
+    const cancelClose = document.getElementById("pe-cancel-close");
+    if (cancelClose) cancelClose.addEventListener("click", () => finishModalEdit());
+    const cancelPageTop = document.getElementById("prof-slot-cancel-top");
+    if (cancelPageTop) cancelPageTop.addEventListener("click", () => finishModalEdit());
+    const backLink = document.getElementById("prof-slot-back-link");
+    if (backLink) backLink.addEventListener("click", () => finishModalEdit());
     const cancelBottom = document.getElementById("pe-cancel-bottom");
     if (cancelBottom) cancelBottom.addEventListener("click", () => finishModalEdit());
+
+    const savePageTop = document.getElementById("prof-slot-save-top");
+    if (savePageTop) {
+      savePageTop.addEventListener("click", () => {
+        const saveBottom = document.getElementById("pe-save");
+        if (saveBottom) saveBottom.click();
+      });
+    }
     const moveSlot = (delta) => {
       const list = boardAtPath(panelEdit.path || []);
       const j = panelEdit.index + delta;
