@@ -2849,50 +2849,13 @@ header p{
 }
 .slot-editor-card {
     background: var(--bg-card, #1c1e22) !important;
-    border: 1px solid var(--neon-border, rgba(72, 178, 233, 0.4)) !important;
+    border: 1px solid var(--border, #333) !important;
     border-radius: 12px !important;
     padding: 20px 24px !important;
     display: flex;
     flex-direction: column;
     gap: 16px;
-    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45), 0 0 16px rgba(72, 178, 233, 0.1) !important;
-}
-.slot-editor-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding-bottom: 10px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-}
-.slot-editor-title-wrap {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-.slot-editor-header-icon {
-    font-size: 20px;
-    color: var(--neon-text, #48b2e9);
-}
-.slot-editor-headings h3 {
-    margin: 0;
-    color: var(--neon-text, #48b2e9);
-    font-size: 15px;
-    font-weight: 600;
-}
-.slot-editor-subtitle {
-    font-size: 11px;
-    color: var(--fg-dim, #888);
-}
-.slot-editor-close-btn {
-    width: 28px;
-    height: 28px;
-    padding: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 6px;
-    font-size: 14px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3) !important;
 }
 
 /* Active Slot Ring */

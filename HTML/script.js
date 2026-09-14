@@ -6369,15 +6369,12 @@
           '</div>' +
         '</div>' +
         '<div style="display:flex;gap:10px;align-items:center;">' +
-          '<button type="button" class="settings-btn" id="prof-slot-cancel-top">Cancel</button>' +
-          '<button type="button" class="settings-btn settings-btn-primary" id="prof-slot-save-top">Save</button>' +
+          '<button type="button" class="settings-btn" id="pe-cancel">Cancel</button>' +
+          '<button type="button" class="settings-btn settings-btn-primary" id="pe-save">Save</button>' +
         '</div>' +
       '</header>' +
       '<section class="settings-content slot-editor-full-page">' +
         '<div class="slot-editor-container">' +
-          '<div class="profile-editor-header-bar">' +
-            '<span class="profile-back-link" id="prof-slot-back-link"><span class="material-icons-outlined" style="font-size:16px;">arrow_back</span> Back to ' + esc(profName) + '</span>' +
-          '</div>' +
           renderActionModal() +
         '</div>' +
       '</section>';
@@ -7856,18 +7853,6 @@
     // In-Frame Slot Editor Card
     let h = '<div class="settings-section slot-editor-section" id="panel-modal">' +
       '<div class="settings-card slot-editor-card">' +
-      '<div class="slot-editor-header">' +
-        '<div class="slot-editor-title-wrap">' +
-          '<span class="material-icons-outlined slot-editor-header-icon">edit</span>' +
-          '<div class="slot-editor-headings">' +
-            '<h3>' + (isCore ? ("Core Button (Slot " + (ctx.index + 1) + ")") : (isUtil ? ("Utility Button (Slot " + (ctx.index + 1) + ")") : (ctx.index < 0 ? "Add Action" : ("Slot " + (ctx.index + 1) + (slot.name ? (" · " + esc(slot.name)) : ""))))) + '</h3>' +
-            '<span class="slot-editor-subtitle">Configure function, source entity, and appearance</span>' +
-          '</div>' +
-        '</div>' +
-        '<div class="slot-editor-header-actions">' +
-          '<button type="button" class="settings-btn slot-editor-close-btn" id="pe-cancel-close" title="Close editor">✕</button>' +
-        '</div>' +
-      '</div>' +
       '<div class="panel-modal-body-grid" id="pe-body-grid">' +
 
         /* Column 1: Function & Target */
@@ -8092,24 +8077,21 @@
 
       '</div>' +
 
-      '<div class="panel-modal-actions">' +
       (ctx.scope === "board" && ctx.index >= 0 ?
-        '<div class="panel-modal-sub">' +
+        '<div class="panel-modal-actions"><div class="panel-modal-sub">' +
         '<button type="button" class="settings-btn" id="pe-up">▲ Move up</button>' +
         '<button type="button" class="settings-btn" id="pe-down">▼ Move down</button>' +
         '<button type="button" class="settings-btn" id="pe-delete">Delete</button>' +
-        '</div>' :
+        '</div></div>' :
       (ctx.scope === "core" ?
-        '<div class="panel-modal-sub">' +
+        '<div class="panel-modal-actions"><div class="panel-modal-sub">' +
         '<button type="button" class="settings-btn" id="pe-delete">Reset to Default</button>' +
-        '</div>' :
+        '</div></div>' :
       (ctx.scope === "utility" || ctx.scope === "util" ?
-        '<div class="panel-modal-sub">' +
+        '<div class="panel-modal-actions"><div class="panel-modal-sub">' +
         '<button type="button" class="settings-btn" id="pe-delete">Clear Slot</button>' +
-        '</div>' : ''))) +
-      '<button type="button" class="settings-btn" id="pe-cancel">Cancel</button>' +
-      '<button type="button" class="settings-btn settings-btn-primary" id="pe-save">Save</button>' +
-      '</div></div></div>';
+        '</div></div>' : ''))) +
+      '</div></div>';
     return h;
   }
 
@@ -12428,24 +12410,8 @@
       }
     };
 
-    const cancelTop = document.getElementById("pe-cancel");
-    if (cancelTop) cancelTop.addEventListener("click", () => finishModalEdit());
-    const cancelClose = document.getElementById("pe-cancel-close");
-    if (cancelClose) cancelClose.addEventListener("click", () => finishModalEdit());
-    const cancelPageTop = document.getElementById("prof-slot-cancel-top");
-    if (cancelPageTop) cancelPageTop.addEventListener("click", () => finishModalEdit());
-    const backLink = document.getElementById("prof-slot-back-link");
-    if (backLink) backLink.addEventListener("click", () => finishModalEdit());
-    const cancelBottom = document.getElementById("pe-cancel-bottom");
-    if (cancelBottom) cancelBottom.addEventListener("click", () => finishModalEdit());
-
-    const savePageTop = document.getElementById("prof-slot-save-top");
-    if (savePageTop) {
-      savePageTop.addEventListener("click", () => {
-        const saveBottom = document.getElementById("pe-save");
-        if (saveBottom) saveBottom.click();
-      });
-    }
+    const cancelBtn = document.getElementById("pe-cancel");
+    if (cancelBtn) cancelBtn.addEventListener("click", () => finishModalEdit());
     const moveSlot = (delta) => {
       const list = boardAtPath(panelEdit.path || []);
       const j = panelEdit.index + delta;
