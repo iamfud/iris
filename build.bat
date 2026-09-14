@@ -6,12 +6,15 @@ echo Installing requirements...
 pip install -r requirements.txt
 if %errorlevel% neq 0 exit /b %errorlevel%
 
+echo Bundling web frontend assets into embedded_assets.py...
+python tools\bundle_assets.py
+if %errorlevel% neq 0 exit /b %errorlevel%
+
 echo Building executable...
 pyinstaller --clean --onefile --noconsole ^
    --name "Iris" ^
    --icon "Iris.ico" ^
    --add-data "media;media" ^
-   --add-data "HTML;HTML" ^
    --add-data "app\settings_pages.json;app" ^
    --add-data "app\mdi-meta.json;app" ^
    --add-data "app\mdi-webfont.ttf;app" ^

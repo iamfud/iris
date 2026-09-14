@@ -25,6 +25,11 @@ def load_config():
         # (Argon2id PHC string) is kept — it is the active pairing password.
         for stale in ("panel_password", "panel_password_salt"):
             raw.pop(stale, None)
+        # Migrate legacy openrgb plugin config to rgb umbrella plugin
+        plugins_cfg = raw.get("plugins")
+        if isinstance(plugins_cfg, dict):
+            if "openrgb" in plugins_cfg and "rgb" not in plugins_cfg:
+                plugins_cfg["rgb"] = plugins_cfg.pop("openrgb")
         try:
             from panel_actions import ensure_panel_defaults
             ensure_panel_defaults(raw)

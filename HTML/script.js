@@ -945,7 +945,7 @@
               '<h1>' + esc(page.title) + '</h1>' +
             '</div>' +
           '</div>' +
-          '<button class="done-btn" id="done-btn">Done</button>' +
+          '<button class="done-btn" id="done-btn">Close</button>' +
         '</header>' +
         (contentHtml || '');
 
@@ -1082,7 +1082,7 @@
             <h1>Pixel Clock</h1>
           </div>
         </div>
-        <button class="done-btn" id="done-btn">Done</button>
+        <button class="done-btn" id="done-btn">Close</button>
       </header>
       <section class="content feat-content">
         <div class="feat-section">
@@ -1196,7 +1196,7 @@
             <h1>Alarms</h1>
           </div>
         </div>
-        <button class="done-btn" id="done-btn">Done</button>
+        <button class="done-btn" id="done-btn">Close</button>
       </header>
       <section class="content alarm-content">
         ${cards}${empty}
@@ -1280,7 +1280,7 @@
             <h1>${isNew ? "New Alarm" : "Edit Alarm"}</h1>
           </div>
         </div>
-        <button class="done-btn" id="done-btn">Done</button>
+        <button class="done-btn" id="done-btn">Close</button>
       </header>
       <section class="content alarm-content alarm-edit-content">
         <div class="alarm-edit-card">
@@ -1481,7 +1481,7 @@
     const allKeys = Object.keys(pluginsConfig);
     const hwKeys = allKeys.filter((k) => {
       const p = pluginsConfig[k];
-      return p && (p.is_hardware || k === "matrix_display" || k === "ha" || k === "openrgb" || k === "pc_stats");
+      return p && (p.is_hardware || k === "matrix_display" || k === "ha" || k === "openrgb" || k === "rgb" || k === "pc_stats");
     });
 
     if (!hwKeys.includes("matrix_display")) {
@@ -1540,7 +1540,7 @@
             <p>Physical peripherals, matrix display &amp; smart home integrations</p>
           </div>
         </div>
-        <button class="done-btn" id="done-btn">Done</button>
+        <button class="done-btn" id="done-btn">Close</button>
       </header>
       <section class="content settings-content">
         ${tiles || '<div class="card"><p style="color:var(--fg-dim);margin:0">No hardware plugins detected</p></div>'}
@@ -1595,7 +1595,7 @@
             <h1>Plugins</h1>
           </div>
         </div>
-        <button class="done-btn" id="done-btn">Done</button>
+        <button class="done-btn" id="done-btn">Close</button>
       </header>
       <section class="content plugin-content">
         ${tiles || '<div class="card"><h2>No plugins</h2><p>Install plugins to get started.</p></div>'}
@@ -1633,7 +1633,7 @@
         '</div>' +
         '<div style="display:flex;align-items:center;gap:8px">' +
           '<button class="done-btn" id="back-btn">' + (currentPage === "hardware" ? 'Back to Hardware' : 'Back') + '</button>' +
-          '<button class="done-btn" id="done-btn">Done</button>' +
+          '<button class="done-btn" id="done-btn">Close</button>' +
         '</div>' +
       '</header>' +
       contentHtml;
@@ -1794,7 +1794,7 @@
               <span class="header-sub">Entity triggers, background macros, and button box actions</span>
             </div>
           </div>
-          <button class="done-btn" id="done-btn">Done</button>
+          <button class="done-btn" id="done-btn">Close</button>
         </header>
 
         <section class="content vision-content">
@@ -2261,7 +2261,7 @@
       if (act.type === "hotkey") return "core_hotkey";
       if (act.type === "sound") return "core_sound";
       if (act.type === "notification") return "core_notif";
-      if (act.type === "openrgb" || (act.slot && (act.slot.plugin === "openrgb" || act.slot.openrgb_profile))) return "plugin_openrgb";
+      if (act.type === "openrgb" || act.type === "rgb" || (act.slot && (act.slot.plugin === "openrgb" || act.slot.plugin === "rgb" || act.slot.openrgb_profile))) return "plugin_openrgb";
       if (act.type === "home_assistant" || act.type === "ha" || (act.slot && act.slot.plugin === "ha")) return "plugin_ha";
       if (act.slot) {
         if (act.slot.plugin) return `plugin_${act.slot.plugin}`;
@@ -2296,7 +2296,7 @@
         } else if (currentSrc === "core_notif") {
           detailHtml = `<input type="text" class="settings-input row-act-val" data-aidx="${aIdx}" value="${esc(act.message || "")}" placeholder="Toast message on screen" style="width:200px">`;
         } else if (currentSrc === "plugin_openrgb") {
-          const openrgbEntities = (panelEntities || []).filter(e => e.plugin === "openrgb" || (e.id && e.id.startsWith("openrgb.")));
+          const openrgbEntities = (panelEntities || []).filter(e => e.plugin === "openrgb" || e.plugin === "rgb" || (e.id && (e.id.startsWith("openrgb.") || e.id.startsWith("rgb."))));
           const curProf = act.profile || (act.slot && act.slot.openrgb_profile) || "inherit";
           detailHtml = `
             <select class="settings-select row-act-val" data-aidx="${aIdx}" style="width:200px" title="${esc(curProf)}">
@@ -2619,7 +2619,7 @@
             <h1>Vision</h1>
           </div>
         </div>
-        <button class="done-btn" id="done-btn">Done</button>
+        <button class="done-btn" id="done-btn">Close</button>
       </header>
       <section class="content vision-content">
         <div class="vision-toolbar">
@@ -2839,7 +2839,7 @@
             <h1>Library</h1>
           </div>
         </div>
-        <button class="done-btn" id="done-btn">Done</button>
+        <button class="done-btn" id="done-btn">Close</button>
       </header>
       <section class="content lib-content">
         <div class="lib-toolbar">
@@ -5223,7 +5223,7 @@
             <h1>Notifications</h1>
           </div>
         </div>
-        <button class="done-btn" id="done-btn">Done</button>
+        <button class="done-btn" id="done-btn">Close</button>
       </header>
       <section class="content notif-content">
         <div class="notif-page-wrap">
@@ -6387,7 +6387,7 @@
             '<h1>Profiles</h1>' +
           '</div>' +
         '</div>' +
-        '<button class="done-btn" id="done-btn">Done</button>' +
+        '<button class="done-btn" id="done-btn">Close</button>' +
       '</header>' +
       '<section class="content vision-content profiles-page">' +
         '<div class="vision-toolbar">' +
@@ -6575,7 +6575,7 @@
     const profName = norm(p.name || p.id);
     const profId = norm(p.id);
     for (const [pluginKey, pluginDef] of Object.entries(pluginsConfig)) {
-      if (pluginDef && (pluginDef.is_hardware || pluginKey === "ha" || pluginKey === "openrgb" || pluginKey === "matrix_display")) {
+      if (pluginDef && (pluginDef.is_hardware || pluginKey === "ha" || pluginKey === "openrgb" || pluginKey === "rgb" || pluginKey === "matrix_display")) {
         continue;
       }
       const plgExe = norm(pluginDef.exe_default || pluginDef.exe_path);
@@ -7108,7 +7108,7 @@
     const core = (panelDraft && panelDraft.panel_core) || defaultCoreSlots();
     const briOn = hwOn && sliderOn("brightness");
 
-    const headerBtn = '<button class="done-btn" id="done-btn">Done</button>';
+    const headerBtn = '<button class="done-btn" id="done-btn">Close</button>';
 
     const previewHtml = renderPhonePreviewHtml(panelDraft, panelLive, board, util);
 
@@ -7511,9 +7511,9 @@
       if (plgFilter === "all" && !q) {
         let include = false;
         if (targetType === "HOTKEY") {
-          include = ent.type === "action" || ent.type === "shortcut" || ent.writable || ent.plugin === "openrgb" || ent.id.startsWith("openrgb.");
+          include = ent.type === "action" || ent.type === "shortcut" || ent.writable || ent.plugin === "openrgb" || ent.plugin === "rgb" || ent.id.startsWith("openrgb.") || ent.id.startsWith("rgb.");
         } else if (targetType === "TOGGLE") {
-          include = ent.type === "status" || ent.type === "toggle" || ent.writable || ent.plugin === "openrgb" || ent.id.startsWith("openrgb.");
+          include = ent.type === "status" || ent.type === "toggle" || ent.writable || ent.plugin === "openrgb" || ent.plugin === "rgb" || ent.id.startsWith("openrgb.") || ent.id.startsWith("rgb.");
         } else if (targetType === "SENSOR") {
           include = ent.type === "data" || ent.type === "sensor" || !ent.writable;
         } else {
@@ -7579,7 +7579,7 @@
     const showName = (slot.show_name !== false);
     const showIcon = (slot.show_icon !== false);
     const isMediaPlayPause = (curEntity === "media.play_pause");
-    const isOpenRGBProfile = (curEntity && curEntity.startsWith("openrgb.")) || !!slot.openrgb_profile;
+    const isOpenRGBProfile = (curEntity && (curEntity.startsWith("openrgb.") || curEntity.startsWith("rgb."))) || !!slot.openrgb_profile;
     const isMediaEject = (curEntity === "media.player" || curEntity === "media.eject" || curType === "MEDIA_EJECT");
     const isAnyMediaControl = (isMediaPlayPause || curEntity === "media.next" || curEntity === "media.prev" || isMediaEject || isOpenRGBProfile);
     const isShortcut = (curType === "SHORTCUT");
@@ -7730,7 +7730,7 @@
           '<div class="settings-control" id="pe-macro-wrap" style="display:none">' +
             '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">' +
               '<label class="settings-label" style="margin:0;">Macro Action Sequence</label>' +
-              '<button type="button" class="settings-btn settings-btn-mini" id="pe-macro-add-btn">+ Add Step</button>' +
+              '<button type="button" class="settings-btn" id="pe-macro-add-btn" style="height:28px;padding:0 10px;font-size:11.5px;">+ Add Step</button>' +
             '</div>' +
             '<div id="pe-macro-list" style="display:flex;flex-direction:column;gap:6px;"></div>' +
             '<span class="settings-hint">Executes all actions sequentially in one tap (e.g. Launch Game + Switch Lighting).</span>' +
@@ -11637,7 +11637,7 @@
         macroListEl.innerHTML = '<div style="font-size:12px;color:var(--fg-dim);padding:10px;text-align:center;background:rgba(0,0,0,0.2);border:1px dashed var(--border);border-radius:6px;">No macro steps added. Click "+ Add Step" above.</div>';
         return;
       }
-      const openrgbEntities = (panelEntities || []).filter(e => e.plugin === "openrgb" || (e.id && e.id.startsWith("openrgb.")));
+      const openrgbEntities = (panelEntities || []).filter(e => e.plugin === "openrgb" || e.plugin === "rgb" || (e.id && (e.id.startsWith("openrgb.") || e.id.startsWith("rgb."))));
       const haEntities = (panelEntities || []).filter(e => e.plugin === "ha" || (e.id && e.id.startsWith("ha.")));
 
       macroListEl.innerHTML = macroActions.map((step, idx) => {
@@ -11645,15 +11645,17 @@
         let detailHtml = "";
         if (stype === "shortcut") {
           detailHtml = `
-            <div style="display:flex;gap:4px;flex:1;min-width:0;">
-              <input type="text" class="settings-input pe-mstep-path" data-idx="${idx}" value="${esc(step.path || step.shortcut_path || "")}" placeholder="Path to .exe, URL, or command" style="flex:1;">
-              <button type="button" class="settings-btn pe-mstep-browse" data-idx="${idx}" title="Browse EXE"><span class="material-icons-outlined" style="font-size:15px;">folder_open</span></button>
+            <div style="position:relative;display:flex;align-items:center;flex:1;min-width:0;">
+              <input type="text" class="settings-input pe-mstep-path" data-idx="${idx}" value="${esc(step.path || step.shortcut_path || "")}" placeholder="Path to .exe, URL, or command" style="width:100%;padding-right:32px;box-sizing:border-box;">
+              <button type="button" class="settings-btn pe-mstep-browse" data-idx="${idx}" title="Browse EXE" style="position:absolute;right:2px;top:50%;transform:translateY(-50%);width:28px;height:28px;padding:0;background:none;border:none;color:var(--fg-dim);display:flex;align-items:center;justify-content:center;cursor:pointer;">
+                <span class="material-icons-outlined" style="font-size:16px;">folder_open</span>
+              </button>
             </div>
           `;
         } else if (stype === "openrgb") {
           const curP = step.profile || step.openrgb_profile || "Sync Active Theme (Neon 1)";
           detailHtml = `
-            <select class="settings-select pe-mstep-val" data-idx="${idx}" style="flex:1;">
+            <select class="settings-select pe-mstep-val" data-idx="${idx}" style="flex:1;min-width:0;">
               <option value="__theme__" ${curP === "__theme__" ? "selected" : ""}>Sync Active Theme (Neon 1)</option>
               ${openrgbEntities.filter(e => e.openrgb_profile || e.name).map(e => {
                 const pn = e.openrgb_profile || e.name;
@@ -11664,7 +11666,7 @@
         } else if (stype === "home_assistant" || stype === "ha") {
           const curS = step.entity || step.script || "";
           detailHtml = `
-            <select class="settings-select pe-mstep-val" data-idx="${idx}" style="flex:1;">
+            <select class="settings-select pe-mstep-val" data-idx="${idx}" style="flex:1;min-width:0;">
               <option value="">Select HA scene / script...</option>
               ${haEntities.map(e => {
                 const label = e.name || e.id;
@@ -11675,19 +11677,19 @@
         } else if (stype === "sound") {
           const curSnd = step.sound || "chime";
           detailHtml = `
-            <select class="settings-select pe-mstep-val" data-idx="${idx}" style="flex:1;">
+            <select class="settings-select pe-mstep-val" data-idx="${idx}" style="flex:1;min-width:0;">
               <option value="chime" ${curSnd === "chime" ? "selected" : ""}>Chime</option>
               <option value="alarm_fast" ${curSnd === "alarm_fast" ? "selected" : ""}>Fast Alarm</option>
               <option value="remind" ${curSnd === "remind" ? "selected" : ""}>Remind</option>
             </select>
           `;
         } else {
-          detailHtml = `<input type="text" class="settings-input pe-mstep-val" data-idx="${idx}" value="${esc(step.hotkey || "")}" placeholder="Key (e.g. F13)" style="flex:1;">`;
+          detailHtml = `<input type="text" class="settings-input pe-mstep-val" data-idx="${idx}" value="${esc(step.hotkey || "")}" placeholder="Key (e.g. F13)" style="flex:1;min-width:0;">`;
         }
 
         return `
           <div style="display:flex;align-items:center;gap:6px;background:rgba(0,0,0,0.25);border:1px solid var(--border);border-radius:6px;padding:6px 8px;">
-            <select class="settings-select pe-mstep-type" data-idx="${idx}" style="width:130px;flex:0 0 auto;">
+            <select class="settings-select pe-mstep-type" data-idx="${idx}" style="width:125px;flex:0 0 auto;">
               <option value="shortcut" ${stype === "shortcut" ? "selected" : ""}>Launch App</option>
               <option value="openrgb" ${stype === "openrgb" ? "selected" : ""}>OpenRGB Light</option>
               <option value="home_assistant" ${(stype === "home_assistant" || stype === "ha") ? "selected" : ""}>Home Assistant</option>
@@ -11695,9 +11697,10 @@
               <option value="hotkey" ${stype === "hotkey" ? "selected" : ""}>Hotkey</option>
             </select>
             ${detailHtml}
-            <button type="button" class="settings-btn settings-btn-danger pe-mstep-del" data-idx="${idx}" title="Remove step" style="padding:4px 8px;">✕</button>
+            <button type="button" class="settings-btn settings-btn-danger pe-mstep-del" data-idx="${idx}" title="Remove step" style="flex:0 0 auto;width:28px;height:28px;padding:0;display:flex;align-items:center;justify-content:center;font-size:12px;">✕</button>
           </div>
         `;
+
       }).join("");
 
       macroListEl.querySelectorAll(".pe-mstep-type").forEach(sel => {
@@ -11824,7 +11827,7 @@
             const artInp = document.getElementById("pe-show-album-art");
             if (artInp) artInp.checked = true;
           }
-          if (found.openrgb_profile || found.plugin === "openrgb" || found.id.startsWith("openrgb.")) {
+          if (found.openrgb_profile || found.plugin === "openrgb" || found.plugin === "rgb" || found.id.startsWith("openrgb.") || found.id.startsWith("rgb.")) {
             if (typeEl.value !== "HOTKEY" && typeEl.value !== "TOGGLE") {
               typeEl.value = "HOTKEY";
             }
@@ -12621,7 +12624,7 @@
             <h1>Dashboard</h1>
           </div>
         </div>
-        <button class="done-btn" id="done-btn">Done</button>
+        <button class="done-btn" id="done-btn">Close</button>
       </header>
       <section class="content dash-content">
         <div class="dash-hero">
@@ -12641,7 +12644,7 @@
     main.querySelectorAll(".dash-plugin").forEach((el) => {
       el.addEventListener("click", () => {
         const plgName = el.dataset.name;
-        if (pluginsConfig[plgName] && (pluginsConfig[plgName].is_hardware || plgName === "ha" || plgName === "openrgb" || plgName === "matrix_display" || plgName === "pc_stats")) {
+        if (pluginsConfig[plgName] && (pluginsConfig[plgName].is_hardware || plgName === "ha" || plgName === "openrgb" || plgName === "rgb" || plgName === "matrix_display" || plgName === "pc_stats")) {
           selectedHardwarePlugin = plgName;
           currentPage = "hardware";
           navItems.forEach((n) => n.classList.toggle("active", n.dataset.page === "hardware"));
@@ -12709,7 +12712,7 @@
             '<h1>' + esc(name) + '</h1>' +
           '</div>' +
         '</div>' +
-        '<button class="done-btn" id="done-btn">Done</button>' +
+        '<button class="done-btn" id="done-btn">Close</button>' +
       '</header>' +
       '<section class="settings-content settings-empty">' +
         '<div class="settings-placeholder">' +
@@ -12730,15 +12733,25 @@
     const d = document.getElementById("done-btn");
     if (d) {
       d.addEventListener("click", () => {
-        if (window.pywebview && window.pywebview.api && window.pywebview.api.close_panel) {
-          window.pywebview.api.close_panel();
-        } else if (IS_MOBILE && !IS_APP) {
+        if (window.pywebview && window.pywebview.api) {
+          if (typeof window.pywebview.api.close_panel === "function") {
+            window.pywebview.api.close_panel();
+            return;
+          }
+          if (typeof window.pywebview.api.close_window === "function") {
+            window.pywebview.api.close_window();
+            return;
+          }
+        }
+        if (IS_MOBILE && !IS_APP) {
           portalAutoPanel = true;
           fetchPanel();
           openPanelView();
-        } else {
+        } else if (currentPage !== "dashboard") {
           currentPage = "dashboard";
           renderPage();
+        } else {
+          window.close();
         }
       });
     }
@@ -13050,7 +13063,7 @@
 
     const provNames = connectedProviders.map((p) => esc(p.name)).join(" & ");
     const hasHA = connectedProviders.some((p) => p.id === "ha");
-    const hasOpenRGB = connectedProviders.some((p) => p.id === "openrgb");
+    const hasOpenRGB = connectedProviders.some((p) => p.id === "openrgb" || p.id === "rgb");
 
     let modalHtml = '<div class="panel-modal-backdrop" id="lighting-setup-modal" style="z-index:99999;">' +
       '<div class="panel-modal" style="max-width:520px;">' +

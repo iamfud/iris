@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Plugin manager — discover, load, and manage plugins.
 
 Plugin types (declared in plugin.json):
@@ -174,8 +175,6 @@ def is_hardware_plugin(name, manifest=None):
 
     Built-in hardware integrations (ha, openrgb, matrix_display) are also recognized.
     """
-    if name in ("ha", "openrgb", "matrix_display"):
-        return True
     if manifest is None:
         manifest = get_manifest(name) or {}
     if manifest.get("hardware_plugin") or manifest.get("hardware") or manifest.get("category") == "hardware":
@@ -183,7 +182,7 @@ def is_hardware_plugin(name, manifest=None):
     if manifest.get("type") == "hardware":
         return True
     caps = manifest.get("capabilities") or {}
-    if caps.get("hardware") or caps.get("lighting_provider"):
+    if caps.get("hardware") or caps.get("lighting_provider") or caps.get("lcd_target"):
         return True
     return False
 
@@ -191,8 +190,8 @@ def is_hardware_plugin(name, manifest=None):
 def refresh_settings(name):
     """Re-merge connector get_settings() into the cached manifest.
 
-    Lets the panel pick up unit/range changes (e.g. the °F toggle)
-    without an app restart. Idempotent — sections merge by title.
+    Lets the panel pick up unit/range changes (e.g. the deg F toggle)
+    without an app restart. Idempotent -- sections merge by title.
     """
     manifest = _manifests.get(name)
     if not manifest:
@@ -354,21 +353,40 @@ def on_tap(plugin_name, control_id, value=None):
         return False
 
 
-def invoke_action(plugin_name, action_id):
-    """Invoke a declarative action on a plugin (from settings UI)."""
+def get_by_capability(capability):
+    """Return active plugin instances that declare a given capability in plugin.json."""
+    matches = []
+    for name, inst in list(_instances.items()):
+        manifest = get_manifest(name) or {}
+        caps = manifest.get("capabilities") or {}
+        if caps.get(capability):
+            matches.append(inst)
+    return matches
+
+
+def dispatch_action(plugin_name, action_id, value=None):
+    """Dispatch an action to a plugin instance with optional payload/value."""
     inst = _instances.get(plugin_name)
     if inst is None:
-        log.warning("[pm] action on unknown plugin %s", plugin_name)
         return False
     try:
         if hasattr(inst, "on_action"):
-            inst.on_action(action_id)
-            return True
-        log.warning("[pm] %s has no on_action method", plugin_name)
+            import inspect
+            sig = inspect.signature(inst.on_action)
+            if len(sig.parameters) >= 2 or any(p.kind == inspect.Parameter.VAR_POSITIONAL for p in sig.parameters.values()):
+                res = inst.on_action(action_id, value)
+            else:
+                res = inst.on_action(action_id)
+            return True if res is None else bool(res)
         return False
     except Exception as e:
         log.warning("[pm] %s.on_action(%s) failed: %s", plugin_name, action_id, e)
         return False
+
+
+def invoke_action(plugin_name, action_id):
+    """Invoke a declarative action on a plugin (from settings UI)."""
+    return dispatch_action(plugin_name, action_id)
 
 
 # ── Plugin config ──────────────────────────────────────────────
@@ -956,7 +974,7 @@ def get_plugin_button_states():
     """Collect live state {f'{plugin}:{button_id}': {'active': bool, 'value': any, 'label': str}}."""
     import time
     states = {}
-    for pname, inst in _instances.items():
+    for pname, inst in list(_instances.items()):
         manifest = _manifests.get(pname, {})
         buttons = manifest.get("buttons", [])
         if not buttons:

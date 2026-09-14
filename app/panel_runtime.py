@@ -666,13 +666,13 @@ def _openrgb_action(slot):
     profile_name = (slot.get("openrgb_profile") or "").strip()
     if not profile_name:
         ent = str(slot.get("entity") or "").strip()
-        if ent.startswith("openrgb.profile."):
-            prof_slug = ent[len("openrgb.profile."):].lower()
+        if ent.startswith("openrgb.profile.") or ent.startswith("rgb.profile."):
+            prof_slug = ent.split(".")[-1].lower()
             try:
                 import plugin_manager
-                inst = plugin_manager.get("openrgb")
+                inst = plugin_manager.get("rgb") or plugin_manager.get("openrgb")
                 if inst and hasattr(inst, "get_options"):
-                    for p in inst.get_options("openrgb_profiles"):
+                    for p in inst.get_options("profiles") or inst.get_options("openrgb_profiles") or []:
                         clean_id = p.lower().replace(" ", "_").replace("(", "").replace(")", "").replace("[", "").replace("]", "")
                         if clean_id == prof_slug:
                             profile_name = p
@@ -684,29 +684,17 @@ def _openrgb_action(slot):
 
     try:
         import plugin_manager
+        # Try rgb plugin first, then openrgb alias
+        if plugin_manager.dispatch_action("rgb", "set_profile", profile_name):
+            return True
+        if plugin_manager.dispatch_action("openrgb", "set_profile", profile_name):
+            return True
+        if plugin_manager.on_tap("rgb", "profile", profile_name):
+            return True
         if plugin_manager.on_tap("openrgb", "profile", profile_name):
             return True
     except Exception as ex:
-        log.warning("[panel_runtime] openrgb on_tap failed: %s", ex)
-    # Fallback: direct SDK call
-    try:
-        from openrgb import OpenRGBClient
-        from openrgb.utils import Profile
-        client = OpenRGBClient(name="Iris")
-        clean_name = profile_name.replace(" (Device)", "").replace(" (Effect)", "").strip()
-        try:
-            # Local .orp load is reliable even when the SDK server's profile
-            # list is empty (headless service instance).
-            client.load_profile(clean_name, local=True)
-        except Exception:
-            try:
-                client.load_profile(Profile(clean_name))
-            except Exception:
-                client.load_profile(clean_name)
-        client.show()
-        return True
-    except Exception as ex2:
-        log.warning("[panel_runtime] openrgb fallback failed: %s", ex2)
+        log.warning("[panel_runtime] rgb/openrgb action failed: %s", ex)
     return False
 
 

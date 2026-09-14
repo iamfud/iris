@@ -469,31 +469,31 @@ def get_plugin_entities() -> List[Dict[str, Any]]:
                     "description": (sdef.get("description") or "") if isinstance(sdef, dict) else "",
                 })
 
-            # 4. OpenRGB Profiles
-            if name == "openrgb":
+            # 4. OpenRGB / RGB Profiles
+            if name in ("openrgb", "rgb"):
                 profiles = []
                 inst = plugin_manager.get(name)
                 if inst and hasattr(inst, "get_options"):
                     try:
-                        profiles = inst.get_options("openrgb_profiles") or []
+                        profiles = inst.get_options("profiles") or inst.get_options("openrgb_profiles") or []
                     except Exception:
                         pass
                 if not profiles:
                     try:
-                        from plugins.openrgb.connector import OpenRGBConnector
-                        conn = OpenRGBConnector()
-                        profiles = conn.get_options("openrgb_profiles")
+                        from plugins.rgb.connector import RGBConnector
+                        conn = RGBConnector()
+                        profiles = conn.get_options("profiles") or conn.get_options("openrgb_profiles")
                     except Exception:
                         pass
                 for p in profiles:
                     clean_id = p.lower().replace(" ", "_").replace("(", "").replace(")", "").replace("[", "").replace("]", "")
-                    ent_id = f"openrgb.profile.{clean_id}"
+                    ent_id = f"{name}.profile.{clean_id}"
                     if not any(e["id"] == ent_id for e in entities):
                         entities.append({
                             "id": ent_id,
-                            "plugin": "openrgb",
+                            "plugin": name,
                             "button_id": "profile",
-                            "domain": "OpenRGB",
+                            "domain": "RGB",
                             "name": p,
                             "type": "action",
                             "icon": "palette",
@@ -503,7 +503,7 @@ def get_plugin_entities() -> List[Dict[str, Any]]:
                             "default_action": "openrgb_profile",
                             "state_key": "active_profile",
                             "labels": {"on": "ACTIVE", "off": "IDLE"},
-                            "description": f"Switch OpenRGB to '{p}' profile",
+                            "description": f"Switch RGB to '{p}' profile",
                         })
             # 5. Home Assistant Controllable Entities
             if name == "ha":
@@ -690,10 +690,10 @@ def get_live_entity_states(plugin_button_states=None) -> Dict[str, Dict[str, Any
     except Exception:
         pass
 
-    # OpenRGB active profile states
+    # OpenRGB / RGB active profile states
     try:
         import plugin_manager
-        inst = plugin_manager.get("openrgb")
+        inst = plugin_manager.get("rgb") or plugin_manager.get("openrgb")
         if inst and hasattr(inst, "poll"):
             p_poll = inst.poll()
             act_prof = p_poll.get("active_profile") or ""
@@ -702,11 +702,13 @@ def get_live_entity_states(plugin_button_states=None) -> Dict[str, Dict[str, Any
                 clean_prof = prof.replace(" (Device)", "").replace(" (Effect)", "").strip().lower()
                 clean_act = act_prof.replace(" (Device)", "").replace(" (Effect)", "").strip().lower()
                 is_active = (clean_prof == clean_act) if (clean_prof and clean_act) else False
-                states[f"openrgb.profile.{clean_id}"] = {
+                st = {
                     "active": is_active,
                     "label": "ACTIVE" if is_active else "IDLE",
                     "value": is_active,
                 }
+                states[f"rgb.profile.{clean_id}"] = st
+                states[f"openrgb.profile.{clean_id}"] = st
     except Exception:
         pass
 

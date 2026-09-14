@@ -161,6 +161,15 @@ else:
 
 _HTML_DIR = os.path.join(_ROOT_DIR, "HTML")
 
+# Use loose HTML/ on disk only during development if the directory actually exists.
+# When frozen (packaged executable) or if HTML/ is absent, serve from in-memory embedded_assets.
+_USE_DEV_ASSETS = (not getattr(sys, "frozen", False)) and os.path.isdir(_HTML_DIR)
+
+try:
+    import embedded_assets
+except ImportError:
+    embedded_assets = None
+
 
 def register_app(app):
     """Register the IrisApp instance so the HTTP API can access config/serial."""
@@ -675,7 +684,7 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             client_cv = (qs.get("cv") or [""])[0] or None
             self._send_json(_get_panel_live(client_cv))
         elif self.path == "/api/kraken/detect":
-            self._send_json(_get_kraken_usb())
+            self._handle_kraken_detect()
         elif self.path == "/api/panel/password/status":
             self._handle_password_status()
         elif self.path == "/api/panel/entities":
@@ -711,7 +720,61 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         elif self.path.split("?")[0] in ("/Iris.apk", "/download"):
             self._serve_apk()
         else:
+            self._serve_static_asset()
+
+    def _serve_static_asset(self):
+        """Serve a web asset either from local HTML/ (dev) or memory (embedded_assets)."""
+        rel_path = self.path.split("?", 1)[0].lstrip("/")
+        if not rel_path:
+            rel_path = "index.html"
+
+        # 1. If in dev mode and file exists on disk, let SimpleHTTPRequestHandler handle it
+        if _USE_DEV_ASSETS and os.path.isfile(os.path.join(self.directory, rel_path)):
             super().do_GET()
+            return
+
+        # 2. Otherwise, serve from embedded assets
+        if embedded_assets and embedded_assets.has_asset(rel_path):
+            ae = self.headers.get("Accept-Encoding", "")
+            prefer_gzip = "gzip" in ae.lower()
+
+            res = embedded_assets.get_asset_bytes(rel_path, prefer_gzip=prefer_gzip)
+            if res is None:
+                self.send_error(404)
+                return
+
+            body, content_type, etag, is_gzipped = res
+
+            # Check If-None-Match ETag header
+            inm = self.headers.get("If-None-Match", "")
+            if inm and inm.strip() == etag:
+                self.send_response(304)
+                self.end_headers()
+                return
+
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("ETag", etag)
+
+            # Long-term caching for static assets (service worker handles cache busting)
+            if rel_path.endswith((".woff2", ".ttf", ".png", ".jpg", ".ico")):
+                self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+            elif rel_path in ("script.js", "style.css", "settings_renderer.js", "sw.js"):
+                self.send_header("Cache-Control", "no-cache")
+
+            if is_gzipped:
+                self.send_header("Content-Encoding", "gzip")
+
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        # 3. Fall back to standard file handler or 404
+        if os.path.isfile(os.path.join(self.directory, rel_path)):
+            super().do_GET()
+        else:
+            self.send_error(404)
 
     def do_POST(self):
         if self.path == "/login":
@@ -1055,6 +1118,16 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         has_pw = bool(cfg.get("panel_password_hash"))
         self._send_json({"ok": True, "available": avail, "set": has_pw})
 
+    def _handle_kraken_detect(self):
+        """Return Kraken LCD probe status from the rgb plugin or entity bus."""
+        import plugin_manager
+        inst = plugin_manager.get("rgb")
+        if inst and hasattr(inst, "get_kraken_status"):
+            data = inst.get_kraken_status()
+        else:
+            data = {"found": False}
+        self._send_json(data)
+
     def _handle_save_panel_password(self):
         """Handle POST /api/panel/password to set or update the Argon2id hash."""
         if not self._is_loopback_peer():
@@ -1196,52 +1269,86 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         if not self._authorized():
             self._serve_login()
             return
-        index_path = os.path.join(self.directory, "index.html")
-        if not os.path.isfile(index_path):
+
+        html = None
+        # 1. Dev mode: read from disk if available
+        if _USE_DEV_ASSETS:
+            index_path = os.path.join(self.directory, "index.html")
+            if os.path.isfile(index_path):
+                try:
+                    with open(index_path, "rb") as f:
+                        html = f.read()
+                except Exception:
+                    html = None
+
+        # 2. Production / Embedded assets fallback
+        if html is None and embedded_assets and embedded_assets.has_asset("index.html"):
+            res = embedded_assets.get_asset_bytes("index.html", prefer_gzip=False)
+            if res:
+                html = res[0]
+
+        if html is None:
             self.send_error(404)
             return
-        try:
-            with open(index_path, "rb") as f:
-                html = f.read()
-        except Exception:
-            self.send_error(500)
-            return
+
         self.send_response(200)
-        self.send_header("Content-Type", "text/html")
+        self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(html)))
         self.end_headers()
         self.wfile.write(html)
 
     def _serve_login(self):
         """Serve the pairing info page for unauthorized LAN peers."""
-        login_path = os.path.join(self.directory, "login.html")
-        if not os.path.isfile(login_path):
+        html = None
+        if _USE_DEV_ASSETS:
+            login_path = os.path.join(self.directory, "login.html")
+            if os.path.isfile(login_path):
+                try:
+                    with open(login_path, "rb") as f:
+                        html = f.read()
+                except Exception:
+                    html = None
+
+        if html is None and embedded_assets and embedded_assets.has_asset("login.html"):
+            res = embedded_assets.get_asset_bytes("login.html", prefer_gzip=False)
+            if res:
+                html = res[0]
+
+        if html is None:
             self.send_error(404)
             return
-        try:
-            with open(login_path, "rb") as f:
-                html = f.read()
-        except Exception:
-            self.send_error(500)
-            return
+
         self.send_response(200)
-        self.send_header("Content-Type", "text/html")
+        self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(html)))
         self.end_headers()
         self.wfile.write(html)
 
     def _serve_apk(self):
         """Serve the compiled Android APK file with attachment headers."""
-        apk_path = os.path.join(self.directory, "Iris.apk")
-        if not os.path.isfile(apk_path):
+        data = None
+        if _USE_DEV_ASSETS:
+            apk_path = os.path.join(self.directory, "Iris.apk")
+            if os.path.isfile(apk_path):
+                try:
+                    with open(apk_path, "rb") as f:
+                        data = f.read()
+                except Exception:
+                    data = None
+
+        if data is None and embedded_assets and embedded_assets.has_asset("Iris.apk"):
+            res = embedded_assets.get_asset_bytes("Iris.apk", prefer_gzip=False)
+            if res:
+                data = res[0]
+
+        if data is None:
             self.send_error(404, "Iris.apk not found")
             return
+
         try:
-            with open(apk_path, "rb") as f:
-                data = f.read()
             self.send_response(200)
             self.send_header("Content-Type", "application/vnd.android.package-archive")
-            self.send_header("Content-Disposition", "attachment; filename=\"Iris.apk\"")
+            self.send_header("Content-Disposition", 'attachment; filename="Iris.apk"')
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "no-cache")
             self.end_headers()
@@ -2338,6 +2445,19 @@ class _RequestHandler(SimpleHTTPRequestHandler):
             path = os.path.join(_HTML_DIR, "mdi-webfont.ttf")
         if not os.path.isfile(path):
             path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mdi-webfont.ttf")
+        if not os.path.isfile(path) and embedded_assets and embedded_assets.has_asset("mdi-webfont.ttf"):
+            res = embedded_assets.get_asset_bytes("mdi-webfont.ttf", prefer_gzip=False)
+            if res:
+                data = res[0]
+                self.send_response(200)
+                self.send_header("Content-Type", "font/ttf")
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+                self.end_headers()
+                self.wfile.write(data)
+                return
+
         if not os.path.isfile(path):
             self.send_error(404)
             return
@@ -2899,7 +3019,7 @@ def _get_plugin_state():
     except Exception:
         pass
     result = {}
-    for name, inst in plugin_manager._instances.items():
+    for name, inst in list(plugin_manager._instances.items()):
         try:
             if hasattr(inst, "poll"):
                 result[name] = inst.poll()
@@ -3372,77 +3492,6 @@ def _get_panel_live(client_cv=None):
         return live_payload({}, client_cv=client_cv)
     return live_payload(_app.cfg, client_cv=client_cv)
 
-
-# NZXT Kraken LCD USB PIDs (VID 1E71) -> (model family, native resolution, shape).
-# NZXT's own CAM software does not report which Kraken is installed, so we probe
-# the Windows PnP device tree instead.
-_KRAKEN_MODELS = {
-    # Z53 / Z63 / Z73  -- 2.36" circular edge-to-edge LCD
-    "3008": ("Kraken Z", 320, "circle"),
-    # Kraken 2023 non-Elite -- 1.54" square LCD
-    "300e": ("Kraken (2023)", 240, "square"),
-    # Kraken 2023+ Elite -- 2.17" circular LCD
-    "300c": ("Kraken 2023 Elite", 640, "circle"),
-    # Kraken 2024 (may also surface as 300e/300c variants)
-    "3012": ("Kraken RX (2024)", 640, "circle"),
-    "3014": ("Kraken (2024)", 240, "square"),
-}
-
-_KRAKEN_PROBE_CACHE = {"at": 0.0, "res": None}
-_KRAKEN_PROBE_LOCK = threading.Lock()
-
-
-def _get_kraken_usb():
-    """Detect the attached NZXT Kraken LCD via USB PnP enumeration.
-
-    Runs a short-lived PowerShell Get-PnpDevice query for VID_1E71 (NZXT),
-    maps the PID to a known model/resolution/shape, and caches the result
-    for a few seconds so the web panel is not hammering PowerShell on a 1 Hz
-    poll. Returns the device record, or None when no Kraken is present.
-    """
-    now = time.time()
-    with _KRAKEN_PROBE_LOCK:
-        if _KRAKEN_PROBE_CACHE["res"] is not None and now - _KRAKEN_PROBE_CACHE["at"] < 5.0:
-            return _KRAKEN_PROBE_CACHE["res"]
-        import subprocess
-        try:
-            ps = (
-                "Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | "
-                "Where-Object { $_.InstanceId -match 'VID_1E71' } | "
-                "ForEach-Object { $_.InstanceId }"
-            )
-            out = subprocess.run(
-                ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
-                capture_output=True, text=True, timeout=6,
-                creationflags=0x08000000,  # CREATE_NO_WINDOW
-            )
-            pids = set()
-            for line in (out.stdout or "").splitlines():
-                m = re.search(r"VID_1E71&PID_([0-9A-Fa-f]{4})", line)
-                if m:
-                    pids.add(m.group(1).lower())
-            pick = next(iter(pids), None)
-            if not pick:
-                _KRAKEN_PROBE_CACHE["res"] = {"found": False}
-                _KRAKEN_PROBE_CACHE["at"] = now
-                return _KRAKEN_PROBE_CACHE["res"]
-            name, res, shape = _KRAKEN_MODELS.get(
-                pick, ("NZXT Kraken", 640, "circle"))
-            record = {
-                "found": True,
-                "pid": pick,
-                "model": name,
-                "resolution": res,
-                "shape": shape,
-            }
-            _KRAKEN_PROBE_CACHE["res"] = record
-            _KRAKEN_PROBE_CACHE["at"] = now
-            return record
-        except Exception as e:
-            log.warning("[kraken] USB probe failed: %s", e)
-            _KRAKEN_PROBE_CACHE["res"] = {"found": False}
-            _KRAKEN_PROBE_CACHE["at"] = now
-            return _KRAKEN_PROBE_CACHE["res"]
 
 
 def _get_vision_sensors():

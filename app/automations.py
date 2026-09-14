@@ -329,12 +329,12 @@ class AutomationsEngine:
             if dur > max_duration:
                 max_duration = dur
 
-            if act.get("type") == "openrgb":
+            if act.get("type") in ("openrgb", "rgb"):
                 prof = act.get("profile", "")
                 if prof == "inherit":
                     has_inherit = True
                 elif prof:
-                    lighting_actions["openrgb"] = prof
+                    lighting_actions["rgb"] = prof
             elif act.get("type") in ("home_assistant", "ha"):
                 script = act.get("entity", "") or act.get("script", "")
                 if script == "inherit":
@@ -347,10 +347,10 @@ class AutomationsEngine:
                     script = s.get("button_id") or s.get("entity_id") or s.get("entity", "").replace("ha.", "")
                     if script:
                         lighting_actions["ha"] = script.replace("ha.", "") if script.startswith("ha.") else script
-                elif s.get("plugin") == "openrgb" or str(s.get("entity", "")).startswith("openrgb."):
-                    prof = s.get("openrgb_profile") or s.get("button_id")
+                elif s.get("plugin") in ("openrgb", "rgb") or str(s.get("entity", "")).startswith(("openrgb.", "rgb.")):
+                    prof = s.get("openrgb_profile") or s.get("profile") or s.get("button_id")
                     if prof:
-                        lighting_actions["openrgb"] = prof
+                        lighting_actions["rgb"] = prof
 
         if has_inherit and not lighting_actions:
             # Explicit reversion
@@ -386,7 +386,7 @@ class AutomationsEngine:
                     self._act_home_assistant(act)
                 elif act_type == "slot" or act.get("slot"):
                     self._act_slot(act.get("slot") or act)
-                elif act_type == "openrgb":
+                elif act_type in ("openrgb", "rgb"):
                     self._act_openrgb(act)
                 elif act_type == "sound":
                     self._act_sound(act)
@@ -408,7 +408,7 @@ class AutomationsEngine:
         try:
             from lighting_service import get_lighting_service
             if get_lighting_service().is_alert_active():
-                log.info("[automations] critical alert active -> skipping OpenRGB automation action")
+                log.info("[automations] critical alert active -> skipping RGB automation action")
                 return
         except Exception:
             pass
@@ -421,12 +421,14 @@ class AutomationsEngine:
                 if get_lighting_service().is_alert_active():
                     return
                 import plugin_manager
-                inst = plugin_manager.get("openrgb")
+                inst = plugin_manager.get("rgb") or plugin_manager.get("openrgb")
                 if inst and hasattr(inst, "apply_lighting_preset"):
                     inst.apply_lighting_preset(profile)
+                elif inst and hasattr(inst, "on_action"):
+                    inst.on_action("set_profile", profile)
             except Exception as ex:
-                log.warning("[automations] OpenRGB profile switch failed: %s", ex)
-        threading.Thread(target=_set_rgb, daemon=True, name="iris-auto-openrgb").start()
+                log.warning("[automations] RGB profile switch failed: %s", ex)
+        threading.Thread(target=_set_rgb, daemon=True, name="iris-auto-rgb").start()
 
     def _act_home_assistant(self, act: Dict[str, Any]):
         try:

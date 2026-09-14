@@ -107,20 +107,27 @@ class LightingService:
         return self._cfg.get("ambient_lighting") or {}
 
     def _openrgb_baseline(self) -> Dict[str, Any]:
-        """Return the OpenRGB startup baseline action or None for 'off'."""
+        """Return the RGB startup baseline action or None for 'off'."""
         amb = self._ambient()
         if amb.get("enabled", True) is False:
             return None
         mode = amb.get("startup_mode")
         if not mode and amb.get("sync_theme") is not False:
             mode = "theme"
+        target_plugin = "rgb"
+        try:
+            import plugin_manager
+            if not plugin_manager.get("rgb") and plugin_manager.get("openrgb"):
+                target_plugin = "openrgb"
+        except Exception:
+            pass
         if mode == "profile":
             prof = amb.get("startup_profile") or ""
-            return {"openrgb": prof} if prof else None
+            return {target_plugin: prof} if prof else None
         if mode == "off":
             return None
         # theme (default)
-        return {"openrgb": "__theme__"}
+        return {target_plugin: "__theme__"}
 
     def _ha_daylight(self) -> Dict[str, Any]:
         """Return the HA day/night action based on the global (default profile) schedule."""
@@ -263,6 +270,10 @@ class LightingService:
                 if not preset_id:
                     continue
                 inst = plugin_manager.get(pid)
+                if inst is None and pid == "openrgb":
+                    inst = plugin_manager.get("rgb")
+                elif inst is None and pid == "rgb":
+                    inst = plugin_manager.get("openrgb")
                 if inst and hasattr(inst, "apply_lighting_preset"):
                     try:
                         sig = inspect.signature(inst.apply_lighting_preset)
@@ -304,7 +315,10 @@ class LightingService:
     def _openrgb_connected(self) -> bool:
         try:
             import plugin_manager
-            inst = plugin_manager.get("openrgb")
+            inst = plugin_manager.get("rgb") or plugin_manager.get("openrgb")
+            if inst is None:
+                providers = plugin_manager.get_by_capability("lighting_provider")
+                inst = providers[0] if providers else None
             if inst is None:
                 return False
             if hasattr(inst, "is_connected"):

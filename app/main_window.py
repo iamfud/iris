@@ -1856,7 +1856,7 @@ class MainWindow:
             self.start_quick_note()
             return
 
-        if btype == "OPENRGB" or slot.get("openrgb_profile") or ent.startswith("openrgb.") or slot.get("plugin") == "openrgb":
+        if btype in ("OPENRGB", "RGB") or slot.get("openrgb_profile") or ent.startswith(("openrgb.", "rgb.")) or slot.get("plugin") in ("openrgb", "rgb"):
             self._do_openrgb_action(slot)
             return
 

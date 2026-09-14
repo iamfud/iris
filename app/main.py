@@ -46,7 +46,6 @@ if __name__ == "__main__":
     from providers.ha import HAProvider
     from providers.media import MediaProvider
     from providers.notification_mirror import NotificationMirrorProvider
-    from providers.openrgb import OpenRGBProvider
     import plugin_manager
     from plugin_manager import start_all as start_plugins, stop_all as stop_plugins, check_plugins
     import panel_window
@@ -91,7 +90,6 @@ if __name__ == "__main__":
                 HAProvider(self.cfg),
                 MediaProvider(self.cfg, serial_sender),
                 NotificationMirrorProvider(self.cfg, serial_sender),
-                OpenRGBProvider(self.cfg),
             ]
             self._providers = providers
             self._stats_provider = providers[0]
@@ -241,16 +239,28 @@ if __name__ == "__main__":
                     p.stop()
                 except Exception:
                     log.exception("Provider %s failed during shutdown", p.__class__.__name__)
-            stop_plugins()
+            try:
+                stop_plugins()
+            except Exception:
+                log.exception("stop_plugins failed during shutdown")
             try:
                 import desktop_panel
                 desktop_panel.close_desktop_panel()
             except Exception:
                 pass
-            if self.icon:
-                self.icon.stop()
-                self.icon = None
-            self._root.after(0, self._root.destroy)
+            try:
+                if self.icon:
+                    self.icon.stop()
+                    self.icon = None
+            except Exception:
+                pass
+            try:
+                if self._root:
+                    self._root.after(0, self._root.destroy)
+            except Exception:
+                pass
+            import os
+            threading.Timer(0.8, lambda: os._exit(0)).start()
 
         def _ensure_main_win(self):
             if self._main_win is None:
@@ -513,10 +523,10 @@ if __name__ == "__main__":
             saved_name = self.cfg.get("user_name", "").strip()
             if saved_name:
                 serial_sender.queue_on_connect("user_name", saved_name)
-            self._setup_providers(self._overlays)
-            self._queue_defaults()
             ws_bridge.register_app(self)
             threading.Thread(target=ws_bridge.start, daemon=True, name="ws-bridge").start()
+            self._setup_providers(self._overlays)
+            self._queue_defaults()
 
             self._main_win = None
 
