@@ -6505,26 +6505,38 @@
               sectionCard("Default Button Deck", "apps",
                 '<p class="settings-hint" style="margin-bottom:12px;">Active when no game profile is running.</p>' +
                 renderBoardEditor(board, [])) +
+              (panelEdit && panelEdit.scope === "board" ? renderActionModal() : '') +
 
               // Card 4: Persistent 2-Row Utility / Core Dock
               sectionCard("Persistent Utility Row", "grid_view",
                 '<p class="settings-hint" style="margin-bottom:12px;">Persistent custom actions at the base of the panel.</p>' +
                 renderUtilityEditor(util)) +
+              (panelEdit && (panelEdit.scope === "utility" || panelEdit.scope === "util") ? renderActionModal() : '') +
 
               // Card 5: Core System Row
               sectionCard("Core System Row", "build_circle",
                 '<p class="settings-hint" style="margin-bottom:12px;">Dedicated system toggles & controls (PC Stats, Overlay, Mic, Settings, or custom shortcuts).</p>' +
                 renderCoreEditor(core)) +
+              (panelEdit && panelEdit.scope === "core" ? renderActionModal() : '') +
+              (panelEdit && panelEdit.scope !== "board" && panelEdit.scope !== "utility" && panelEdit.scope !== "util" && panelEdit.scope !== "core" ? renderActionModal() : '') +
             '</div>' +
           '</div>' +
         '</div>' +
-        (panelEdit ? renderActionModal() : '') +
       '</section>';
 
     main.innerHTML = html;
     rebindHamburger();
     wireDefaultProfileEditor();
     paintPanelRanges(main);
+
+    if (panelEdit) {
+      const activeEditCard = document.getElementById("panel-modal");
+      if (activeEditCard) {
+        setTimeout(() => {
+          activeEditCard.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }, 50);
+      }
+    }
   }
 
   function wireDefaultProfileEditor() {
@@ -6761,6 +6773,15 @@
     main.innerHTML = html;
     rebindHamburger();
     wireGameProfileEditor();
+
+    if (panelEdit) {
+      const activeEditCard = document.getElementById("panel-modal");
+      if (activeEditCard) {
+        setTimeout(() => {
+          activeEditCard.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }, 50);
+      }
+    }
   }
 
   function wireGameProfileEditor() {
@@ -7589,6 +7610,14 @@
       });
 
       // 4. Quick Apps
+      items.push({
+        id: "app.custom",
+        name: "Custom App / Executable...",
+        icon: "folder-open",
+        cat: "Apps",
+        type: "shortcut",
+        badge: "Browse"
+      });
       COMMON_QUICK_APPS.forEach(app => {
         items.push({
           id: `app.${app.brand || app.name.toLowerCase().replace(/\s+/g, "_")}`,
@@ -11867,8 +11896,11 @@
       const entId = (showSource && hiddenEnt) ? hiddenEnt.value.trim() : "";
 
       const pathWrap = document.getElementById("pe-path-wrap");
-      const isCustomShortcut = (t === "HOTKEY" && (entId.startsWith("app.") || !entId));
-      if (pathWrap) pathWrap.style.display = (isCustomShortcut && modalSlot.shortcut_path) ? "" : "none";
+      const pathInp = document.getElementById("pe-path");
+      const curPathVal = pathInp ? pathInp.value.trim() : "";
+      const isAppTarget = entId.startsWith("app.") || entId === "app.custom";
+      const isCustomShortcut = (t === "HOTKEY" && (isAppTarget || (!entId && (curPathVal || modalSlot.shortcut_path))));
+      if (pathWrap) pathWrap.style.display = (isAppTarget || (isCustomShortcut && (curPathVal || modalSlot.shortcut_path))) ? "" : "none";
 
       const isMediaPlayPause = (entId === "media.play_pause");
       const isMediaEject = (entId === "media.player" || entId === "media.eject");
@@ -12383,7 +12415,8 @@
     });
     document.getElementById("pe-save").addEventListener("click", () => {
       const t = document.getElementById("pe-type").value;
-      const isApp = t === "SHORTCUT";
+      const rawPathVal = (document.getElementById("pe-path") ? document.getElementById("pe-path").value.trim() : "");
+      const isApp = t === "SHORTCUT" || (t === "HOTKEY" && !!rawPathVal);
       const isGroup = t === "GROUP";
       const isEmpty = t === "EMPTY";
       const isCore = t === "CORE";
@@ -12408,7 +12441,7 @@
       if (currentIconMode === "auto") {
         finalUseAppIcon = true;
         finalIcon = "application";
-        finalAppIconPath = isApp ? (document.getElementById("pe-path").value.trim() || null) : null;
+        finalAppIconPath = isApp ? (rawPathVal || null) : null;
       } else if (currentIconMode === "custom") {
         finalUseAppIcon = true;
         finalIcon = "apps";
@@ -12416,13 +12449,13 @@
       } else { // "mdi"
         finalUseAppIcon = false;
         finalIcon = selectedMdi || "toggle-switch";
-        finalAppIconPath = null;
+        finalAppIconPath = isApp ? (rawPathVal || null) : null;
       }
 
       const entSelectEl = document.getElementById("pe-entity");
       const entPluginEl = document.getElementById("pe-entity-plugin");
       const resolvedEntId = (canHaveEntity && entSelectEl && entSelectEl.value) ? entSelectEl.value.trim() : (modalSlot.entity || curEntity || "");
-      let targetEntObj = resolvedEntId ? (panelEntities || []).find((e) => e.id === resolvedEntId || e.state_key === resolvedEntId || (e.plugin && e.button_id && `${e.plugin}.${e.button_id}` === resolvedEntId)) : null;
+      let targetEntObj = (resolvedEntId && resolvedEntId !== "app.custom") ? (panelEntities || []).find((e) => e.id === resolvedEntId || e.state_key === resolvedEntId || (e.plugin && e.button_id && `${e.plugin}.${e.button_id}` === resolvedEntId)) : null;
 
       if (!targetEntObj && resolvedEntId && resolvedEntId.includes(".")) {
         const [p, b] = resolvedEntId.split(".", 2);
@@ -12453,7 +12486,7 @@
           slot.icon = def.icon;
         }
       }
-      if (resolvedEntId) {
+      if (resolvedEntId && resolvedEntId !== "app.custom") {
         slot.entity = resolvedEntId;
         const [defaultPlg, defaultBid] = resolvedEntId.includes(".") ? resolvedEntId.split(".", 2) : [resolvedEntId, ""];
         slot.plugin = defaultPlg;
@@ -12475,11 +12508,11 @@
         if (modalSlot.labels) slot.labels = modalSlot.labels;
         if (modalSlot.colors) slot.colors = modalSlot.colors;
       }
-      if (t === "SHORTCUT") {
-        slot.shortcut_path = document.getElementById("pe-path").value.trim();
+      if (t === "SHORTCUT" || (t === "HOTKEY" && rawPathVal)) {
+        slot.shortcut_path = rawPathVal;
         const sArgs = document.getElementById("pe-args") ? document.getElementById("pe-args").value.trim() : "";
         if (sArgs) slot.shortcut_args = sArgs;
-        if (currentIconMode === "auto") {
+        if (currentIconMode === "auto" || !slot.app_icon_path) {
           slot.app_icon_path = slot.shortcut_path || null;
         }
       }

@@ -370,7 +370,7 @@ def execute_slot(slot):
                 st = toggle_mic_mute()
                 return {"ok": True, "state": st}
             # Unknown core_action — fall through
-        if btype == "SHORTCUT":
+        if (btype == "SHORTCUT" or (btype == "HOTKEY" and slot.get("shortcut_path"))) and not slot.get("entity"):
             _open_path(slot.get("shortcut_path"), slot.get("shortcut_args"))
             return {"ok": True}
         if btype == "REST":

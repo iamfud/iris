@@ -617,13 +617,13 @@ def sanitize_slot(raw, *, allow_group=True):
         slot["icon"] = "help-circle"
     if "color" not in slot:
         slot["color"] = ""
-    if btype in ("SHORTCUT", "EMPTY", "GROUP"):
+    if btype in ("EMPTY", "GROUP"):
         for ek in ("entity", "plugin", "button_id", "state_key", "labels", "colors", "show_state"):
             slot.pop(ek, None)
     elif not slot.get("entity") and not slot.get("plugin"):
         for ek in ("button_id", "state_key", "labels", "colors"):
             slot.pop(ek, None)
-    if btype not in ("SHORTCUT", "GROUP"):
+    if btype not in ("SHORTCUT", "GROUP", "HOTKEY", "MACRO") and not slot.get("shortcut_path"):
         slot.pop("shortcut_path", None)
         slot.pop("shortcut_args", None)
     if btype == "GROUP":
