@@ -6749,13 +6749,13 @@
               sectionCard("Button Deck", "apps",
                 '<p class="settings-hint" style="margin-bottom:14px;">Buttons displayed on companion screen when this profile is active. Click to configure or drag to reorder.</p>' +
                 renderBoardEditor(board, [])) +
+              (panelEdit ? renderActionModal() : '') +
             '</div>' +
           '</div>' +
 
           // ── Bottom: Live Telemetry & Entities Table ──
           telemetryHtml +
         '</div>' +
-        (panelEdit ? renderActionModal() : '') +
       '</section>';
 
     main.innerHTML = html;
@@ -7134,6 +7134,7 @@
             targetToggleRow("Button box", "button_box") +
             profileSelectHtml() +
             renderBoardEditor(board, [])) +
+          (panelEdit && panelEdit.scope === "board" ? renderActionModal() : '') +
           // Sliders (brightness only when hardware is connected)
           sectionCard("Sliders", "tune",
             targetToggleRow("Sliders section", "sliders") +
@@ -7145,13 +7146,15 @@
           sectionCard("Utility row", "grid_view",
             targetToggleRow("Utility row", "utility") +
             renderUtilityEditor(util)) +
+          (panelEdit && (panelEdit.scope === "utility" || panelEdit.scope === "util") ? renderActionModal() : '') +
           // Core
           sectionCard("Core row", "build_circle",
             targetToggleRow("Core row", "core") +
             renderCoreEditor(core)) +
+          (panelEdit && panelEdit.scope === "core" ? renderActionModal() : '') +
+          (panelEdit && panelEdit.scope !== "board" && panelEdit.scope !== "utility" && panelEdit.scope !== "util" && panelEdit.scope !== "core" ? renderActionModal() : '') +
         '</div>' +
         (panelProfileModal ? renderProfileModal() : '') +
-        (panelEdit ? renderActionModal() : '') +
       '</section>';
 
     main.innerHTML = html;
@@ -7163,6 +7166,15 @@
     if (newContent && prevContentScroll) newContent.scrollTop = prevContentScroll;
     const newEditor = main.querySelector('.panel-editor-col');
     if (newEditor && prevEditorScroll) newEditor.scrollTop = prevEditorScroll;
+
+    if (panelEdit) {
+      const activeEditCard = document.getElementById("panel-modal");
+      if (activeEditCard) {
+        setTimeout(() => {
+          activeEditCard.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }, 50);
+      }
+    }
   }
 
   function targetToggleRow(label, sectionId) {
@@ -7370,7 +7382,8 @@
             }
           }
         }
-        h += '<div class="panel-slot-tile elite-style" draggable="true" data-act="edit" data-i="' + idx + '" data-path="' + path.join(",") + '" role="button" tabindex="0"' + tileStyle + '>' +
+        const isEditingSlot = !!(panelEdit && panelEdit.scope === "board" && panelEdit.index === idx);
+        h += '<div class="panel-slot-tile elite-style' + (isEditingSlot ? ' is-editing-slot' : '') + '" draggable="true" data-act="edit" data-i="' + idx + '" data-path="' + path.join(",") + '" role="button" tabindex="0"' + tileStyle + '>' +
           '<div class="panel-slot-drag-handle" title="Drag to reorder"><span class="material-icons-outlined" style="font-size:14px;">drag_indicator</span></div>' +
           (stateBadge ? '<span class="panel-slot-badge">' + esc(stateBadge) + '</span>' : '') +
           '<div class="panel-slot-thumb">' + thumb + '</div>' +
@@ -7389,7 +7402,8 @@
     let h = '<div class="panel-util-grid">';
     for (let i = 0; i < 4; i++) {
       const s = util[i] || { type: "EMPTY", name: "" };
-      h += '<button type="button" class="panel-util-tile" data-i="' + i + '">' +
+      const isEditingSlot = !!(panelEdit && (panelEdit.scope === "utility" || panelEdit.scope === "util") && panelEdit.index === i);
+      h += '<button type="button" class="panel-util-tile' + (isEditingSlot ? ' is-editing-slot' : '') + '" data-i="' + i + '">' +
         '<span class="panel-util-label">Slot ' + (i + 1) + '</span>' +
         '<span class="panel-slot-name">' + esc(s.name || s.type || "Empty") + '</span>' +
         '<span class="panel-slot-type">' + esc(actionLabel(s.type)) + '</span>' +
@@ -7404,7 +7418,8 @@
     for (let i = 0; i < 4; i++) {
       const s = (core && core[i]) || defaultCoreSlots()[i] || { type: "EMPTY", name: "" };
       let actType = s.type === "CORE" ? (s.name || "Core") : actionLabel(s.type);
-      h += '<button type="button" class="panel-util-tile panel-core-tile" data-i="' + i + '">' +
+      const isEditingSlot = !!(panelEdit && panelEdit.scope === "core" && panelEdit.index === i);
+      h += '<button type="button" class="panel-util-tile panel-core-tile' + (isEditingSlot ? ' is-editing-slot' : '') + '" data-i="' + i + '">' +
         '<span class="panel-util-label">Core ' + (i + 1) + '</span>' +
         '<span class="panel-slot-name">' + esc(s.name || s.type || "Core") + '</span>' +
         '<span class="panel-slot-type">' + esc(actType) + '</span>' +
@@ -7540,11 +7555,157 @@
     return entOptHtml;
   }
 
+  function buildComboboxItems(targetType) {
+    const items = [];
+    const entities = (panelEntities || []).filter(e => !e.diagnostic);
+
+    if (targetType === "HOTKEY") {
+      // 1. Core System Actions
+      items.push({ id: "system.settings", name: "Open Settings", icon: "cog", cat: "System", type: "action", badge: "Core" });
+      items.push({ id: "system.borderless_toggle", name: "Toggle Borderless", icon: "window-maximize", cat: "System", type: "action", badge: "Window" });
+      items.push({ id: "system.screenshot", name: "Screenshot", icon: "camera", cat: "System", type: "action", badge: "Capture" });
+      items.push({ id: "system.screenshot_zone", name: "Snipping Tool", icon: "crop", cat: "System", type: "action", badge: "Capture" });
+      items.push({ id: "system.colour_picker", name: "Colour Picker", icon: "eyedropper", cat: "System", type: "action", badge: "Tool" });
+
+      // 2. Media Controls
+      items.push({ id: "media.play_pause", name: "Play / Pause", icon: "play-pause", cat: "Media", type: "action", badge: "Media" });
+      items.push({ id: "media.next", name: "Next Track", icon: "skip-next", cat: "Media", type: "action", badge: "Media" });
+      items.push({ id: "media.prev", name: "Previous Track", icon: "skip-previous", cat: "Media", type: "action", badge: "Media" });
+      items.push({ id: "media.player", name: "Media Player", icon: "eject", cat: "Media", type: "action", badge: "Media" });
+
+      // 3. RGB Profiles
+      entities.filter(e => e.openrgb_profile || e.plugin === "rgb" || e.plugin === "openrgb" || (e.id && e.id.startsWith("rgb.profile."))).forEach(e => {
+        const pName = e.openrgb_profile || e.name || e.id;
+        const cleanName = e.name && e.name.startsWith("Profile:") ? e.name : `Profile: ${pName}`;
+        items.push({
+          id: e.id,
+          name: cleanName,
+          icon: "palette",
+          cat: "RGB",
+          type: "action",
+          badge: "Lighting",
+          openrgb_profile: e.openrgb_profile || pName
+        });
+      });
+
+      // 4. Quick Apps
+      COMMON_QUICK_APPS.forEach(app => {
+        items.push({
+          id: `app.${app.brand || app.name.toLowerCase().replace(/\s+/g, "_")}`,
+          name: app.name,
+          icon: app.icon || "apps",
+          brand: app.brand,
+          path: app.path,
+          cat: "Apps",
+          type: "shortcut",
+          badge: "App"
+        });
+      });
+
+      // 5. Home Assistant scripts / scenes
+      entities.filter(e => e.plugin === "ha" && (e.ha_domain === "scene" || e.ha_domain === "script" || e.type === "action")).forEach(e => {
+        items.push({
+          id: e.id,
+          name: e.name || e.id,
+          icon: e.icon || "home-automation",
+          cat: "Home Assistant",
+          type: "action",
+          badge: (e.ha_domain || "HA").toUpperCase()
+        });
+      });
+
+      // 6. Game Actions (Elite Dangerous)
+      entities.filter(e => e.plugin === "elite_dangerous" && e.type === "action").forEach(e => {
+        items.push({
+          id: e.id,
+          name: e.name || e.id,
+          icon: e.icon || "rocket-launch",
+          cat: "Game",
+          type: "action",
+          badge: "Elite"
+        });
+      });
+
+    } else if (targetType === "TOGGLE") {
+      // 1. Core System Toggles
+      items.push({ id: "system.mic_mute", name: "Microphone Mute", icon: "microphone", cat: "System", type: "status", badge: "Toggle" });
+      items.push({ id: "system.display", name: "Companion Display", icon: "desktop-tower-monitor", cat: "System", type: "status", badge: "Hardware" });
+      items.push({ id: "system.overlay", name: "PC Stats Overlay", icon: "picture-in-picture-bottom-right", cat: "System", type: "status", badge: "Overlay" });
+      items.push({ id: "system.toolbar", name: "Desktop Toolbar", icon: "dock-top", cat: "System", type: "status", badge: "Desktop" });
+      items.push({ id: "system.lighting_sync", name: "Lighting Sync", icon: "lightbulb", cat: "System", type: "status", badge: "RGB" });
+
+      // 2. Game Toggles (Elite Dangerous)
+      entities.filter(e => e.plugin === "elite_dangerous" && (e.type === "status" || e.type === "toggle" || e.writable)).forEach(e => {
+        items.push({
+          id: e.id,
+          name: e.name || e.id,
+          icon: e.icon || "rocket-launch",
+          cat: "Game",
+          type: "status",
+          badge: "Elite"
+        });
+      });
+
+      // 3. Home Assistant Toggles
+      entities.filter(e => e.plugin === "ha" && (e.ha_domain === "switch" || e.ha_domain === "light" || e.ha_domain === "input_boolean" || e.writable)).forEach(e => {
+        items.push({
+          id: e.id,
+          name: e.name || e.id,
+          icon: e.icon || "power",
+          cat: "Home Assistant",
+          type: "status",
+          badge: (e.ha_domain || "HA").toUpperCase()
+        });
+      });
+
+    } else if (targetType === "SENSOR") {
+      // 1. PC Stats Sensors
+      entities.filter(e => e.plugin === "pc_stats" || e.id.startsWith("pc_stats.")).forEach(e => {
+        items.push({
+          id: e.id,
+          name: e.name || e.id,
+          icon: e.icon || "gauge",
+          unit: e.unit || "",
+          cat: "PC Stats",
+          type: "data",
+          badge: e.unit || "Gauge"
+        });
+      });
+
+      // 2. Time Sensors
+      entities.filter(e => e.plugin === "time" || e.id.startsWith("time.")).forEach(e => {
+        items.push({
+          id: e.id,
+          name: e.name || e.id,
+          icon: e.icon || "clock-outline",
+          cat: "Time",
+          type: "data",
+          badge: "Clock"
+        });
+      });
+
+      // 3. Game Telemetry Sensors
+      entities.filter(e => e.plugin === "elite_dangerous" && e.type === "data").forEach(e => {
+        items.push({
+          id: e.id,
+          name: e.name || e.id,
+          icon: e.icon || "speedometer",
+          unit: e.unit || "",
+          cat: "Game",
+          type: "data",
+          badge: e.unit || "Ship"
+        });
+      });
+    }
+
+    return items;
+  }
+
   function renderActionModal() {
     const ctx = panelEdit;
     const isCore = ctx.scope === "core";
     const isUtil = ctx.scope === "utility" || ctx.scope === "util" || isCore;
-    let slot = { name: "", type: isCore ? "CORE" : "HOTKEY", icon: "gesture-tap-button", color: "", show_name: true, show_icon: true, show_state: true };
+    let slot = { name: "", type: isCore ? "HOTKEY" : "HOTKEY", icon: "gesture-tap-button", color: "", show_name: true, show_icon: true, show_state: true };
     if (isCore) {
       slot = Object.assign(slot, ((panelDraft && panelDraft.panel_core) || defaultCoreSlots())[ctx.index] || {});
     } else if (isUtil) {
@@ -7554,19 +7715,17 @@
       if (ctx.index >= 0 && list[ctx.index]) slot = Object.assign(slot, list[ctx.index]);
     }
     const allowGroup = !isUtil && ctx.scope === "board";
-    let curType = slot.type || (isCore ? "CORE" : "HOTKEY");
+    let curType = slot.type || (isCore ? "HOTKEY" : "HOTKEY");
+    if (curType === "SHORTCUT" || curType === "CORE" || curType === "AUDIO OUTPUT") curType = "HOTKEY";
     if (curType === "PLUGIN_BUTTON" || curType === "REST" || curType.startsWith("MEDIA_")) curType = "TOGGLE";
 
     const typeOptions = [
-      { type: "CORE", label: "Iris Core Action" },
       { type: "HOTKEY", label: "Button" },
-      { type: "TOGGLE", label: "Toggle Button" },
-      { type: "SHORTCUT", label: "App / Shortcut" },
-      { type: "MACRO", label: "Multi-Action Macro" },
-      { type: "AUDIO OUTPUT", label: "Audio Device Switcher" },
-      { type: "SENSOR", label: "Status / Sensor" },
-      { type: "EMPTY", label: "Empty / Spacer" },
-      { type: "GROUP", label: "Group / Profile Link" },
+      { type: "TOGGLE", label: "Toggle button" },
+      { type: "MACRO", label: "Macro" },
+      { type: "SENSOR", label: "Num/Status" },
+      { type: "GROUP", label: "Group" },
+      { type: "EMPTY", label: "Empty" },
     ].filter((a) => allowGroup || a.type !== "GROUP");
 
     const curCoreAct = slot.core_action || (ctx.index === 0 ? "display" : ctx.index === 1 ? "overlay" : ctx.index === 2 ? "mic" : "settings");
@@ -7582,7 +7741,7 @@
     const isOpenRGBProfile = (curEntity && (curEntity.startsWith("openrgb.") || curEntity.startsWith("rgb."))) || !!slot.openrgb_profile;
     const isMediaEject = (curEntity === "media.player" || curEntity === "media.eject" || curType === "MEDIA_EJECT");
     const isAnyMediaControl = (isMediaPlayPause || curEntity === "media.next" || curEntity === "media.prev" || isMediaEject || isOpenRGBProfile);
-    const isShortcut = (curType === "SHORTCUT");
+    const isShortcut = (curType === "SHORTCUT" || !!slot.shortcut_path);
     const useAppIcon = (isShortcut || isMediaEject) && (slot.use_app_icon !== undefined ? !!slot.use_app_icon : (isShortcut || !!slot.app_icon_path));
     const showAlbumArt = isMediaEject && (slot.show_album_art !== undefined ? !!slot.show_album_art : true);
     const entObj = curEntity ? (panelEntities || []).find((e) => e.id === curEntity) : null;
@@ -7619,39 +7778,24 @@
         ? '<img class="pe-icon-live-img" id="pe-icon-live-img" src="' + API_BASE + '/api/panel/icon?path=' + encodeURIComponent(customIconPath) + tokQs + '" alt="">'
         : '<span class="md" id="pe-icon-live" data-md="' + esc(curIcon) + '">' + esc(curIconChar) + '</span>');
 
-    const entOptHtml = buildEntityOptions(curType, curEntity);
-
-    // Group entities by plugin / domain for 2-step plugin + searchable entity picker in button modal
-    let curEntityPlugin = "all";
-    if (curEntity) {
-      const matchEnt = (panelEntities || []).find((e) => e.id === curEntity || e.state_key === curEntity);
-      if (matchEnt && matchEnt.plugin) {
-        curEntityPlugin = matchEnt.plugin;
-      } else if (slot.plugin) {
-        curEntityPlugin = slot.plugin;
-      } else if (curEntity.includes(".")) {
-        curEntityPlugin = curEntity.split(".")[0];
-      }
-    }
-
-    const buttonPluginGroups = { "all": "All Sources" };
-    (panelEntities || []).forEach((ent) => {
-      const plg = ent.plugin || (ent.id && ent.id.includes(".") ? ent.id.split(".")[0] : "core");
-      const dName = ent.domain || plg.toUpperCase();
-      if (!buttonPluginGroups[plg]) buttonPluginGroups[plg] = dName;
-    });
-
-    let buttonPluginOptionsHtml = Object.keys(buttonPluginGroups).map((k) => '<option value="' + esc(k) + '"' + (k === curEntityPlugin ? ' selected' : '') + '>' + esc(buttonPluginGroups[k]) + '</option>').join("");
-
-    let h = '<div class="panel-modal-backdrop" id="panel-modal">' +
-      '<div class="panel-modal panel-modal-wide">' +
-      '<div class="panel-modal-header">' +
-        '<h3>' + (isCore ? ("Edit Core Button (Slot " + (ctx.index + 1) + ")") : (isUtil ? ("Edit Utility Button (Slot " + (ctx.index + 1) + ")") : (ctx.index < 0 ? "Add Action" : ("Edit Action (Slot " + (ctx.index + 1) + ")")))) + '</h3>' +
-        '<span class="panel-modal-subtitle">Configure entity, appearance, and card display</span>' +
+    // In-Frame Slot Editor Card
+    let h = '<div class="settings-section slot-editor-section" id="panel-modal">' +
+      '<div class="settings-card slot-editor-card">' +
+      '<div class="slot-editor-header">' +
+        '<div class="slot-editor-title-wrap">' +
+          '<span class="material-icons-outlined slot-editor-header-icon">edit</span>' +
+          '<div class="slot-editor-headings">' +
+            '<h3>' + (isCore ? ("Core Button (Slot " + (ctx.index + 1) + ")") : (isUtil ? ("Utility Button (Slot " + (ctx.index + 1) + ")") : (ctx.index < 0 ? "Add Action" : ("Slot " + (ctx.index + 1) + (slot.name ? (" · " + esc(slot.name)) : ""))))) + '</h3>' +
+            '<span class="slot-editor-subtitle">Configure function, source entity, and appearance</span>' +
+          '</div>' +
+        '</div>' +
+        '<div class="slot-editor-header-actions">' +
+          '<button type="button" class="settings-btn slot-editor-close-btn" id="pe-cancel" title="Close editor">✕</button>' +
+        '</div>' +
       '</div>' +
       '<div class="panel-modal-body-grid" id="pe-body-grid">' +
 
-        /* Column 1: Config */
+        /* Column 1: Function & Target */
         '<div class="panel-modal-col">' +
           '<div class="settings-control" id="pe-name-wrap"><label class="settings-label">Name</label>' +
           '<input type="text" class="settings-input" id="pe-name" value="' + esc(slot.name || "") + '" placeholder="e.g. Play/Pause, Elite, Mute"></div>' +
@@ -7663,26 +7807,31 @@
     });
     h += '</select></div>';
 
-    h += ('<div class="settings-control" id="pe-core-wrap"' + (curType === "CORE" ? '' : ' style="display:none"') + '>' +
-            '<label class="settings-label">Core Action</label>' +
-            '<select class="settings-select" id="pe-core-act">');
-    Object.keys(CORE_ACTION_DEFS).forEach((k) => {
-      const def = CORE_ACTION_DEFS[k];
-      h += '<option value="' + esc(k) + '"' + (curCoreAct === k ? ' selected' : '') + '>' + esc(def.label || def.name) + '</option>';
-    });
-    h +=    ('</select>' +
-            '<span class="settings-hint">Built-in Iris core system action.</span>' +
-          '</div>' +
-          '<div class="settings-control" id="pe-entity-wrap">' +
-            '<label class="settings-label">Entity (Optional / Quick-Fill)</label>' +
-            '<div class="settings-picker-row" style="gap:6px;margin-bottom:6px">' +
-              '<select class="settings-select" id="pe-entity-plugin" style="width:140px;flex:0 0 auto">' +
-                buttonPluginOptionsHtml +
-              '</select>' +
-              '<input type="text" class="settings-input" id="pe-entity-search" placeholder="Search entities..." style="flex:1">' +
+    // Single Searchable Dropdown / Combobox Component
+    h += ('<div class="settings-control" id="pe-source-wrap">' +
+            '<label class="settings-label" id="pe-source-label">Target / Source</label>' +
+            '<div class="pe-combobox-container" id="pe-combobox-container">' +
+              '<div class="pe-combobox-trigger-row" id="pe-combobox-trigger">' +
+                '<span class="pe-combobox-icon-badge" id="pe-combobox-badge">' +
+                  '<span class="md" id="pe-combobox-icon" data-md="gesture-tap-button"></span>' +
+                '</span>' +
+                '<input type="text" class="settings-select pe-combobox-input" id="pe-combobox-display" placeholder="Select target..." readonly>' +
+                '<input type="hidden" id="pe-entity" value="' + esc(curEntity) + '">' +
+                '<button type="button" class="pe-combobox-clear-btn" id="pe-combobox-clear" title="Clear selection">✕</button>' +
+                '<span class="material-icons-outlined pe-combobox-chevron">expand_more</span>' +
+              '</div>' +
+              '<div class="pe-combobox-popup" id="pe-combobox-popup" style="display:none">' +
+                '<div class="pe-combobox-search-row">' +
+                  '<span class="material-icons-outlined pe-combobox-search-icon">search</span>' +
+                  '<input type="text" class="settings-input pe-combobox-search-box" id="pe-combobox-search" placeholder="Search..." autocomplete="off">' +
+                '</div>' +
+                '<div class="pe-combobox-cat-bar" id="pe-combobox-cat-bar"></div>' +
+                '<div class="pe-combobox-list-scroll">' +
+                  '<div class="pe-combobox-list" id="pe-combobox-list"></div>' +
+                '</div>' +
+              '</div>' +
             '</div>' +
-            '<select class="settings-select" id="pe-entity"></select>' +
-            '<span class="settings-hint">Filter by plugin and search to auto-populate defaults and bind live telemetry.</span>' +
+            '<span class="settings-hint" id="pe-source-hint">Select the action, toggle, or sensor this button connects to.</span>' +
           '</div>' +
 
           '<div class="settings-control" id="pe-group-profile-wrap" style="display:none">' +
@@ -9857,6 +10006,9 @@
       glyph = centerTitle ? ('<span class="pdev-text-only"' + glyphStyle + '>' + esc(formatTileTitle(centerTitle)) + '</span>') : "";
     }
 
+    const isEditingSlot = !!(panelEdit && (panelEdit.scope === listName || (panelEdit.scope === "utility" && listName === "util")) && panelEdit.index === idx);
+    if (isEditingSlot) extraTileClass += " is-editing-slot";
+
     return '<button type="button" class="pdev-tile' + (isGroup ? " pdev-group" : "") + (listName === "core" ? " pdev-core-tile" : "") + extraTileClass + '"' +
       extraTileStyle +
       ' data-action="slot" data-list="' + listName + '" data-idx="' + idx + '"' +
@@ -11509,113 +11661,258 @@
         })
         .catch(() => { appIconPreview.hidden = true; });
     }
-    let curEntityPlugin = "all";
-    if (curEntity) {
-      const matchEnt = (panelEntities || []).find((e) => e.id === curEntity || e.state_key === curEntity);
-      if (matchEnt && matchEnt.plugin) {
-        curEntityPlugin = matchEnt.plugin;
-      } else if (modalSlot && modalSlot.plugin) {
-        curEntityPlugin = modalSlot.plugin;
-      } else if (curEntity.includes(".")) {
-        curEntityPlugin = curEntity.split(".")[0];
-      }
+    let currentComboboxCat = "all";
+    let currentComboboxQuery = "";
+
+    function closeComboboxPopup() {
+      const popup = document.getElementById("pe-combobox-popup");
+      const container = document.getElementById("pe-combobox-container");
+      if (popup) popup.style.display = "none";
+      if (container) container.classList.remove("open");
     }
+
+    function renderComboboxFiltered(targetType, cat, query) {
+      const popup = document.getElementById("pe-combobox-popup");
+      const listEl = document.getElementById("pe-combobox-list");
+      const catBar = document.getElementById("pe-combobox-cat-bar");
+      const hiddenEnt = document.getElementById("pe-entity");
+      if (!popup || !listEl || !catBar) return;
+
+      const allItems = buildComboboxItems(targetType);
+      const q = (query || "").trim().toLowerCase();
+      const activeCat = cat || "all";
+
+      // Render category pills
+      const categories = ["all"];
+      allItems.forEach(it => {
+        const c = (it.cat || "Other").toLowerCase();
+        if (!categories.includes(c)) categories.push(c);
+      });
+
+      catBar.innerHTML = categories.map(c => {
+        const label = c === "all" ? "All" : (c.charAt(0).toUpperCase() + c.slice(1));
+        return `<button type="button" class="pe-combobox-cat-pill${c === activeCat ? ' active' : ''}" data-cat="${esc(c)}">${esc(label)}</button>`;
+      }).join("");
+
+      catBar.querySelectorAll(".pe-combobox-cat-pill").forEach(pill => {
+        pill.onclick = (e) => {
+          e.stopPropagation();
+          currentComboboxCat = pill.getAttribute("data-cat");
+          renderComboboxFiltered(targetType, currentComboboxCat, currentComboboxQuery);
+        };
+      });
+
+      // Filter items
+      const filtered = allItems.filter(it => {
+        if (activeCat !== "all" && (it.cat || "Other").toLowerCase() !== activeCat) return false;
+        if (q) {
+          const matchName = (it.name || "").toLowerCase().includes(q);
+          const matchId = (it.id || "").toLowerCase().includes(q);
+          const matchCat = (it.cat || "").toLowerCase().includes(q);
+          if (!matchName && !matchId && !matchCat) return false;
+        }
+        return true;
+      });
+
+      const curVal = hiddenEnt ? hiddenEnt.value : "";
+      if (!filtered.length) {
+        listEl.innerHTML = '<div style="font-size:12px;color:var(--fg-dim);padding:16px;text-align:center;">No matching items found.</div>';
+        return;
+      }
+
+      listEl.innerHTML = filtered.map(item => {
+        const isSel = (item.id === curVal);
+        const iconHtml = item.brand
+          ? (typeof getMediaPlayerBrandIcon === "function" ? getMediaPlayerBrandIcon(item.brand) : '<span class="md">apps</span>')
+          : `<span class="md" data-md="${esc(item.icon || 'gesture-tap-button')}">${esc(mdiChar(item.icon || 'gesture-tap-button'))}</span>`;
+        return `
+          <button type="button" class="pe-combobox-item${isSel ? ' active' : ''}" data-id="${esc(item.id)}" title="${esc(item.name)}">
+            <span class="pe-combobox-item-icon">${iconHtml}</span>
+            <span class="pe-combobox-item-label">${esc(item.name)}</span>
+            <span class="pe-combobox-item-badge">${esc(item.badge || item.cat || "")}</span>
+          </button>
+        `;
+      }).join("");
+
+      listEl.querySelectorAll(".pe-combobox-item").forEach(btn => {
+        btn.onclick = (e) => {
+          e.stopPropagation();
+          const id = btn.getAttribute("data-id");
+          const matched = allItems.find(it => it.id === id);
+          if (matched) {
+            selectComboboxItem(matched);
+          }
+        };
+      });
+    }
+
+    function selectComboboxItem(item) {
+      const hiddenEnt = document.getElementById("pe-entity");
+      const displayInp = document.getElementById("pe-combobox-display");
+      const badgeEl = document.getElementById("pe-combobox-badge");
+      const nameInp = document.getElementById("pe-name");
+      const pathInp = document.getElementById("pe-path");
+
+      if (hiddenEnt) hiddenEnt.value = item ? item.id : "";
+      if (displayInp) displayInp.value = item ? item.name : "(None / Standalone Action)";
+      if (badgeEl) {
+        if (item && item.brand) {
+          const svg = typeof getMediaPlayerBrandIcon === "function" ? getMediaPlayerBrandIcon(item.brand) : null;
+          badgeEl.innerHTML = svg || `<span class="md">${esc(mdiChar(item.icon || "apps"))}</span>`;
+        } else {
+          const ic = (item && item.icon) ? item.icon : "gesture-tap-button";
+          badgeEl.innerHTML = `<span class="md" data-md="${esc(ic)}">${esc(mdiChar(ic))}</span>`;
+        }
+      }
+
+      // Auto-fill button name if empty or generic
+      if (nameInp && item && (!nameInp.value || nameInp.value === "New Action" || nameInp.value === "Button" || nameInp.value.startsWith("Slot "))) {
+        nameInp.value = item.name.replace(/^Profile:\s*/i, "");
+      }
+
+      // Auto-fill icon
+      if (item && item.icon) {
+        const iconInp = document.getElementById("pe-icon");
+        if (iconInp) {
+          iconInp.value = item.icon;
+          updateLiveIcon(item.icon);
+        }
+      }
+
+      // Handle app shortcut
+      if (item && item.path && pathInp) {
+        pathInp.value = item.path;
+        try { loadAppIcon(); } catch (_) {}
+      }
+
+      // Handle openrgb profile
+      if (item && item.openrgb_profile) {
+        modalSlot.openrgb_profile = item.openrgb_profile;
+      }
+
+      closeComboboxPopup();
+      syncFields();
+    }
+
+    const cbTrigger = document.getElementById("pe-combobox-trigger");
+    if (cbTrigger) {
+      cbTrigger.onclick = (e) => {
+        e.stopPropagation();
+        const popup = document.getElementById("pe-combobox-popup");
+        const container = document.getElementById("pe-combobox-container");
+        if (!popup || !container) return;
+        const isOpen = popup.style.display !== "none";
+        if (isOpen) {
+          closeComboboxPopup();
+        } else {
+          const iconPop = document.getElementById("pe-icon-popup");
+          if (iconPop) iconPop.style.display = "none";
+          popup.style.display = "flex";
+          container.classList.add("open");
+          const searchInp = document.getElementById("pe-combobox-search");
+          if (searchInp) {
+            searchInp.value = "";
+            currentComboboxQuery = "";
+            setTimeout(() => searchInp.focus(), 50);
+          }
+          renderComboboxFiltered(typeEl.value, currentComboboxCat, "");
+        }
+      };
+    }
+
+    const cbClear = document.getElementById("pe-combobox-clear");
+    if (cbClear) {
+      cbClear.onclick = (e) => {
+        e.stopPropagation();
+        selectComboboxItem(null);
+      };
+    }
+
+    const cbSearch = document.getElementById("pe-combobox-search");
+    if (cbSearch) {
+      cbSearch.oninput = () => {
+        currentComboboxQuery = cbSearch.value.trim().toLowerCase();
+        renderComboboxFiltered(typeEl.value, currentComboboxCat, currentComboboxQuery);
+      };
+      cbSearch.onclick = (e) => e.stopPropagation();
+    }
+
+    document.addEventListener("click", (e) => {
+      const container = document.getElementById("pe-combobox-container");
+      if (container && !container.contains(e.target)) {
+        closeComboboxPopup();
+      }
+    });
 
     const syncFields = () => {
       const t = typeEl.value;
-      const isCore = t === "CORE";
-      const showGroupProf = t === "GROUP";
-      const showPath = t === "SHORTCUT";
-      const showAppIcon = t === "SHORTCUT";
-      const showEnt = !isCore && (t === "TOGGLE" || t === "SENSOR" || t === "HOTKEY");
-      const isAppShortcut = t === "SHORTCUT";
+      const isMacro = t === "MACRO";
+      const isGroup = t === "GROUP";
       const isEmpty = t === "EMPTY";
-
-      const coreWrap = document.getElementById("pe-core-wrap");
-      if (coreWrap) coreWrap.style.display = isCore ? "" : "none";
+      const showSource = (t === "HOTKEY" || t === "TOGGLE" || t === "SENSOR");
 
       const nameWrap = document.getElementById("pe-name-wrap");
       if (nameWrap) nameWrap.style.display = isEmpty ? "none" : "";
+
       const grpProfWrap = document.getElementById("pe-group-profile-wrap");
-      if (grpProfWrap) grpProfWrap.style.display = showGroupProf ? "" : "none";
-      const entWrap = document.getElementById("pe-entity-wrap");
-      if (entWrap) entWrap.style.display = showEnt ? "" : "none";
-      const pathWrap = document.getElementById("pe-path-wrap");
-      if (pathWrap) pathWrap.style.display = showPath ? "" : "none";
-      const argsWrap = document.getElementById("pe-args-wrap");
-      if (argsWrap) argsWrap.style.display = showPath ? "" : "none";
-      const entSelectEl = document.getElementById("pe-entity");
-      const entPluginEl = document.getElementById("pe-entity-plugin");
-      const entSearchEl = document.getElementById("pe-entity-search");
+      if (grpProfWrap) grpProfWrap.style.display = isGroup ? "" : "none";
 
-      const refreshEntityOptions = (targetEntity) => {
-        if (!entSelectEl) return;
-        const curVal = targetEntity !== undefined ? targetEntity : (curEntity || (entSelectEl ? entSelectEl.value : ""));
-        const pFilter = entPluginEl ? entPluginEl.value : "all";
-        const sQuery = entSearchEl ? entSearchEl.value : "";
-        entSelectEl.innerHTML = buildEntityOptions(t, curVal, pFilter, sQuery);
-        if (curVal && entSelectEl.querySelector(`option[value="${curVal}"]`)) {
-          entSelectEl.value = curVal;
-        } else {
-          entSelectEl.value = "";
-        }
-        if (isAppShortcut || showGroupProf || isEmpty || isCore) {
-          entSelectEl.value = "";
-        }
-      };
-
-      if (entPluginEl && !entPluginEl._initialized) {
-        entPluginEl._initialized = true;
-        if (curEntityPlugin && curEntityPlugin !== "all") {
-          entPluginEl.value = curEntityPlugin;
-        }
-      }
-      refreshEntityOptions(curEntity);
-      if (entPluginEl && !entPluginEl._wired) {
-        entPluginEl._wired = true;
-        entPluginEl.addEventListener("change", () => {
-          refreshEntityOptions(curEntity);
-        });
-      }
-      if (entSearchEl && !entSearchEl._wired) {
-        entSearchEl._wired = true;
-        entSearchEl.addEventListener("input", () => {
-          refreshEntityOptions(curEntity);
-        });
-      }
-
-      const entId = entSelectEl ? entSelectEl.value.trim() : "";
-      const isMediaPlayPause = (entId === "media.play_pause");
-      const isMediaEject = (entId === "media.player" || entId === "media.eject" || t === "MEDIA_EJECT");
-      const isAnyMediaControl = (isMediaPlayPause || entId === "media.next" || entId === "media.prev" || isMediaEject);
-      const isMacro = t === "MACRO";
-      const isAudio = t === "AUDIO OUTPUT";
       const macroWrap = document.getElementById("pe-macro-wrap");
       if (macroWrap) macroWrap.style.display = isMacro ? "" : "none";
-      const audioWrap = document.getElementById("pe-audio-output-wrap");
-      if (audioWrap) audioWrap.style.display = isAudio ? "" : "none";
 
-      const showKeys = (t !== "EMPTY" && t !== "AUDIO OUTPUT" && t !== "MACRO" && !isCore) && !isAnyMediaControl;
+      const sourceWrap = document.getElementById("pe-source-wrap");
+      if (sourceWrap) sourceWrap.style.display = showSource ? "" : "none";
+
+      const hiddenEnt = document.getElementById("pe-entity");
+      const entId = (showSource && hiddenEnt) ? hiddenEnt.value.trim() : "";
+
+      const pathWrap = document.getElementById("pe-path-wrap");
+      const isCustomShortcut = (t === "HOTKEY" && (entId.startsWith("app.") || !entId));
+      if (pathWrap) pathWrap.style.display = (isCustomShortcut && modalSlot.shortcut_path) ? "" : "none";
+
+      const isMediaPlayPause = (entId === "media.play_pause");
+      const isMediaEject = (entId === "media.player" || entId === "media.eject");
+      const isAnyMediaControl = (isMediaPlayPause || entId === "media.next" || entId === "media.prev" || isMediaEject || entId.startsWith("rgb.profile."));
+
       const keysWrap = document.getElementById("pe-keys-wrap");
-      if (keysWrap) keysWrap.style.display = showKeys ? "" : "none";
+      if (keysWrap) keysWrap.style.display = (t === "HOTKEY" && !isAnyMediaControl) ? "" : "none";
 
+      const visualCol = document.getElementById("pe-visual-col");
+      if (visualCol) visualCol.style.display = isEmpty ? "none" : "";
+
+      const showAlbumArtRow = document.getElementById("pe-show-album-art-row");
+      if (showAlbumArtRow) showAlbumArtRow.style.display = isMediaEject ? "" : "none";
+
+      const showProgressFillRow = document.getElementById("pe-show-progress-fill-row");
+      if (showProgressFillRow) showProgressFillRow.style.display = (t === "SENSOR") ? "" : "none";
+
+      const showStateRow = document.getElementById("pe-show-state-row");
+      if (showStateRow) showStateRow.style.display = (t === "TOGGLE" || t === "SENSOR") ? "" : "none";
+
+      if (showSource) {
+        const allItems = buildComboboxItems(t);
+        const match = allItems.find(it => it.id === entId);
+        const displayInp = document.getElementById("pe-combobox-display");
+        const badgeEl = document.getElementById("pe-combobox-badge");
+        if (displayInp) displayInp.value = match ? match.name : (entId ? entId : "(None / Standalone Action)");
+        if (badgeEl) {
+          const ic = match ? (match.icon || "gesture-tap-button") : "gesture-tap-button";
+          badgeEl.innerHTML = `<span class="md" data-md="${esc(ic)}">${esc(mdiChar(ic))}</span>`;
+        }
+      }
       const modeAutoTab = document.getElementById("pe-mode-auto");
-      const hasAutoIcon = (isAppShortcut || isMediaEject || isMacro);
+      const hasAutoIcon = (isCustomShortcut || isMediaEject || isMacro);
       if (modeAutoTab) modeAutoTab.style.display = hasAutoIcon ? "" : "none";
       if (!hasAutoIcon && currentIconMode === "auto") {
         setIconMode("mdi");
       }
 
-      const iconSourceControl = document.getElementById("pe-icon-source-control");
-      if (iconSourceControl) iconSourceControl.style.display = isAudio ? "none" : "";
-
-      const visualCol = document.getElementById("pe-visual-col");
       const bodyGrid = document.getElementById("pe-body-grid");
-      const modalCard = modal.querySelector(".panel-modal");
+      const modalCard = modal.querySelector(".panel-modal") || modal.querySelector(".slot-editor-card");
       const hideVisual = isEmpty;
       if (visualCol) visualCol.style.display = hideVisual ? "none" : "";
-      if (bodyGrid) bodyGrid.style.gridTemplateColumns = (hideVisual || isAudio) ? "1fr" : "";
-      if (modalCard) modalCard.style.maxWidth = (hideVisual || isAudio) ? "480px" : "";
+      if (bodyGrid) bodyGrid.style.gridTemplateColumns = hideVisual ? "1fr" : "";
+      if (modalCard) modalCard.style.maxWidth = hideVisual ? "480px" : "";
 
       if (hasAutoIcon) {
         try { loadAppIcon(); } catch (e) { appIconPreview.hidden = true; }
@@ -12053,9 +12350,10 @@
       }
     };
 
-    document.getElementById("pe-cancel").addEventListener("click", () => {
-      finishModalEdit();
-    });
+    const cancelTop = document.getElementById("pe-cancel");
+    if (cancelTop) cancelTop.addEventListener("click", () => finishModalEdit());
+    const cancelBottom = document.getElementById("pe-cancel-bottom");
+    if (cancelBottom) cancelBottom.addEventListener("click", () => finishModalEdit());
     const moveSlot = (delta) => {
       const list = boardAtPath(panelEdit.path || []);
       const j = panelEdit.index + delta;

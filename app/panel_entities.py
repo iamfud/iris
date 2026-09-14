@@ -441,6 +441,13 @@ def get_plugin_entities() -> List[Dict[str, Any]]:
                         if isinstance(f, dict) and (f.get("key") or f.get("id")):
                             field_items.append((f.get("key") or f.get("id"), f))
 
+            # Diagnostic fields that represent internal plugin health rather than user sensors
+            _DIAGNOSTIC_KEYS = {
+                "connected", "url", "location_name", "version", "sdk_version",
+                "status_code", "device_count", "devices", "active_profile",
+                "kraken_model", "sensor_count", "active_events"
+            }
+
             for sid, sdef in field_items:
                 if not sid:
                     continue
@@ -454,6 +461,13 @@ def get_plugin_entities() -> List[Dict[str, Any]]:
                     vtype = "boolean"
                 else:
                     vtype = "string"
+
+                is_diag = bool(
+                    (isinstance(sdef, dict) and (sdef.get("diagnostic") or sdef.get("category") == "diagnostic"))
+                    or sid in _DIAGNOSTIC_KEYS
+                    or name in ("rgb", "openrgb")  # RGB plugin's live_data is purely hardware status
+                )
+
                 entities.append({
                     "id": ent_id,
                     "plugin": name,
@@ -466,6 +480,7 @@ def get_plugin_entities() -> List[Dict[str, Any]]:
                     "color": "#48B2E9",
                     "unit": (sdef.get("unit") or "") if isinstance(sdef, dict) else "",
                     "writable": False,
+                    "diagnostic": is_diag,
                     "description": (sdef.get("description") or "") if isinstance(sdef, dict) else "",
                 })
 
@@ -493,8 +508,8 @@ def get_plugin_entities() -> List[Dict[str, Any]]:
                             "id": ent_id,
                             "plugin": name,
                             "button_id": "profile",
-                            "domain": "RGB",
-                            "name": p,
+                            "domain": "RGB Lighting",
+                            "name": f"Profile: {p}",
                             "type": "action",
                             "icon": "palette",
                             "color": "#00ff88",
@@ -560,10 +575,12 @@ def get_plugin_entities() -> List[Dict[str, Any]]:
     return entities
 
 
-def get_entity_registry() -> List[Dict[str, Any]]:
+def get_entity_registry(include_diagnostics: bool = False) -> List[Dict[str, Any]]:
     """Return full unified entity registry (Core + Plugins)."""
     registry = list(get_core_entities())
     registry.extend(get_plugin_entities())
+    if not include_diagnostics:
+        registry = [e for e in registry if not e.get("diagnostic")]
     return registry
 
 
