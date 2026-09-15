@@ -4,11 +4,12 @@ const STEPS = 90;          // half-cycle: palette resolution / steps one way
 const STEP_MS = 333.33;    // ~3 fps tick
 
 function resolve(cfg) {
-  const mode = (cfg && cfg.mode) || "iris";
-  const neon = (cfg && cfg.neon) || "";
-  const accent = (cfg && cfg.accent) || "";
+  if (!cfg) return [DEFAULT_C1, DEFAULT_C2];
+  const mode = cfg.mode || "iris";
+  const neon = cfg.neon || "";
+  const accent = cfg.accent || "";
   if (mode === "monochrome") return ["#FFFFFF", "#666666"];
-  if (mode === "custom") {
+  if (mode === "custom" || (neon && accent && (neon !== DEFAULT_C1 || accent !== DEFAULT_C2))) {
     return [neon || DEFAULT_C1, accent || DEFAULT_C2];
   }
   return [DEFAULT_C1, DEFAULT_C2];
@@ -39,7 +40,7 @@ let c1rgb = hexToRgb(c1);
 let c2rgb = hexToRgb(c2);
 let lastKey = "";
 let acc = 0;
-let prevTime = 0;
+let lastTickTime = performance.now();
 let rafId = 0;
 let step = 0;
 const MAX_STEP = STEPS * 2;
@@ -49,23 +50,34 @@ function renderStep(i) {
   const r = lerp(c1rgb[0], c2rgb[0], t);
   const g = lerp(c1rgb[1], c2rgb[1], t);
   const b = lerp(c1rgb[2], c2rgb[2], t);
-  document.getElementById("stage").style.backgroundColor = rgbToHex(r, g, b);
+  const stage = document.getElementById("stage");
+  if (stage) stage.style.backgroundColor = rgbToHex(r, g, b);
 }
 
-function tick(now) {
-  rafId = requestAnimationFrame(tick);
-  if (!prevTime) prevTime = now;
-  acc += now - prevTime;
-  prevTime = now;
+function advance(now) {
+  const dt = now - lastTickTime;
+  lastTickTime = now;
+  if (dt <= 0) return;
+  acc += dt;
   if (acc >= STEP_MS) {
-    acc -= STEP_MS;
-    step = (step + 1) % MAX_STEP;
+    const n = Math.floor(acc / STEP_MS);
+    acc -= n * STEP_MS;
+    step = (step + n) % MAX_STEP;
     const i = step < STEPS ? step : MAX_STEP - step;
     renderStep(i);
   }
 }
 
-function setLabels() {}
+function tick(now) {
+  rafId = requestAnimationFrame(tick);
+  advance(now || performance.now());
+}
+
+// Background fallback timer: if rAF is throttled/paused by the browser (hidden tab or secondary screen),
+// setInterval keeps the color animation alive.
+setInterval(function () {
+  advance(performance.now());
+}, 200);
 
 function applyTheme(theme) {
   const pair = resolve(theme);
@@ -76,18 +88,38 @@ function applyTheme(theme) {
   c2 = pair[1];
   c1rgb = hexToRgb(c1);
   c2rgb = hexToRgb(c2);
-  setLabels();
   renderStep(0);
 }
 
+var healthyAt = Date.now();
+function markHealthy() { healthyAt = Date.now(); }
+
 async function loadTheme() {
   try {
+    // 1. Check live panel state first (cheap poll; includes active game profile theme overrides)
+    const liveRes = await fetch("/api/panel/live", { headers: { "Accept": "application/json" } });
+    if (liveRes.ok) {
+      const liveData = await liveRes.json();
+      markHealthy();
+      if (liveData && liveData.config && liveData.config.theme) {
+        applyTheme(liveData.config.theme);
+        return;
+      }
+    }
+  } catch (_) {}
+
+  try {
+    // 2. Fallback to /api/config
     const res = await fetch("/api/config", { headers: { "Accept": "application/json" } });
     if (res.ok) {
       const data = await res.json();
-      if (data && data.theme) { applyTheme(data.theme); return; }
+      markHealthy();
+      if (data && data.theme) {
+        applyTheme(data.theme);
+        return;
+      }
     }
-  } catch (e) { /* app may not be running - use defaults */ }
+  } catch (_) {}
   applyTheme(null);
 }
 
@@ -117,13 +149,24 @@ function connectWs() {
 
     wsConn = new WebSocket(wsProto + "//" + wsHost + ":" + wsPort + qs);
     wsConn.onopen = function () {
+      markHealthy();
       loadTheme();
     };
     wsConn.onmessage = function (e) {
       try {
+        markHealthy();
         const msg = JSON.parse(e.data);
-        if (msg && msg.type === "theme") {
+        if (!msg) return;
+        if (msg.type === "theme") {
           applyTheme(msg.theme || null);
+        } else if (msg.type === "config") {
+          if (msg.config && msg.config.theme) {
+            applyTheme(msg.config.theme);
+          } else {
+            loadTheme();
+          }
+        } else if (msg.type === "reload") {
+          loadTheme();
         }
       } catch (_) {}
     };
@@ -141,36 +184,28 @@ applyTheme(null);
 loadTheme();
 connectWs();
 requestAnimationFrame(function start(now) {
-  prevTime = now;
+  lastTickTime = now || performance.now();
   tick(now);
 });
 
 (function () {
-  var healthyAt = Date.now();
   var loadedAt = Date.now();
   var lastReload = 0;
   try { lastReload = Number(sessionStorage.getItem("irisLcdLastReload") || 0); } catch (_) {}
 
-  function markHealthy() { healthyAt = Date.now(); }
-
+  // Periodic poll every 5s keeps theme synced even if WebSocket is disconnected
   setInterval(function () {
-    fetch("/api/config", { headers: { "Accept": "application/json" } })
-      .then(function (r) {
-        if (!r.ok) return null;
-        markHealthy();
-        return r.json();
-      })
-      .then(function (d) { if (d && d.theme) applyTheme(d.theme); })
-      .catch(function () {});
+    loadTheme();
   }, 5000);
 
+  // Watchdog: only reload if completely non-responsive for over 60s
   setInterval(function () {
     if (document.hidden) return;
-    if (Date.now() - healthyAt < 30000) return;
-    if (Date.now() - loadedAt < 10000) return;
+    if (Date.now() - healthyAt < 60000) return;
+    if (Date.now() - loadedAt < 15000) return;
     if (Date.now() - lastReload < 60000) return;
     lastReload = Date.now();
     try { sessionStorage.setItem("irisLcdLastReload", String(lastReload)); } catch (_) {}
     window.location.reload();
-  }, 1500);
+  }, 5000);
 })();

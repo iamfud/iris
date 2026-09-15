@@ -303,6 +303,12 @@ def _ws_process_request(connection, request):
     if _is_loopback_address(peer):
         return None
 
+    try:
+        if _app is not None and _app.cfg.get("lan_access", True):
+            return None
+    except Exception:
+        pass
+
     from websockets.datastructures import Headers
     from websockets.http11 import Response
     log.warning("WS connection rejected from %s (missing or invalid auth)", peer)
@@ -1392,6 +1398,8 @@ class _RequestHandler(SimpleHTTPRequestHandler):
     def _handle_portal_reload(self):
         try:
             broadcast({"type": "reload", "hard": True})
+            if _app and _app.cfg.get("theme"):
+                broadcast({"type": "theme", "theme": _app.cfg["theme"]})
             if _app and getattr(_app, "_main_win", None):
                 try:
                     _app._root.after_idle(_app._main_win.reload_theme)
@@ -2235,6 +2243,13 @@ class _RequestHandler(SimpleHTTPRequestHandler):
                     "media_player_path": _app.cfg.get("media_player_path", ""),
                 }
             })
+            try:
+                import plugin_manager
+                plugin_manager.sync_plugin_themes()
+            except Exception:
+                pass
+            if _app.cfg.get("theme"):
+                broadcast({"type": "theme", "theme": _app.cfg["theme"]})
             self._send_json({"ok": True})
         except Exception as e:
             log.warning("[http] save panel failed: %s", e)
