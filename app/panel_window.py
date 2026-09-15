@@ -444,18 +444,17 @@ def _save_geometry(state):
 def _ensure_child_logger():
     """Ensure the child process has a working file logger (print goes nowhere with console=False)."""
     import os, sys
-    from logging.handlers import RotatingFileHandler
     root = logging.getLogger()
-    if any(isinstance(h, RotatingFileHandler) for h in root.handlers):
+    if any(isinstance(h, logging.FileHandler) for h in root.handlers):
         return
     if getattr(sys, "frozen", False):
         log_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Iris")
     else:
         log_dir = os.path.dirname(os.path.abspath(__file__))
     os.makedirs(log_dir, exist_ok=True)
-    handler = RotatingFileHandler(
-        os.path.join(log_dir, "iris.log"),
-        maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8",
+    handler = logging.FileHandler(
+        os.path.join(log_dir, "panel.log"),
+        mode="w", encoding="utf-8",
     )
     handler.setFormatter(logging.Formatter(
         "%(asctime)s  %(levelname)-5s  [%(name)s]  %(message)s", datefmt="%H:%M:%S"))

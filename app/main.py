@@ -4,7 +4,6 @@ import logging
 import os
 import sys
 import multiprocessing
-from logging.handlers import RotatingFileHandler
 import paths
 
 _LOG_DIR = paths.get_log_dir()
@@ -12,8 +11,8 @@ _LOG_FILE = paths.get_log_file()
 
 _root_logger = logging.getLogger()
 _root_logger.setLevel(logging.INFO)
-if not any(isinstance(h, RotatingFileHandler) for h in _root_logger.handlers):
-    _log_handler = RotatingFileHandler(_LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8")
+if not any(isinstance(h, logging.FileHandler) for h in _root_logger.handlers):
+    _log_handler = logging.FileHandler(_LOG_FILE, mode="w", encoding="utf-8")
     _log_handler.setFormatter(logging.Formatter("%(asctime)s  %(levelname)-5s  [%(name)s]  %(message)s", datefmt="%H:%M:%S"))
     _root_logger.addHandler(_log_handler)
 
