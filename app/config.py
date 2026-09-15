@@ -54,6 +54,8 @@ def save_config(cfg):
             pass
         merged = {**DEFAULT_CONFIG, **preserved, **cfg}
         merged.pop("ha_board", None)  # remove stale old key
+        if "panel_default_automations" in merged or "panel_profiles" in merged:
+            merged.pop("automations", None)
         tmp = path + ".tmp"
         try:
             with open(tmp, "w") as f:

@@ -650,6 +650,43 @@ def sanitize_board(raw):
     return out
 
 
+def sanitize_automations(raw):
+    """Return a cleaned list of automation rules."""
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        rid = str(item.get("id") or "").strip()
+        if not rid:
+            continue
+        name = str(item.get("name") or "Automation").strip()
+        trigger_key = str(item.get("trigger_key") or "").strip()
+        if not trigger_key:
+            continue
+        actions = item.get("actions") or []
+        clean_actions = []
+        if isinstance(actions, list):
+            for a in actions:
+                if isinstance(a, dict) and a.get("type"):
+                    clean_actions.append(dict(a))
+        out.append({
+            "id": rid,
+            "name": name,
+            "enabled": bool(item.get("enabled", True)),
+            "trigger_key": trigger_key,
+            "operator": str(item.get("operator") or "=="),
+            "target_value": item.get("target_value"),
+            "require_foreground": bool(item.get("require_foreground", True)),
+            "cooldown_s": float(item.get("cooldown_s", 10.0)),
+            "actions": clean_actions,
+            "profile_id": str(item.get("profile_id") or ""),
+            "exe": str(item.get("exe") or ""),
+        })
+    return out
+
+
 def sanitize_profiles(raw):
     """Return a cleaned list of panel profiles."""
     if not isinstance(raw, list):
@@ -686,6 +723,7 @@ def sanitize_profiles(raw):
             "lighting_alerts_enabled": bool(item.get("lighting_alerts_enabled", True)),
             "lighting": item.get("lighting", {}) if isinstance(item.get("lighting"), dict) else {},
             "board": sanitize_board(item.get("board")),
+            "automations": sanitize_automations(item.get("automations")),
         })
     return out
 
@@ -923,6 +961,7 @@ def panel_payload(cfg):
         "media_player_path": cfg.get("media_player_path") or "",
         "hardware_connected": hw,
         "actions": action_catalog(),
+        "panel_default_automations": sanitize_automations(cfg.get("panel_default_automations") or []),
     }
 
 
@@ -939,6 +978,8 @@ def apply_panel_save(cfg, body):
         # Invalidate resolve cache so the next live poll picks up the edit.
         _RESOLVE_CACHE["ts"] = 0.0
         _RESOLVE_CACHE["board"] = None
+    if "panel_default_automations" in body:
+        cfg["panel_default_automations"] = sanitize_automations(body["panel_default_automations"])
     if "panel_utility" in body:
         cfg["panel_utility"] = sanitize_utility(body["panel_utility"])
     if "panel_core" in body:
@@ -952,4 +993,10 @@ def apply_panel_save(cfg, body):
     if "media_player_path" in body:
         cfg["media_player_path"] = str(body.get("media_player_path") or "").strip()
     ensure_panel_defaults(cfg)
+    if "panel_profiles" in body or "panel_default_automations" in body:
+        try:
+            import automations
+            automations.get_engine().load_config(cfg)
+        except Exception:
+            pass
     return cfg

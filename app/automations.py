@@ -114,10 +114,67 @@ class AutomationsEngine:
         self.dispatch_state("live", "all", merged)
 
     def load_config(self, cfg: Dict[str, Any]):
+        migrated = False
+        legacy_rules = cfg.get("automations")
+
+        profiles = cfg.get("panel_profiles") or []
+        default_rules = list(cfg.get("panel_default_automations") or [])
+
+        # One-time migration: migrate legacy root automations into profiles / default
+        if legacy_rules and isinstance(legacy_rules, list):
+            log.info("[automations] migrating %d legacy automations into profiles", len(legacy_rules))
+            prof_map = {p.get("id"): p for p in profiles if isinstance(p, dict) and p.get("id")}
+            for r in legacy_rules:
+                if not isinstance(r, dict):
+                    continue
+                pid = r.get("profile_id")
+                if pid and pid in prof_map:
+                    target_list = prof_map[pid].setdefault("automations", [])
+                    if not any(existing.get("id") == r.get("id") for existing in target_list):
+                        target_list.append(dict(r))
+                else:
+                    if not any(existing.get("id") == r.get("id") for existing in default_rules):
+                        default_rules.append(dict(r))
+            cfg["panel_default_automations"] = default_rules
+            cfg.pop("automations", None)
+            migrated = True
+
+        assembled_rules = []
+        for r in default_rules:
+            if isinstance(r, dict):
+                rule_copy = dict(r)
+                rule_copy["profile_id"] = "__default__"
+                rule_copy["exe"] = ""
+                rule_copy["require_foreground"] = False
+                assembled_rules.append(rule_copy)
+
+        for p in profiles:
+            if not isinstance(p, dict):
+                continue
+            pid = p.get("id")
+            pexe = p.get("exe") or ""
+            for r in (p.get("automations") or []):
+                if isinstance(r, dict):
+                    rule_copy = dict(r)
+                    rule_copy["profile_id"] = pid
+                    if not rule_copy.get("exe") and pexe:
+                        rule_copy["exe"] = pexe
+                    assembled_rules.append(rule_copy)
+
         with self._lock:
-            self._rules = list(cfg.get("automations", []))
+            self._rules = assembled_rules
             self._disclaimer_acknowledged = bool(cfg.get("automations_disclaimer_ack", False))
-            log.info("[automations] loaded %d rules (disclaimer_ack=%s)", len(self._rules), self._disclaimer_acknowledged)
+            log.info("[automations] loaded %d rules across %d profiles (disclaimer_ack=%s)",
+                     len(self._rules), len(profiles), self._disclaimer_acknowledged)
+
+        if migrated:
+            try:
+                from config import save_config
+                save_config(cfg)
+                log.info("[automations] successfully persisted profile-based automations migration")
+            except Exception as ex:
+                log.warning("[automations] failed to persist migrated config: %s", ex)
+
         self.start()
 
     def set_disclaimer_ack(self, ack: bool = True):
@@ -133,9 +190,28 @@ class AutomationsEngine:
             return [dict(r) for r in self._rules]
 
     def save_rules(self, rules: List[Dict[str, Any]], cfg: Dict[str, Any]):
+        profiles = cfg.get("panel_profiles") or []
+        prof_map = {p.get("id"): p for p in profiles if isinstance(p, dict) and p.get("id")}
+
+        default_rules = []
+        for p in profiles:
+            if isinstance(p, dict):
+                p["automations"] = []
+
+        for r in rules:
+            if not isinstance(r, dict):
+                continue
+            pid = r.get("profile_id")
+            if pid and pid in prof_map:
+                prof_map[pid].setdefault("automations", []).append(dict(r))
+            else:
+                default_rules.append(dict(r))
+
+        cfg["panel_default_automations"] = default_rules
+        cfg.pop("automations", None)
+
         with self._lock:
             self._rules = list(rules)
-            cfg["automations"] = list(rules)
         try:
             from config import save_config
             save_config(cfg)

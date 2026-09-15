@@ -820,9 +820,6 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         elif self.path.startswith("/api/automations/") and self.path.endswith("/delete"):
             rule_id = self.path.split("/")[-2]
             self._handle_delete_automation(rule_id)
-        elif self.path.startswith("/api/automations/") and self.path.endswith("/export_button"):
-            rule_id = self.path.split("/")[-2]
-            self._handle_export_automation_button(rule_id)
         elif self.path == "/api/automations/disclaimer_ack":
             self._handle_automations_disclaimer_ack()
         elif self.path == "/api/automations/test":
@@ -2142,53 +2139,6 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         engine = automations.get_engine()
         engine._execute_actions(body, "TEST_TRIGGER")
         self._send_json({"ok": True})
-
-    def _handle_export_automation_button(self, rule_id):
-        if not self._is_loopback_peer():
-            self.send_error(403, "Forbidden")
-            return
-        if _app is None:
-            self.send_error(503, "App not registered")
-            return
-        import automations
-        engine = automations.get_engine()
-        rule = next((r for r in engine.get_rules() if r.get("id") == rule_id), None)
-        if not rule:
-            self.send_error(404, "Rule not found")
-            return
-
-        # Find first hotkey action if present
-        hotkey_act = next((a for a in rule.get("actions", []) if a.get("type") == "hotkey"), None)
-        hotkey = hotkey_act.get("hotkey", "") if hotkey_act else ""
-
-        # Construct button slot payload
-        tile = {
-            "type": "HOTKEY" if hotkey else "GROUP",
-            "name": (rule.get("name") or "Auto Button")[:20],
-            "hotkey": hotkey,
-            "color": "#48B2E9",
-            "icon": "auto_mode",
-            "description": f"Trigger {rule.get('name')}",
-        }
-
-        # Place onto first empty slot on active panel board
-        board = _app.cfg.setdefault("panel_board", [])
-        placed = False
-        for i, slot in enumerate(board):
-            if not slot or not slot.get("type") or slot.get("type") == "EMPTY":
-                board[i] = tile
-                placed = True
-                break
-        if not placed:
-            board.append(tile)
-
-        try:
-            from config import save_config
-            save_config(_app.cfg)
-        except Exception:
-            pass
-
-        self._send_json({"ok": True, "tile": tile})
 
     def _handle_volume_set(self):
         try:

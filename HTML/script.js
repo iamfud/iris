@@ -908,7 +908,8 @@
       } else if (currentPage === "vision") {
         renderVision();
       } else if (currentPage === "automations") {
-        renderAutomations();
+        currentPage = "profiles";
+        renderProfilesPage();
       } else if (currentPage === "profiles") {
         renderProfilesPage();
       } else if (currentPage === "panel") {
@@ -1948,28 +1949,33 @@
     });
   }
 
-  function openAutomationModal(existing) {
+  function openAutomationModal(existing, targetProfileId) {
     const profiles = ((panelDraft && panelDraft.panel_profiles) || (featureConfig && featureConfig.panel_profiles) || []).map(p => ({
       id: p.id,
       name: p.name || p.id,
       exe: p.exe || "",
     }));
 
+    const resolvedProfId = targetProfileId !== undefined ? targetProfileId : (existing ? (existing.profile_id || "__default__") : "__default__");
+    const linkedProf = profiles.find(p => p.id === resolvedProfId);
+
     const draft = existing ? JSON.parse(JSON.stringify(existing)) : {
       id: "",
       name: "",
       enabled: true,
-      profile_id: "",
-      exe: "",
+      profile_id: resolvedProfId,
+      exe: linkedProf ? linkedProf.exe : "",
       trigger_key: "",
       operator: "==",
       target_value: "",
-      require_foreground: true,
+      require_foreground: (resolvedProfId !== "__default__"),
       cooldown_s: 10.0,
       actions: [
         { type: "sound", sound: "chime" }
       ]
     };
+    if (resolvedProfId && !draft.profile_id) draft.profile_id = resolvedProfId;
+    if (linkedProf && !draft.exe) draft.exe = linkedProf.exe;
 
     if (!Array.isArray(draft.actions)) draft.actions = [];
 
@@ -2008,14 +2014,13 @@
     backdrop.innerHTML = `
       <div class="panel-modal panel-modal-wide" id="auto-modal" style="max-width:920px">
         <div class="panel-modal-header">
-          <h3>${existing ? "Edit Automation" : "New Automation"}</h3>
-          <span class="panel-modal-subtitle">Configure trigger entity, linked process, and conditional inline action pipeline</span>
+          <h3>${existing ? "Edit Reactive Rule" : "New Reactive Rule"}</h3>
         </div>
 
         <div class="panel-modal-body-grid">
           <div class="panel-modal-col">
             <div class="settings-control">
-              <label class="settings-label">Automation Name</label>
+              <label class="settings-label">Rule Name</label>
               <input type="text" class="settings-input" id="m-name" value="${esc(draft.name || "")}" placeholder="e.g. Shields State Monitor">
             </div>
 
@@ -2056,9 +2061,9 @@
 
           <div class="panel-modal-col">
             <div class="settings-control">
-              <label class="settings-label">Linked Button Profile</label>
+              <label class="settings-label">Target Profile</label>
               <select class="settings-select" id="m-profile">
-                <option value="">(None / Global Automation)</option>
+                <option value="__default__" ${draft.profile_id === "__default__" || !draft.profile_id ? "selected" : ""}>Default Profile (Global System)</option>
                 ${profiles.map(p => `<option value="${esc(p.id)}" data-exe="${esc(p.exe)}" ${draft.profile_id === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}
               </select>
             </div>
@@ -2458,7 +2463,7 @@
 
     backdrop.querySelector("#modal-save").onclick = async () => {
       const name = backdrop.querySelector("#m-name").value.trim() || "Automation";
-      const profId = backdrop.querySelector("#m-profile").value.trim();
+      const profId = backdrop.querySelector("#m-profile").value.trim() || "__default__";
       const exe = exeInput.value.trim();
       const trigKey = _selectedTrigKey;
       const cooldown = Number(backdrop.querySelector("#m-cooldown").value) || 2;
@@ -2468,28 +2473,48 @@
       else if (condVal === "false") condVal = false;
       else if (!isNaN(Number(condVal)) && condVal !== "") condVal = Number(condVal);
 
+      const ruleId = draft.id || ("auto_" + Math.floor(Date.now() / 1000) + "_" + Math.floor(Math.random() * 1000));
       const payload = {
-        id: draft.id || undefined,
+        id: ruleId,
         name: name,
         enabled: draft.enabled !== false,
         profile_id: profId,
-        exe: exe,
+        exe: (profId === "__default__") ? "" : exe,
         trigger_key: trigKey,
         operator: _trigCondOp,
         target_value: condVal,
-        require_foreground: !!exe,
+        require_foreground: (profId !== "__default__") && !!exe,
         cooldown_s: cooldown,
         actions: currentActions,
       };
 
-      await apiFetch(`${API_BASE}/api/automations`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      if (!panelDraft) panelDraft = {};
+      if (profId === "__default__") {
+        if (!panelDraft.panel_default_automations) panelDraft.panel_default_automations = [];
+        const idx = panelDraft.panel_default_automations.findIndex((x) => x.id === ruleId);
+        if (idx >= 0) panelDraft.panel_default_automations[idx] = payload;
+        else panelDraft.panel_default_automations.push(payload);
+      } else {
+        const prof = (panelDraft.panel_profiles || []).find((x) => x.id === profId);
+        if (prof) {
+          if (!prof.automations) prof.automations = [];
+          const idx = prof.automations.findIndex((x) => x.id === ruleId);
+          if (idx >= 0) prof.automations[idx] = payload;
+          else prof.automations.push(payload);
+        }
+      }
+      setPanelDirty(true);
+
+      try {
+        await apiFetch(`${API_BASE}/api/automations`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      } catch (_) {}
 
       closeModal();
-      renderAutomations();
+      renderProfilesPage();
     };
   }
 
@@ -6568,6 +6593,7 @@
                 toggleRow("Master volume", sliderOn("master_volume"), "panel-tog-mvol") +
                 toggleRow("App mixer", sliderOn("app_mixer"), "panel-tog-mix") +
                 (hwOn ? toggleRow("Display brightness", sliderOn("brightness"), "panel-tog-bri") : "")) +
+              renderProfileRulesSection(panelDraft.panel_default_automations || [], "__default__") +
             '</div>' +
 
             // ── Column 2: Button Deck (Top) & Utility Row ────────
@@ -6634,6 +6660,7 @@
     wireBoardSlots();
     wireUtilitySlots();
     wireCoreSlots();
+    wireProfileRules("__default__");
     wireActionModal();
   }
 
@@ -6658,6 +6685,148 @@
       }
     }
     return null;
+  }
+
+  // ── Profile Reactive Rules (Automations) Section ─────────────
+
+  function renderProfileRulesSection(rules, profileId) {
+    const list = Array.isArray(rules) ? rules : [];
+    let contentHtml = '';
+
+    if (list.length === 0) {
+      contentHtml =
+        '<div style="text-align:center;padding:24px 12px;color:var(--fg-dim);font-size:13px;">' +
+          '<span class="material-icons-outlined" style="font-size:32px;display:block;margin:0 auto 8px auto;opacity:0.4;">auto_mode</span>' +
+          'No reactive rules configured.<br>' +
+          '<span style="font-size:11px;opacity:0.7;">Click "+ Add Rule" to trigger lighting presets, sounds, or commands on state changes.</span>' +
+        '</div>';
+    } else {
+      contentHtml = '<div style="display:flex;flex-direction:column;gap:10px;">';
+      list.forEach((rule) => {
+        const isEnabled = rule.enabled !== false;
+        const actionsSummary = (rule.actions || []).map((a) => {
+          if (a.type === "openrgb" || a.type === "rgb") return "RGB: " + (a.profile || "Profile");
+          if (a.type === "ha" || a.type === "home_assistant") return "HA: " + (a.entity || a.script || "Script");
+          if (a.type === "sound") return "Sound: " + (a.sound || "Alert");
+          if (a.type === "hotkey") return "Key: " + (a.hotkey || "Hotkey");
+          if (a.type === "notification") return "Toast: " + (a.message || "Alert");
+          return a.type;
+        }).join(" + ") || "No Action";
+
+        contentHtml +=
+          '<div class="vision-card" style="background:rgba(255,255,255,0.02);border:1px solid var(--border);border-radius:8px;padding:12px;">' +
+            '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">' +
+              '<div style="display:flex;align-items:center;gap:8px;">' +
+                '<span class="material-icons-outlined" style="font-size:18px;color:var(--theme-color-1,#48b2e9);">bolt</span>' +
+                '<span style="font-weight:600;font-size:14px;">' + esc(rule.name || "Rule") + '</span>' +
+              '</div>' +
+              '<div class="settings-toggle' + (isEnabled ? ' on' : '') + ' prof-rule-toggle" data-rule-id="' + esc(rule.id) + '" data-prof-id="' + esc(profileId) + '" title="Toggle rule">' +
+                '<div class="settings-toggle-thumb"></div>' +
+              '</div>' +
+            '</div>' +
+            '<div class="auto-card-pipeline">' +
+              '<div class="auto-pipe-row">' +
+                '<span class="auto-badge auto-badge-trigger">IF</span>' +
+                '<span>' + esc(rule.trigger_key || "") + ' ' + esc(rule.operator || "==") + ' ' + esc(String(rule.target_value !== undefined ? rule.target_value : "")) + '</span>' +
+              '</div>' +
+              '<div class="auto-pipe-row">' +
+                '<span class="auto-badge auto-badge-action">THEN</span>' +
+                '<span>' + esc(actionsSummary) + '</span>' +
+              '</div>' +
+            '</div>' +
+            '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px;">' +
+              '<button type="button" class="settings-btn prof-rule-test" data-rule-id="' + esc(rule.id) + '" data-prof-id="' + esc(profileId) + '">Test</button>' +
+              '<button type="button" class="settings-btn prof-rule-edit" data-rule-id="' + esc(rule.id) + '" data-prof-id="' + esc(profileId) + '">Edit</button>' +
+              '<button type="button" class="settings-btn settings-btn-danger prof-rule-del" data-rule-id="' + esc(rule.id) + '" data-prof-id="' + esc(profileId) + '">✕</button>' +
+            '</div>' +
+          '</div>';
+      });
+      contentHtml += '</div>';
+    }
+
+    const addBtn = '<button type="button" class="settings-btn prof-add-rule-btn" data-prof-id="' + esc(profileId) + '" style="font-size:12px;padding:4px 10px;">+ Add Rule</button>';
+    return sectionCard(profileId === "__default__" ? "Global System Rules" : "Reactive Rules (Automations)", "auto_mode", contentHtml, addBtn);
+  }
+
+  function wireProfileRules(profileId) {
+    const isDefault = profileId === "__default__";
+    let ruleList = null;
+    let profObj = null;
+
+    if (isDefault) {
+      if (!panelDraft.panel_default_automations) panelDraft.panel_default_automations = [];
+      ruleList = panelDraft.panel_default_automations;
+    } else {
+      const current = panelProfileCurrent();
+      profObj = current.profile;
+      if (profObj) {
+        if (!profObj.automations) profObj.automations = [];
+        ruleList = profObj.automations;
+      }
+    }
+    if (!ruleList) return;
+
+    document.querySelectorAll(".prof-add-rule-btn").forEach((btn) => {
+      btn.onclick = () => {
+        openAutomationModal(null, profileId);
+      };
+    });
+
+    document.querySelectorAll(".prof-rule-toggle").forEach((tog) => {
+      tog.onclick = () => {
+        const rid = tog.getAttribute("data-rule-id");
+        const r = ruleList.find((x) => x.id === rid);
+        if (!r) return;
+        r.enabled = !tog.classList.contains("on");
+        tog.classList.toggle("on", r.enabled);
+        setPanelDirty(true);
+      };
+    });
+
+    document.querySelectorAll(".prof-rule-edit").forEach((btn) => {
+      btn.onclick = () => {
+        const rid = btn.getAttribute("data-rule-id");
+        const r = ruleList.find((x) => x.id === rid);
+        if (r) openAutomationModal(r, profileId);
+      };
+    });
+
+    document.querySelectorAll(".prof-rule-test").forEach((btn) => {
+      btn.onclick = async () => {
+        const rid = btn.getAttribute("data-rule-id");
+        const r = ruleList.find((x) => x.id === rid);
+        if (!r) return;
+        btn.disabled = true;
+        btn.textContent = "Testing...";
+        try {
+          await apiFetch(`${API_BASE}/api/automations/test`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(r)
+          });
+        } catch (_) {}
+        setTimeout(() => {
+          btn.disabled = false;
+          btn.textContent = "Test";
+        }, 600);
+      };
+    });
+
+    document.querySelectorAll(".prof-rule-del").forEach((btn) => {
+      btn.onclick = () => {
+        const rid = btn.getAttribute("data-rule-id");
+        const r = ruleList.find((x) => x.id === rid);
+        if (!r) return;
+        customConfirm('Delete rule "' + (r.name || r.id) + '"?', () => {
+          const idx = ruleList.findIndex((x) => x.id === rid);
+          if (idx >= 0) {
+            ruleList.splice(idx, 1);
+            setPanelDirty(true);
+            renderProfilesPage();
+          }
+        });
+      };
+    });
   }
 
   function renderGameProfileEditor() {
@@ -6818,6 +6987,7 @@
               sectionCard("Button Deck", "apps",
                 '<p class="settings-hint" style="margin-bottom:14px;">Buttons displayed on companion screen when this profile is active. Click to configure or drag to reorder.</p>' +
                 renderBoardEditor(board, [])) +
+              renderProfileRulesSection(p.automations || [], p.id) +
             '</div>' +
           '</div>' +
 
@@ -6949,6 +7119,7 @@
     });
 
     wireBoardSlots();
+    wireProfileRules(p.id);
     wireActionModal();
   }
 
@@ -7252,10 +7423,13 @@
     '</div>';
   }
 
-  function sectionCard(title, icon, body) {
-    return '<div class="settings-section"><h2 class="settings-section-title">' +
+  function sectionCard(title, icon, body, actionBtnHtml) {
+    const act = actionBtnHtml ? ('<div style="margin-left:auto;">' + actionBtnHtml + '</div>') : '';
+    return '<div class="settings-section"><h2 class="settings-section-title" style="display:flex;align-items:center;width:100%;">' +
       '<span class="material-icons-outlined" style="font-size:18px;vertical-align:middle;margin-right:6px">' + icon + '</span>' +
-      esc(title) + '</h2><div class="settings-card">' + body + '</div></div>';
+      '<span style="flex:1;">' + esc(title) + '</span>' +
+      act +
+      '</h2><div class="settings-card">' + body + '</div></div>';
   }
 
   function toggleRow(label, on, id) {
