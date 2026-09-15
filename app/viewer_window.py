@@ -61,7 +61,8 @@ def _clean_stale_caches(wv_dir: str):
 
 def _run_viewer(filename):
     try:
-        from win_platform import init_dpi_awareness, setup_webview_environment, wait_for_http_server
+        from win_platform import init_dpi_awareness, setup_webview_environment, wait_for_http_server, start_parent_watchdog
+        start_parent_watchdog()
         init_dpi_awareness()
         setup_webview_environment("WebView2_Viewer")
         wait_for_http_server()
@@ -123,6 +124,11 @@ def open_viewer(filename):
         target=_run_viewer, args=(filename,), daemon=True, name="viewer_window"
     )
     _proc.start()
+    try:
+        from win_platform import assign_process_to_job
+        assign_process_to_job(_proc.pid)
+    except Exception:
+        pass
     log.info("[viewer_window] annotation editor started for %s (pid=%d)", filename, _proc.pid)
 
 
@@ -136,6 +142,14 @@ def close_viewer():
     """Close the annotation editor if open."""
     global _proc
     if _proc is not None and _proc.is_alive():
-        _proc.terminate()
-        _proc.join(timeout=0.5)
+        pid = _proc.pid
+        try:
+            from win_platform import kill_process_tree
+            kill_process_tree(pid)
+        except Exception:
+            try:
+                _proc.terminate()
+            except Exception:
+                pass
+        _proc.join(timeout=1.0)
     _proc = None

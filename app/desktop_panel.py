@@ -289,6 +289,11 @@ def open_desktop_panel():
         target=_run, args=(w, h, x, y, pinned), daemon=True, name="desktop_panel"
     )
     _proc.start()
+    try:
+        from win_platform import assign_process_to_job
+        assign_process_to_job(_proc.pid)
+    except Exception:
+        pass
     log.info("[desktop_panel] process started (pid=%d)", _proc.pid)
 
 
@@ -296,8 +301,16 @@ def close_desktop_panel():
     """Close and terminate the desktop panel process."""
     global _proc
     if _proc is not None and _proc.is_alive():
-        _proc.terminate()
-        _proc.join(timeout=1.5)
+        pid = _proc.pid
+        try:
+            from win_platform import kill_process_tree
+            kill_process_tree(pid)
+        except Exception:
+            try:
+                _proc.terminate()
+            except Exception:
+                pass
+        _proc.join(timeout=1.0)
     _proc = None
 
 
@@ -344,7 +357,8 @@ def _save_geometry(state):
 def _run(width, height, x=None, y=None, pinned=False):
     """Entry point for the pywebview desktop companion process."""
     try:
-        from win_platform import init_dpi_awareness, setup_webview_environment, wait_for_http_server
+        from win_platform import init_dpi_awareness, setup_webview_environment, wait_for_http_server, start_parent_watchdog
+        start_parent_watchdog()
         init_dpi_awareness()
         setup_webview_environment("WebView2_Companion")
         wait_for_http_server()

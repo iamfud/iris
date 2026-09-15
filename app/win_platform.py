@@ -75,6 +75,152 @@ def apply_process_mitigation_policies() -> bool:
     return False
 
 
+_JOB_OBJECT = None
+_JOB_OBJECT_LOCK = threading.Lock()
+
+
+def get_subsystem_job_object():
+    """Return a Windows Job Object configured with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE.
+    Any process assigned to this job will be forcefully terminated by the OS kernel
+    whenever Iris shuts down or exits.
+    """
+    global _JOB_OBJECT
+    if sys.platform != "win32":
+        return None
+    with _JOB_OBJECT_LOCK:
+        if _JOB_OBJECT is not None:
+            return _JOB_OBJECT
+        try:
+            k32 = ctypes.windll.kernel32
+            job = k32.CreateJobObjectW(None, None)
+            if not job:
+                return None
+
+            class IO_COUNTERS(ctypes.Structure):
+                _fields_ = [
+                    ('ReadOperationCount', wintypes.ULARGE_INTEGER),
+                    ('WriteOperationCount', wintypes.ULARGE_INTEGER),
+                    ('OtherOperationCount', wintypes.ULARGE_INTEGER),
+                    ('ReadTransferCount', wintypes.ULARGE_INTEGER),
+                    ('WriteTransferCount', wintypes.ULARGE_INTEGER),
+                    ('OtherTransferCount', wintypes.ULARGE_INTEGER),
+                ]
+
+            class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+                _fields_ = [
+                    ('PerProcessUserTimeLimit', wintypes.LARGE_INTEGER),
+                    ('PerJobUserTimeLimit', wintypes.LARGE_INTEGER),
+                    ('LimitFlags', wintypes.DWORD),
+                    ('MinimumWorkingSetSize', ctypes.c_size_t),
+                    ('MaximumWorkingSetSize', ctypes.c_size_t),
+                    ('ActiveProcessLimit', wintypes.DWORD),
+                    ('Affinity', ctypes.POINTER(ctypes.c_ulong)),
+                    ('PriorityClass', wintypes.DWORD),
+                    ('SchedulingClass', wintypes.DWORD),
+                ]
+
+            class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+                _fields_ = [
+                    ('BasicLimitInformation', JOBOBJECT_BASIC_LIMIT_INFORMATION),
+                    ('IoInfo', IO_COUNTERS),
+                    ('ProcessMemoryLimit', ctypes.c_size_t),
+                    ('JobMemoryLimit', ctypes.c_size_t),
+                    ('PeakProcessMemoryLimit', ctypes.c_size_t),
+                    ('PeakJobMemoryLimit', ctypes.c_size_t),
+                ]
+
+            info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+            info.BasicLimitInformation.LimitFlags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+            res = k32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info))
+            if res:
+                _JOB_OBJECT = job
+                log.debug("[platform] Job object initialized with KILL_ON_JOB_CLOSE")
+            else:
+                k32.CloseHandle(job)
+                _JOB_OBJECT = None
+        except Exception as ex:
+            log.debug("[platform] Failed to create job object: %s", ex)
+            _JOB_OBJECT = None
+        return _JOB_OBJECT
+
+
+def assign_process_to_job(pid: int) -> bool:
+    """Assign a process PID to the Iris subsystem job object so it cannot outlive Iris."""
+    if sys.platform != "win32":
+        return False
+    job = get_subsystem_job_object()
+    if not job:
+        return False
+    try:
+        k32 = ctypes.windll.kernel32
+        PROCESS_SET_QUOTA = 0x0100
+        PROCESS_TERMINATE = 0x0001
+        h_proc = k32.OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, False, pid)
+        if h_proc:
+            ok = k32.AssignProcessToJobObject(job, h_proc)
+            k32.CloseHandle(h_proc)
+            return bool(ok)
+    except Exception as ex:
+        log.debug("[platform] Failed to assign PID %d to job: %s", pid, ex)
+    return False
+
+
+def kill_process_tree(pid: int, timeout: float = 2.0):
+    """Terminate a process and all its children (e.g. WebView2 renderers) cleanly."""
+    if not pid:
+        return
+    try:
+        import psutil
+        try:
+            parent = psutil.Process(pid)
+        except psutil.NoSuchProcess:
+            return
+        children = parent.children(recursive=True)
+        for child in children:
+            try:
+                child.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+        parent.kill()
+    except Exception:
+        try:
+            import os, signal
+            os.kill(pid, signal.SIGTERM)
+        except Exception:
+            pass
+
+
+def start_parent_watchdog(parent_pid: int = None):
+    """Start a background daemon thread in a child process that monitors the parent process.
+    If the parent process dies or disappears, terminates the current process and its children.
+    """
+    if parent_pid is None:
+        parent_pid = os.getppid()
+
+    def _watchdog():
+        import time, psutil
+        while True:
+            time.sleep(1.0)
+            try:
+                if not psutil.pid_exists(parent_pid):
+                    try:
+                        cur = psutil.Process()
+                        for c in cur.children(recursive=True):
+                            try:
+                                c.kill()
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+                    os._exit(0)
+            except Exception:
+                os._exit(0)
+
+    t = threading.Thread(target=_watchdog, daemon=True, name="parent-watchdog")
+    t.start()
+
+
+
 def ensure_rtss_exclusions():
     """Ensure RivaTuner Statistics Server (RTSS) does not inject hooks into Iris or WebView2.
     

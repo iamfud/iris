@@ -312,6 +312,11 @@ def open_panel(width=_DEFAULT_WIDTH, height=_DEFAULT_HEIGHT, query_params=None, 
         target=_run, args=(w, h, x, y, query_params, _NAV_QUEUE), daemon=True, name="panel"
     )
     _proc.start()
+    try:
+        from win_platform import assign_process_to_job
+        assign_process_to_job(_proc.pid)
+    except Exception:
+        pass
     log.info("[panel] process started (pid=%d)", _proc.pid)
 
 
@@ -320,8 +325,16 @@ def close_panel():
     """Close the panel if open."""
     global _proc, _NAV_QUEUE
     if _proc is not None and _proc.is_alive():
-        _proc.terminate()
-        _proc.join(timeout=2)
+        pid = _proc.pid
+        try:
+            from win_platform import kill_process_tree
+            kill_process_tree(pid)
+        except Exception:
+            try:
+                _proc.terminate()
+            except Exception:
+                pass
+        _proc.join(timeout=1.0)
     _proc = None
     _NAV_QUEUE = None
 
@@ -539,7 +552,14 @@ def _run(width, height, x=None, y=None, query_params=None, nav_queue=None):
     _ensure_child_logger()
 
     try:
-        from win_platform import init_dpi_awareness, setup_webview_environment, wait_for_http_server, apply_process_mitigation_policies
+        from win_platform import (
+            init_dpi_awareness,
+            setup_webview_environment,
+            wait_for_http_server,
+            apply_process_mitigation_policies,
+            start_parent_watchdog,
+        )
+        start_parent_watchdog()
         apply_process_mitigation_policies()
         init_dpi_awareness()
         setup_webview_environment("WebView2_panel")

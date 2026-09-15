@@ -248,6 +248,16 @@ if __name__ == "__main__":
             except Exception:
                 pass
             try:
+                import panel_window
+                panel_window.close_panel()
+            except Exception:
+                pass
+            try:
+                import viewer_window
+                viewer_window.close_viewer()
+            except Exception:
+                pass
+            try:
                 if self.icon:
                     self.icon.stop()
                     self.icon = None
