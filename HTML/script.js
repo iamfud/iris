@@ -6355,8 +6355,6 @@
       ? ("Add Action · " + profName)
       : ("Slot " + (ctx.index + 1) + (slotName ? " · " + slotName : "") + " · " + profName);
 
-    const subtitleText = "Configure button function, target entity, icon, and appearance";
-
     let html =
       '<header>' +
         '<div class="header-left">' +
@@ -6365,7 +6363,6 @@
           '</button>' +
           '<div>' +
             '<h1>' + esc(titleText) + '</h1>' +
-            '<p>' + esc(subtitleText) + '</p>' +
           '</div>' +
         '</div>' +
         '<div style="display:flex;gap:10px;align-items:center;">' +
@@ -6544,7 +6541,6 @@
           '</button>' +
           '<div>' +
             '<h1>Default Profile</h1>' +
-            '<p>Global system shell & baseline button deck</p>' +
           '</div>' +
         '</div>' +
         '<button type="button" class="done-btn" id="prof-back-to-list">Back to Profiles</button>' +
@@ -6741,7 +6737,6 @@
           '</button>' +
           '<div>' +
             '<h1>' + esc(p.name || p.id) + '</h1>' +
-            '<p>Configure trigger, visual theme, lighting, and buttons' + (plgDef ? ' · ' + esc(plgDef.display_name) + ' linked' : '') + '</p>' +
           '</div>' +
         '</div>' +
         '<button type="button" class="done-btn" id="prof-back-to-list">Back to Profiles</button>' +
@@ -7850,9 +7845,9 @@
         ? '<img class="pe-icon-live-img" id="pe-icon-live-img" src="' + API_BASE + '/api/panel/icon?path=' + encodeURIComponent(customIconPath) + tokQs + '" alt="">'
         : '<span class="md" id="pe-icon-live" data-md="' + esc(curIcon) + '">' + esc(curIconChar) + '</span>');
 
-    // In-Frame Slot Editor Card
-    let h = '<div class="settings-section slot-editor-section" id="panel-modal">' +
-      '<div class="settings-card slot-editor-card">' +
+    // Slot Editor Full-Page View
+    let h = '<div class="slot-editor-section" id="panel-modal">' +
+      '<div class="slot-editor-wrap">' +
       '<div class="panel-modal-body-grid" id="pe-body-grid">' +
 
         /* Column 1: Function & Target */
