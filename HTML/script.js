@@ -2189,6 +2189,7 @@
           _selectedTrigKey = el.getAttribute("data-key");
           const ent = (panelEntities || []).find(e => (e.id === _selectedTrigKey || e.state_key === _selectedTrigKey));
           trigDisplay.value = ent ? (ent.name || _selectedTrigKey) : _selectedTrigKey;
+          trigDisplay.style.borderColor = "";
           trigPopup.style.display = "none";
           updateTriggerCondition();
           renderActionsTable();
@@ -2462,6 +2463,13 @@
     backdrop.querySelector("#modal-cancel").onclick = closeModal;
 
     backdrop.querySelector("#modal-save").onclick = async () => {
+      if (!_selectedTrigKey) {
+        trigDisplay.style.borderColor = "var(--danger, #ff4d4f)";
+        trigDisplay.focus();
+        return;
+      }
+      trigDisplay.style.borderColor = "";
+
       const name = backdrop.querySelector("#m-name").value.trim() || "Automation";
       const profId = backdrop.querySelector("#m-profile").value.trim() || "__default__";
       const exe = exeInput.value.trim();
@@ -2504,14 +2512,6 @@
         }
       }
       setPanelDirty(true);
-
-      try {
-        await apiFetch(`${API_BASE}/api/automations`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-      } catch (_) {}
 
       closeModal();
       renderProfilesPage();
@@ -6082,6 +6082,7 @@
           media_player_path: data.media_player_path || "",
           hardware_connected: !!data.hardware_connected,
           panel_profiles: data.panel_profiles || [],
+          panel_default_automations: data.panel_default_automations || [],
         };
         // Universal dynamic icon preload: scan board, utility, core, and all profile boards
         preloadBoardIcons(panelDraft.panel_board);
