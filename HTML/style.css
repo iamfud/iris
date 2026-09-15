@@ -9108,7 +9108,8 @@ body.standalone-viewer-mode #iris-screenshot-viewer {
     }
 }
 
-/* Elite Dangerous presentation for slot tiles */
+/* Button deck presentation for slot tiles */
+.panel-slot-tile.deck-style,
 .panel-slot-tile.elite-style {
     aspect-ratio: 1/1;
     border-radius: 10px;
@@ -9129,12 +9130,14 @@ body.standalone-viewer-mode #iris-screenshot-viewer {
     text-rendering: optimizeLegibility;
 }
 
+.panel-slot-tile.deck-style:hover,
 .panel-slot-tile.elite-style:hover {
     border-color: var(--neon);
     box-shadow: 0 0 10px var(--theme-glow, rgba(72,178,233,0.3));
     transform: scale(1.02);
 }
 
+.panel-slot-tile.deck-style .panel-slot-drag-handle,
 .panel-slot-tile.elite-style .panel-slot-drag-handle {
     position: absolute;
     top: 3px;
@@ -9145,10 +9148,12 @@ body.standalone-viewer-mode #iris-screenshot-viewer {
     transition: opacity 0.15s;
 }
 
+.panel-slot-tile.deck-style:hover .panel-slot-drag-handle,
 .panel-slot-tile.elite-style:hover .panel-slot-drag-handle {
     opacity: 0.8;
 }
 
+.panel-slot-tile.deck-style .panel-slot-badge,
 .panel-slot-tile.elite-style .panel-slot-badge {
     position: absolute;
     top: 0;
@@ -9173,6 +9178,7 @@ body.standalone-viewer-mode #iris-screenshot-viewer {
     text-rendering: optimizeLegibility;
 }
 
+.panel-slot-tile.deck-style .panel-slot-thumb,
 .panel-slot-tile.elite-style .panel-slot-thumb {
     display: inline-flex;
     align-items: center;
@@ -9180,11 +9186,13 @@ body.standalone-viewer-mode #iris-screenshot-viewer {
     z-index: 2;
 }
 
+.panel-slot-tile.deck-style .panel-slot-thumb .md,
 .panel-slot-tile.elite-style .panel-slot-thumb .md {
     font-size: 20px;
     line-height: 1;
 }
 
+.panel-slot-tile.deck-style .panel-slot-name-bar,
 .panel-slot-tile.elite-style .panel-slot-name-bar {
     position: absolute;
     bottom: 0;
@@ -9224,18 +9232,21 @@ body.standalone-viewer-mode #iris-screenshot-viewer {
     border-color: var(--neon);
 }
 
+.panel-slot-tile.deck-style.is-dragging,
 .panel-slot-tile.elite-style.is-dragging {
     opacity: 0.35;
     border-style: dashed;
     border-color: var(--neon-text);
 }
 
+.panel-slot-tile.deck-style.drop-before,
 .panel-slot-tile.elite-style.drop-before {
     border-color: var(--neon-text);
     box-shadow: -3px 0 0 0 var(--neon-bright), 0 0 10px color-mix(in srgb, var(--neon-bright) 40%, transparent);
     background: color-mix(in srgb, var(--neon-bright) 14%, transparent);
 }
 
+.panel-slot-tile.deck-style.drop-after,
 .panel-slot-tile.elite-style.drop-after {
     border-color: var(--neon-text);
     box-shadow: 3px 0 0 0 var(--neon-bright), 0 0 10px color-mix(in srgb, var(--neon-bright) 40%, transparent);

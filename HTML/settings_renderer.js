@@ -1328,7 +1328,7 @@ class SettingsRenderer {
 
   _renderPerAppRow(pa, idx) {
     var html = '<div class="ambient-perapp-row" data-idx="' + idx + '" style="display:flex;align-items:center;gap:8px;">';
-    html += '<input type="text" class="settings-input ambient-perapp-exe" placeholder="exe name, e.g. EliteDangerous64.exe" value="' + this._esc(pa.exe || '') + '" style="flex:1.2;min-width:0;">';
+    html += '<input type="text" class="settings-input ambient-perapp-exe" placeholder="exe name, e.g. Game.exe" value="' + this._esc(pa.exe || '') + '" style="flex:1.2;min-width:0;">';
     html += '<input type="text" class="settings-input ambient-perapp-profile" list="ambient-profile-list" placeholder="profile name" value="' + this._esc(pa.profile || '') + '" style="flex:1;min-width:0;">';
     html += '<button type="button" class="settings-btn ambient-perapp-del" style="flex-shrink:0;padding:4px 8px;color:var(--danger,#ff6b6b);">✕</button>';
     html += '</div>';

@@ -2021,7 +2021,7 @@
           <div class="panel-modal-col">
             <div class="settings-control">
               <label class="settings-label">Rule Name</label>
-              <input type="text" class="settings-input" id="m-name" value="${esc(draft.name || "")}" placeholder="e.g. Shields State Monitor">
+              <input type="text" class="settings-input" id="m-name" value="${esc(draft.name || "")}" placeholder="e.g. Health Alert, Mute Indicator, Status Alert">
             </div>
 
             <div class="settings-control">
@@ -6918,7 +6918,7 @@
                 '<div class="settings-control" id="gprof-exe-wrap" style="' + (isGrp ? 'display:none;' : '') + '">' +
                   '<label class="settings-label">Game Executable (.exe)</label>' +
                   '<div class="settings-picker-wrap">' +
-                    '<input type="text" class="settings-input" id="gprof-exe" placeholder="e.g. EliteDangerous64.exe" value="' + esc(p.exe || "") + '">' +
+                    '<input type="text" class="settings-input" id="gprof-exe" placeholder="e.g. Game.exe, App.exe" value="' + esc(p.exe || "") + '">' +
                     '<button type="button" class="settings-picker-btn" id="gprof-pick"><span class="material-icons-outlined">folder_open</span></button>' +
                   '</div>' +
                   '<span class="settings-hint">Iris automatically switches to this profile when this game launches (governor model).</span>' +
@@ -6968,7 +6968,7 @@
               (pluginSettingsHtml ? sectionCard((plgDef.display_name || "Game") + " Settings", "tune", pluginSettingsHtml) : '') +
             '</div>' +
 
-            // ── Right Column: Button Box Deck (Elite Dangerous presentation) ──
+            // ── Right Column: Button Box Deck ──
             '<div class="profile-col">' +
               sectionCard("Button Deck", "apps",
                 '<p class="settings-hint" style="margin-bottom:14px;">Buttons displayed on companion screen when this profile is active. Click to configure or drag to reorder.</p>' +
@@ -7595,7 +7595,7 @@
           }
         }
         const isEditingSlot = !!(panelEdit && panelEdit.scope === "board" && panelEdit.index === idx);
-        h += '<div class="panel-slot-tile elite-style' + (isEditingSlot ? ' is-editing-slot' : '') + '" draggable="true" data-act="edit" data-i="' + idx + '" data-path="' + path.join(",") + '" role="button" tabindex="0"' + tileStyle + '>' +
+        h += '<div class="panel-slot-tile deck-style' + (isEditingSlot ? ' is-editing-slot' : '') + '" draggable="true" data-act="edit" data-i="' + idx + '" data-path="' + path.join(",") + '" role="button" tabindex="0"' + tileStyle + '>' +
           '<div class="panel-slot-drag-handle" title="Drag to reorder"><span class="material-icons-outlined" style="font-size:14px;">drag_indicator</span></div>' +
           (stateBadge ? '<span class="panel-slot-badge">' + esc(stateBadge) + '</span>' : '') +
           '<div class="panel-slot-thumb">' + thumb + '</div>' +
@@ -7834,15 +7834,16 @@
         });
       });
 
-      // 6. Game Actions (Elite Dangerous)
-      entities.filter(e => e.plugin === "elite_dangerous" && e.type === "action").forEach(e => {
+      // 6. Game & Integration Actions
+      entities.filter(e => !["ha", "system", "pc_stats", "time", "media"].includes(e.plugin) && e.type === "action").forEach(e => {
+        const catName = e.plugin_name || (e.plugin ? e.plugin.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase()) : "Game");
         items.push({
           id: e.id,
           name: e.name || e.id,
           icon: e.icon || "rocket-launch",
-          cat: "Game",
+          cat: catName,
           type: "action",
-          badge: "Elite"
+          badge: (e.plugin || "Action").toUpperCase()
         });
       });
 
@@ -7854,15 +7855,16 @@
       items.push({ id: "system.toolbar", name: "Desktop Toolbar", icon: "dock-top", cat: "System", type: "status", badge: "Desktop" });
       items.push({ id: "system.lighting_sync", name: "Lighting Sync", icon: "lightbulb", cat: "System", type: "status", badge: "RGB" });
 
-      // 2. Game Toggles (Elite Dangerous)
-      entities.filter(e => e.plugin === "elite_dangerous" && (e.type === "status" || e.type === "toggle" || e.writable)).forEach(e => {
+      // 2. Integration & Game Toggles
+      entities.filter(e => !["ha", "system", "pc_stats", "time", "media"].includes(e.plugin) && (e.type === "status" || e.type === "toggle" || e.writable)).forEach(e => {
+        const catName = e.plugin_name || (e.plugin ? e.plugin.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase()) : "Game");
         items.push({
           id: e.id,
           name: e.name || e.id,
-          icon: e.icon || "rocket-launch",
-          cat: "Game",
+          icon: e.icon || "toggle-switch",
+          cat: catName,
           type: "status",
-          badge: "Elite"
+          badge: (e.plugin || "Toggle").toUpperCase()
         });
       });
 
@@ -7904,16 +7906,17 @@
         });
       });
 
-      // 3. Game Telemetry Sensors
-      entities.filter(e => e.plugin === "elite_dangerous" && e.type === "data").forEach(e => {
+      // 3. Integration & Game Sensors
+      entities.filter(e => !["ha", "system", "pc_stats", "time", "media"].includes(e.plugin) && e.type === "data").forEach(e => {
+        const catName = e.plugin_name || (e.plugin ? e.plugin.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase()) : "Game");
         items.push({
           id: e.id,
           name: e.name || e.id,
           icon: e.icon || "speedometer",
           unit: e.unit || "",
-          cat: "Game",
+          cat: catName,
           type: "data",
-          badge: e.unit || "Ship"
+          badge: e.unit || (e.plugin || "Sensor").toUpperCase()
         });
       });
     }
@@ -8006,7 +8009,7 @@
         /* Column 1: Function & Target */
         '<div class="panel-modal-col">' +
           '<div class="settings-control" id="pe-name-wrap"><label class="settings-label">Name</label>' +
-          '<input type="text" class="settings-input" id="pe-name" value="' + esc(slot.name || "") + '" placeholder="e.g. Play/Pause, Elite, Mute"></div>' +
+          '<input type="text" class="settings-input" id="pe-name" value="' + esc(slot.name || "") + '" placeholder="e.g. Play/Pause, Launch App, Mute"></div>' +
 
           '<div class="settings-control" id="pe-type-wrap"><label class="settings-label">Card Type</label>' +
           '<select class="settings-select" id="pe-type">';
