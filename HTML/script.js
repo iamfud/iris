@@ -125,9 +125,9 @@
     if (mode === "monochrome") {
       c1 = "#FFFFFF"; // Primary White
       c2 = "#666666"; // Secondary Dim Grey
-    } else if (mode === "custom") {
-      c1 = theme.neon || "#48B2E9";
-      c2 = theme.accent || "#B23AF6";
+    } else if (mode === "custom" || neon || accent) {
+      c1 = neon || "#48B2E9";
+      c2 = accent || "#B23AF6";
     }
 
     const [r1, g1, b1] = hexToRgb(c1, [72, 178, 233]);
@@ -9305,8 +9305,15 @@
         panelLive.notification = null;
       }
       triggerNotificationSlide(theme, true, msg);
+    } else if (msg.type === "theme") {
+      if (msg.theme && typeof window.applyTheme === "function") {
+        window.applyTheme(msg.theme);
+      }
     } else if (msg.type === "config") {
       if (msg.config) {
+        if (msg.config.theme && typeof window.applyTheme === "function") {
+          window.applyTheme(msg.config.theme);
+        }
         _panelLiveConfigVersion = null;
         if (!_panelLiveCachedConfig) _panelLiveCachedConfig = {};
         Object.assign(_panelLiveCachedConfig, msg.config);
@@ -12160,6 +12167,32 @@
               </button>
             </div>
           `;
+        } else if (stype === "global_theme" || stype === "theme") {
+          const profiles = (panelDraft && panelDraft.panel_profiles) || (panelLive && panelLive.config && panelLive.config.panel_profiles) || [];
+          const curThemeVal = step.theme || step.profile || step.value || "__base__";
+          detailHtml = `
+            <select class="settings-select pe-mstep-val" data-idx="${idx}" style="flex:1;min-width:0;">
+              <option value="__base__" ${curThemeVal === "__base__" ? "selected" : ""}>Default / Base Theme</option>
+              <option value="preset:iris" ${curThemeVal === "preset:iris" ? "selected" : ""}>Preset: Iris Classic</option>
+              <option value="preset:monochrome" ${curThemeVal === "preset:monochrome" ? "selected" : ""}>Preset: Monochrome</option>
+              ${profiles.filter(p => p.id !== "__default__").map(p => {
+                const pName = p.name || p.id;
+                return `<option value="profile:${esc(p.id)}" ${curThemeVal === ("profile:" + p.id) || curThemeVal === p.id ? "selected" : ""}>Profile: ${esc(pName)} Theme</option>`;
+              }).join("")}
+            </select>
+          `;
+        } else if (stype === "profile" || stype === "load_profile") {
+          const profiles = (panelDraft && panelDraft.panel_profiles) || (panelLive && panelLive.config && panelLive.config.panel_profiles) || [];
+          const curP = step.profile_id || step.profile || step.id || "";
+          detailHtml = `
+            <select class="settings-select pe-mstep-val" data-idx="${idx}" style="flex:1;min-width:0;">
+              <option value="">Select profile to load...</option>
+              ${profiles.filter(p => p.id !== "__default__").map(p => {
+                const pName = p.name || p.id;
+                return `<option value="${esc(p.id)}" ${curP === p.id ? "selected" : ""}>${esc(pName)}</option>`;
+              }).join("")}
+            </select>
+          `;
         } else if (stype === "openrgb") {
           const curP = step.profile || step.openrgb_profile || "Sync Active Theme (Neon 1)";
           detailHtml = `
@@ -12199,6 +12232,8 @@
           <div style="display:flex;align-items:center;gap:6px;background:rgba(0,0,0,0.25);border:1px solid var(--border);border-radius:6px;padding:6px 8px;">
             <select class="settings-select pe-mstep-type" data-idx="${idx}" style="width:125px;flex:0 0 auto;">
               <option value="shortcut" ${stype === "shortcut" ? "selected" : ""}>Launch App</option>
+              <option value="global_theme" ${(stype === "global_theme" || stype === "theme") ? "selected" : ""}>Global Theme</option>
+              <option value="profile" ${(stype === "profile" || stype === "load_profile") ? "selected" : ""}>Load Profile</option>
               <option value="openrgb" ${stype === "openrgb" ? "selected" : ""}>OpenRGB Light</option>
               <option value="home_assistant" ${(stype === "home_assistant" || stype === "ha") ? "selected" : ""}>Home Assistant</option>
               <option value="sound" ${stype === "sound" ? "selected" : ""}>Play Sound</option>
@@ -12216,6 +12251,8 @@
           const i = parseInt(e.target.dataset.idx, 10);
           const ntype = e.target.value;
           if (ntype === "shortcut") macroActions[i] = { type: "shortcut", path: "", args: "" };
+          else if (ntype === "global_theme") macroActions[i] = { type: "global_theme", theme: "__base__" };
+          else if (ntype === "profile") macroActions[i] = { type: "profile", profile_id: "" };
           else if (ntype === "openrgb") macroActions[i] = { type: "openrgb", profile: "__theme__" };
           else if (ntype === "home_assistant") macroActions[i] = { type: "home_assistant", entity: "" };
           else if (ntype === "sound") macroActions[i] = { type: "sound", sound: "chime" };
@@ -12253,7 +12290,9 @@
         el.onchange = (e) => {
           const i = parseInt(e.target.dataset.idx, 10);
           const val = e.target.value;
-          if (macroActions[i].type === "openrgb") macroActions[i].profile = val;
+          if (macroActions[i].type === "global_theme" || macroActions[i].type === "theme") macroActions[i].theme = val;
+          else if (macroActions[i].type === "profile" || macroActions[i].type === "load_profile") macroActions[i].profile_id = val;
+          else if (macroActions[i].type === "openrgb") macroActions[i].profile = val;
           else if (macroActions[i].type === "home_assistant" || macroActions[i].type === "ha") macroActions[i].entity = val;
           else if (macroActions[i].type === "sound") macroActions[i].sound = val;
           else if (macroActions[i].type === "hotkey") macroActions[i].hotkey = val;
@@ -12271,7 +12310,7 @@
 
     if (macroAddBtn) {
       macroAddBtn.onclick = () => {
-        macroActions.push({ type: "openrgb", profile: "__theme__" });
+        macroActions.push({ type: "global_theme", theme: "__base__" });
         renderMacroList();
       };
     }

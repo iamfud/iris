@@ -715,6 +715,89 @@ def _broadcast_theme(theme_dict):
         pass
 
 
+def apply_global_theme(theme_dict: dict, source_id: str = None):
+    """Explicitly apply a global theme across all Iris surfaces.
+
+    Broadcasts over WebSocket to phone panel, theme.html, and kraken.html,
+    and triggers Hardware Lighting (OpenRGB / connected LEDs).
+    """
+    global _saved_base_theme, _active_themed_plugin
+    if not _cfg or not isinstance(_cfg, dict):
+        return
+    if not isinstance(theme_dict, dict):
+        return
+
+    # Snapshot user's base theme before first takeover if not already saved
+    if _saved_base_theme is None and source_id:
+        cur_th = _cfg.get("theme") or {}
+        _saved_base_theme = {
+            "mode": cur_th.get("mode", "iris"),
+            "accent": cur_th.get("accent", "#B23AF6"),
+            "neon": cur_th.get("neon", "#48B2E9"),
+        }
+
+    theme_payload = {
+        "mode": theme_dict.get("mode", "custom"),
+        "accent": theme_dict.get("accent", "#B23AF6"),
+        "neon": theme_dict.get("neon", "#48B2E9"),
+    }
+    _cfg["theme"] = theme_payload
+    if source_id is not None:
+        _active_themed_plugin = source_id
+    log.info("[pm] applied global theme (source=%s): %s", source_id, theme_payload)
+    _broadcast_theme(theme_payload)
+
+    # Hardware Lighting
+    try:
+        from lighting_service import get_lighting_service
+        get_lighting_service().evaluate_state(force=True)
+    except Exception as ex:
+        log.debug("[pm] lighting evaluate_state failed: %s", ex)
+
+
+def latch_profile_by_id(profile_id: str) -> bool:
+    """Latch a profile and apply its theme and lighting immediately."""
+    global _cfg
+    if not _cfg or not profile_id:
+        return False
+    profiles = _cfg.get("panel_profiles") or []
+    for p in profiles:
+        if not isinstance(p, dict):
+            continue
+        if p.get("id") == profile_id or str(p.get("id")).lower() == str(profile_id).lower():
+            th = p.get("theme") or {}
+            # Fall back to linked manifest theme if empty
+            if not th.get("accent") and not th.get("neon"):
+                pexe = str(p.get("exe") or "").lower().replace(".exe", "").strip()
+                for name, manifest in _manifests.items():
+                    mtheme = manifest.get("theme")
+                    if mtheme and isinstance(mtheme, dict):
+                        mexe = str(manifest.get("exe_default") or "").lower().replace(".exe", "").strip()
+                        if pexe and mexe and (pexe == mexe or pexe in mexe or mexe in pexe):
+                            th = mtheme
+                            break
+            if th and (th.get("accent") or th.get("neon")):
+                apply_global_theme(th, source_id=p.get("id"))
+                return True
+            break
+    return False
+
+
+def latch_profile_by_exe(exe_name: str) -> bool:
+    """Check if an exe matches any configured profile and latch its theme immediately."""
+    if not exe_name or not _cfg:
+        return False
+    clean = str(exe_name).lower().replace(".exe", "").strip()
+    profiles = _cfg.get("panel_profiles") or []
+    for p in profiles:
+        if not isinstance(p, dict) or not p.get("enabled", True):
+            continue
+        pexe = str(p.get("exe") or "").lower().replace(".exe", "").strip()
+        if pexe and (pexe == clean or pexe in clean or clean in pexe):
+            return latch_profile_by_id(p.get("id"))
+    return False
+
+
 # ── Lifecycle check ────────────────────────────────────────────
 
 def check_plugins():

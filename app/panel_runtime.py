@@ -255,6 +255,44 @@ def execute_slot(slot):
                     try:
                         if stype in ("shortcut", "app", "exe"):
                             _open_path(step.get("path") or step.get("shortcut_path"), step.get("args") or step.get("shortcut_args"))
+                        elif stype in ("global_theme", "theme"):
+                            try:
+                                import plugin_manager
+                                tgt = step.get("theme") or step.get("profile") or step.get("value") or "__base__"
+                                if tgt == "__base__":
+                                    if plugin_manager._saved_base_theme:
+                                        plugin_manager.apply_global_theme(plugin_manager._saved_base_theme)
+                                        plugin_manager._saved_base_theme = None
+                                        plugin_manager._active_themed_plugin = None
+                                    else:
+                                        plugin_manager.apply_global_theme({"mode": "iris", "accent": "#B23AF6", "neon": "#48B2E9"})
+                                elif tgt == "preset:iris":
+                                    plugin_manager.apply_global_theme({"mode": "iris", "accent": "#B23AF6", "neon": "#48B2E9"})
+                                elif tgt == "preset:monochrome":
+                                    plugin_manager.apply_global_theme({"mode": "monochrome", "accent": "#666666", "neon": "#FFFFFF"})
+                                elif isinstance(tgt, dict):
+                                    plugin_manager.apply_global_theme(tgt)
+                                elif str(tgt).startswith("profile:"):
+                                    pid = str(tgt).split(":", 1)[1]
+                                    plugin_manager.latch_profile_by_id(pid)
+                                elif step.get("accent") or step.get("neon"):
+                                    plugin_manager.apply_global_theme({
+                                        "mode": "custom",
+                                        "accent": step.get("accent") or "#B23AF6",
+                                        "neon": step.get("neon") or "#48B2E9"
+                                    })
+                                else:
+                                    plugin_manager.latch_profile_by_id(str(tgt))
+                            except Exception as th_ex:
+                                log.warning("[panel_runtime] macro global_theme error: %s", th_ex)
+                        elif stype in ("profile", "load_profile"):
+                            try:
+                                import plugin_manager
+                                pid = step.get("profile_id") or step.get("profile") or step.get("id")
+                                if pid:
+                                    plugin_manager.latch_profile_by_id(str(pid))
+                            except Exception as p_ex:
+                                log.warning("[panel_runtime] macro profile error: %s", p_ex)
                         elif stype == "openrgb" or step.get("openrgb_profile"):
                             prof = step.get("profile") or step.get("openrgb_profile")
                             if prof:
@@ -575,6 +613,15 @@ def _open_path(path, args=None):
 
     raw_path = os.path.expandvars(os.path.expanduser(str(path).strip().strip('"\'')))
     raw_args = os.path.expandvars(str(args or "").strip())
+
+    # Auto-latch profile theme if launched path matches a configured game/app profile
+    if raw_path and not raw_path.startswith(("http://", "https://")):
+        try:
+            import plugin_manager
+            exe_cand = os.path.basename(raw_path)
+            plugin_manager.latch_profile_by_exe(exe_cand)
+        except Exception:
+            pass
 
     # If raw_args is not explicitly given, check if raw_path has embedded switches (e.g. 'cmd.exe /k "..."')
     if not raw_args and not os.path.isfile(raw_path):
