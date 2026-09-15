@@ -6572,10 +6572,6 @@
       '</header>' +
       '<section class="settings-content profiles-page">' +
         '<div class="profile-editor-container">' +
-          '<div class="profile-editor-header-bar">' +
-            '<span class="profile-back-link" id="prof-back-link"><span class="material-icons-outlined" style="font-size:16px;">arrow_back</span> All Profiles</span>' +
-          '</div>' +
-
           '<div class="profile-two-col-layout">' +
             // ── Column 1: Global Shell & Widgets, Sliders ───────
             '<div class="profile-col">' +
@@ -6627,13 +6623,6 @@
     const backBtn = document.getElementById("prof-back-to-list");
     if (backBtn) {
       backBtn.addEventListener("click", () => {
-        profilesViewMode = "list";
-        renderProfilesPage();
-      });
-    }
-    const backLink = document.getElementById("prof-back-link");
-    if (backLink) {
-      backLink.addEventListener("click", () => {
         profilesViewMode = "list";
         renderProfilesPage();
       });
@@ -6912,10 +6901,6 @@
       '</header>' +
       '<section class="settings-content profiles-page">' +
         '<div class="profile-editor-container">' +
-          '<div class="profile-editor-header-bar">' +
-            '<span class="profile-back-link" id="prof-back-link"><span class="material-icons-outlined" style="font-size:16px;">arrow_back</span> All Profiles</span>' +
-          '</div>' +
-
           '<div class="profile-two-col-layout">' +
             // ── Left Column: Config & Settings ─────────────────
             '<div class="profile-col">' +
@@ -7009,13 +6994,6 @@
     const backBtn = document.getElementById("prof-back-to-list");
     if (backBtn) {
       backBtn.addEventListener("click", () => {
-        profilesViewMode = "list";
-        renderProfilesPage();
-      });
-    }
-    const backLink = document.getElementById("prof-back-link");
-    if (backLink) {
-      backLink.addEventListener("click", () => {
         profilesViewMode = "list";
         renderProfilesPage();
       });
