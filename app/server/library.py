@@ -22,6 +22,18 @@ class LibraryHandlerMixin:
         except Exception:
             pass
 
+    def _handle_screenshot_latest(self):
+        """Return the most recent screenshot captured by the Tk dialog."""
+        app = self._get_app_ref()
+        if app is None:
+            self._send_json({"available": False, "seq": 0})
+            return
+        data = getattr(app, "screenshot_last", None)
+        if not data:
+            self._send_json({"available": False, "seq": getattr(app, "screenshot_seq", 0)})
+            return
+        self._send_json({"available": True, **data})
+
     def _get_app_ref(self):
         try:
             import ws_bridge
