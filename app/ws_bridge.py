@@ -49,110 +49,17 @@ _HTTP_TOKEN = secrets.token_urlsafe(32)
 # Long-lived device sessions created by scanning the QR.  Persisted to disk so a
 # panel restart does not log mobile devices back out.  Tokens are stored
 # only as SHA-256 hashes so the file is useless if it leaks.
-_DEVICE_TTL = 365 * 24 * 3600
-_DEVICES = {}
-_last_devices_save = 0.0
-
-
-def _devices_path():
-    try:
-        from config import config_path as _cp
-        return os.path.join(os.path.dirname(_cp()), "devices.json")
-    except Exception:
-        return os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "devices.json")
-
-
-def _load_devices():
-    try:
-        with open(_devices_path()) as f:
-            data = json.load(f)
-        if isinstance(data, dict):
-            for k, v in data.items():
-                if not isinstance(v, dict):
-                    # Legacy file: values were plain expiry timestamps.
-                    v = {"exp": v, "ua": "", "created": None, "last_seen": None}
-                _DEVICES[k] = v
-    except Exception:
-        pass
-
-
-def _save_devices():
-    try:
-        with open(_devices_path(), "w") as f:
-            json.dump(_DEVICES, f, indent=2)
-    except Exception:
-        pass
-
-
-def _touch_device(tok_hash):
-    """Refresh a device's last-seen timestamp (throttled disk writes)."""
-    global _last_devices_save
-    rec = _DEVICES.get(tok_hash)
-    if not isinstance(rec, dict):
-        return
-    rec["last_seen"] = time.time()
-    now = time.time()
-    if now - _last_devices_save >= 30:
-        _last_devices_save = now
-        _save_devices()
-
-
-def _ua_device_name(ua):
-    """Best-effort friendly name derived from the device's User-Agent."""
-    if not ua:
-        return "Paired device"
-    low = ua.lower()
-    if "ipad" in low:
-        return "iPad"
-    if "iphone" in low:
-        return "iPhone"
-    if "android" in low:
-        m = re.search(r";\s*([^;\s()/]+?)\s+Build/", ua)
-        if m:
-            return m.group(1).strip()
-        return "Android device"
-    if "macintosh" in low or "mac os" in low:
-        return "Mac"
-    if "windows" in low:
-        return "Windows PC"
-    if "linux" in low:
-        return "Linux"
-    if "pywebview" in low:
-        return "Iris Panel"
-    return "Connected device"
-
-
-def _get_devices():
-    """Return non-sensitive metadata for every unexpired paired device."""
-    now = time.time()
-    out = []
-    for h, rec in _DEVICES.items():
-        exp = rec.get("exp") if isinstance(rec, dict) else rec
-        if exp is None or now > exp:
-            continue
-        if isinstance(rec, dict):
-            out.append({
-                "id": h,
-                "name": _ua_device_name(rec.get("ua", "")),
-                "ua": rec.get("ua", ""),
-                "created": rec.get("created"),
-                "last_seen": rec.get("last_seen"),
-            })
-        else:
-            out.append({
-                "id": h, "name": "Paired device", "ua": "",
-                "created": None, "last_seen": None,
-            })
-    out.sort(key=lambda d: d.get("last_seen") or 0, reverse=True)
-    return out
-
-
-def _token_hash(tok):
-    return hashlib.sha256((tok or "").encode("utf-8")).hexdigest()
-
-
-_load_devices()
+from server.devices import (
+    _DEVICE_TTL,
+    _DEVICES,
+    devices_path as _devices_path,
+    load_devices as _load_devices,
+    save_devices as _save_devices,
+    touch_device as _touch_device,
+    ua_device_name as _ua_device_name,
+    get_devices as _get_devices,
+    token_hash as _token_hash,
+)
 
 if getattr(sys, "frozen", False):
     _ROOT_DIR = sys._MEIPASS
@@ -177,32 +84,21 @@ def register_app(app):
     _app = app
 
 
-# ── Auth helpers ──────────────────────────────────────────────
-
-def _is_loopback_address(ip):
-    """True for loopback source addresses (127.0.0.0/8 or ::1)."""
-    try:
-        if not ip:
-            return False
-        return ip == "::1" or ip.startswith("127.")
-    except Exception:
-        return False
-
-
-def _valid_session(tok):
-    """True when tok is a valid paired-device session cookie."""
-    if not tok:
-        return False
-    dex = _DEVICES.get(_token_hash(tok))
-    if dex is not None:
-        exp = dex.get("exp") if isinstance(dex, dict) else dex
-        if exp is None or time.time() > exp:
-            _DEVICES.pop(_token_hash(tok), None)
-            _save_devices()
-            return False
-        _touch_device(_token_hash(tok))
-        return True
-    return False
+# ── Auth & Network helpers (modularized under server/) ─────────
+from server.auth import (
+    is_loopback_address as _is_loopback_address,
+    valid_session as _valid_session,
+    check_auth_rate_limit as _check_auth_rate_limit,
+    record_auth_failure as _record_auth_failure,
+    record_auth_success as _record_auth_success,
+    is_authorized_slot as _is_authorized_slot,
+)
+from server.network import (
+    lan_ip as _lan_ip,
+    lan_url as _srv_lan_url,
+    lan_pair_url as _srv_lan_pair_url,
+    qr_bytes as _srv_qr_bytes,
+)
 
 
 def _sync_next_alarm(serial_sender, alarms):
@@ -344,154 +240,37 @@ def _is_loopback_mode():
     return _bind_host() == "127.0.0.1"
 
 
-def _lan_ip():
-    """Best-effort primary LAN IPv4 address (route to default gateway).
-
-    Falls back to the machine hostname resolution if the UDP trick fails.
-    """
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        try:
-            s.connect(("8.8.8.8", 80))
-            ip = s.getsockname()[0]
-        finally:
-            s.close()
-        if ip and not ip.startswith("127."):
-            return ip
-    except Exception:
-        pass
-    try:
-        return socket.gethostbyname(socket.gethostname())
-    except Exception:
-        return "127.0.0.1"
-
-
 def _lan_url():
     """Panel URL a LAN device can open (token is injected server-side)."""
-    host = _lan_ip()
-    if _is_loopback_mode():
-        host = "127.0.0.1"
-    return "http://%s:15502" % host
+    return _srv_lan_url(is_loopback=_is_loopback_mode())
 
 
 def _lan_pair_url():
     """Pairing URL encoded in the on-screen QR code."""
-    host = _lan_ip()
-    if _is_loopback_mode():
-        host = "127.0.0.1"
-    return "http://%s:15502/pair?token=%s" % (host, _HTTP_TOKEN)
+    return _srv_lan_pair_url(_HTTP_TOKEN, is_loopback=_is_loopback_mode())
 
 
 def _qr_bytes():
     """Render the one-time pairing URL as a QR code PNG."""
-    import io
-    try:
-        import qrcode
-    except ImportError:
-        return None
-    try:
-        qr = qrcode.QRCode(box_size=8, border=2)
-        qr.add_data(_lan_pair_url())
-        qr.make(fit=True)
-        img = qr.make_image(fill_color="#0f1014", back_color="#ffffff")
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        return buf.getvalue()
-    except Exception:
-        return None
+    return _srv_qr_bytes(_lan_pair_url())
 
 
-_LOGIN_FAILURES = {}  # ip -> (count, lockout_until)
+from server.library import LibraryHandlerMixin
+from server.notifications import NotificationsHandlerMixin
+from server.vision import (
+    VisionHandlerMixin,
+    vision_sensors as _vision_sensors,
+    save_vision_config as _save_vision_config,
+    normalize_sensor as _normalize_sensor,
+)
 
 
-def _check_auth_rate_limit(ip):
-    """Return (allowed: bool, retry_after: int)."""
-    now = time.time()
-    record = _LOGIN_FAILURES.get(ip)
-    if not record:
-        return True, 0
-    count, lockout_until = record
-    if now < lockout_until:
-        return False, max(1, int(lockout_until - now))
-    if count >= 5 and now >= lockout_until:
-        _LOGIN_FAILURES.pop(ip, None)
-        return True, 0
-    return True, 0
-
-
-def _record_auth_failure(ip):
-    now = time.time()
-    record = _LOGIN_FAILURES.get(ip, (0, 0))
-    count = record[0] + 1
-    lockout_until = record[1]
-    if count >= 5:
-        lockout_until = now + 60.0  # 60s lockout after 5 consecutive failures
-    _LOGIN_FAILURES[ip] = (count, lockout_until)
-
-
-def _record_auth_success(ip):
-    _LOGIN_FAILURES.pop(ip, None)
-
-
-def _is_authorized_slot(slot, cfg):
-    """Verify that an action slot requested by a remote peer matches a pre-configured button."""
-    if not isinstance(slot, dict) or not isinstance(cfg, dict):
-        return False
-    stype = str(slot.get("type") or "").strip()
-    if not stype:
-        return False
-
-    # Safe built-in controls that only affect media transport or audio toggling
-    if stype in ("MEDIA_PLAY", "MEDIA_NEXT", "MEDIA_PREV", "MEDIA_EJECT", "AUDIO OUTPUT", "EMPTY"):
-        return True
-
-    candidates = []
-    candidates.extend(cfg.get("panel_board") or [])
-    candidates.extend(cfg.get("panel_utility") or [])
-    candidates.extend(cfg.get("panel_core") or [])
-    for prof in cfg.get("panel_profiles") or []:
-        if isinstance(prof, dict):
-            candidates.extend(prof.get("board") or [])
-
-    spath = str(slot.get("shortcut_path") or "").strip()
-    sargs = str(slot.get("shortcut_args") or "").strip()
-    saction = str(slot.get("core_action") or "").strip()
-    sentity = str(slot.get("entity") or slot.get("entity_id") or "").strip()
-    shotkey = str(slot.get("hotkey") or "").strip()
-    sbtn = str(slot.get("button_id") or "").strip()
-    sname = str(slot.get("name") or "").strip()
-
-    for c in candidates:
-        if not isinstance(c, dict):
-            continue
-        if str(c.get("type") or "").strip() != stype:
-            continue
-        if stype in ("SHORTCUT", "GROUP"):
-            cpath = str(c.get("shortcut_path") or "").strip()
-            cargs = str(c.get("shortcut_args") or "").strip()
-            if cpath == spath and cargs == sargs:
-                return True
-        elif stype == "CORE":
-            if str(c.get("core_action") or "").strip() == saction:
-                return True
-        elif stype == "MACRO":
-            # Match on slot name or matching actions count
-            if sname and str(c.get("name") or "").strip() == sname:
-                return True
-            if c.get("actions") and slot.get("actions") and len(c.get("actions")) == len(slot.get("actions")):
-                return True
-        elif stype in ("TOGGLE", "HOTKEY", "ACTION", "SENSOR"):
-            centity = str(c.get("entity") or c.get("entity_id") or "").strip()
-            cbtn = str(c.get("button_id") or "").strip()
-            chotkey = str(c.get("hotkey") or "").strip()
-            if (centity and centity == sentity) or (cbtn and cbtn == sbtn) or (chotkey and chotkey == shotkey):
-                return True
-            if sname and str(c.get("name") or "").strip() == sname:
-                return True
-    return False
-
-
-class _RequestHandler(SimpleHTTPRequestHandler):
+class _RequestHandler(
+    LibraryHandlerMixin,
+    NotificationsHandlerMixin,
+    VisionHandlerMixin,
+    SimpleHTTPRequestHandler,
+):
     protocol_version = "HTTP/1.1"
 
     extensions_map = SimpleHTTPRequestHandler.extensions_map.copy()
@@ -1189,84 +968,6 @@ class _RequestHandler(SimpleHTTPRequestHandler):
 
         self._send_json({"ok": True, "set": True})
 
-    def _handle_get_notifications(self):
-        try:
-            import notifications_store
-            data = notifications_store.get_notifications()
-            self._send_json({"ok": True, **data})
-        except Exception as e:
-            self._send_json({"ok": False, "error": str(e)})
-
-    def _handle_notification_delete(self):
-        try:
-            body = self._read_json() or {}
-            notif_id = body.get("id")
-            if not notif_id:
-                self._send_json({"ok": False, "error": "missing id"})
-                return
-            import notifications_store
-            res = notifications_store.delete_notification(notif_id)
-            self._send_json({"ok": res})
-        except Exception as e:
-            self._send_json({"ok": False, "error": str(e)})
-
-    def _handle_notification_clear(self):
-        try:
-            body = self._read_json() or {}
-            include_archived = bool(body.get("include_archived", False))
-            import notifications_store
-            res = notifications_store.delete_all(include_archived)
-            self._send_json({"ok": res})
-        except Exception as e:
-            self._send_json({"ok": False, "error": str(e)})
-
-    def _handle_notification_archive(self):
-        try:
-            body = self._read_json() or {}
-            notif_id = body.get("id")
-            archived = bool(body.get("archived", True))
-            if not notif_id:
-                self._send_json({"ok": False, "error": "missing id"})
-                return
-            import notifications_store
-            res = notifications_store.set_archived(notif_id, archived)
-            self._send_json({"ok": res})
-        except Exception as e:
-            self._send_json({"ok": False, "error": str(e)})
-
-    def _handle_notification_archive_all(self):
-        try:
-            import notifications_store
-            res = notifications_store.archive_all()
-            self._send_json({"ok": res})
-        except Exception as e:
-            self._send_json({"ok": False, "error": str(e)})
-
-    def _handle_notification_rule(self):
-        try:
-            body = self._read_json() or {}
-            source = body.get("source")
-            rule = body.get("rule", "normal")
-            if not source:
-                self._send_json({"ok": False, "error": "missing source"})
-                return
-            import notifications_store
-            notifications_store.set_source_rule(source, rule)
-            self._send_json({"ok": True, "rules": notifications_store.get_source_rules()})
-        except Exception as e:
-            self._send_json({"ok": False, "error": str(e)})
-
-    def _handle_notification_settings(self):
-        try:
-            body = self._read_json() or {}
-            max_stored = body.get("max_stored")
-            if max_stored is not None:
-                import notifications_store
-                notifications_store.set_max_stored(max_stored)
-            self._send_json({"ok": True})
-        except Exception as e:
-            self._send_json({"ok": False, "error": str(e)})
-
     def _serve_index(self):
         """Serve the settings panel, or the pairing info page if unauthorized."""
         if not self._authorized():
@@ -1580,486 +1281,6 @@ class _RequestHandler(SimpleHTTPRequestHandler):
         except Exception as e:
             log.warning("[http] /api/audio/devices error: %s", e)
             self._send_json({"ok": False, "devices": [], "current": None})
-
-    # ── Library ────────────────────────────────────────────────────────────
-
-    def _screenshots_folder(self):
-        cfg = getattr(_app, "cfg", None) if _app is not None else None
-        return paths.get_screenshots_dir(cfg)
-
-    def _notes_folder(self):
-        cfg = getattr(_app, "cfg", None) if _app is not None else None
-        return paths.get_notes_dir(cfg)
-
-    def _library_folders(self):
-        folders = []
-        sf = self._screenshots_folder()
-        nf = self._notes_folder()
-        for f in (sf, nf):
-            if f and f not in folders:
-                folders.append(f)
-        # Check legacy directory for backward-compatibility with existing files
-        legacy = os.path.abspath(os.path.join(os.path.expanduser("~"), "Documents", "Iris", "Screenshots"))
-        if os.path.isdir(legacy) and legacy not in folders:
-            folders.append(legacy)
-        return folders
-
-    def _find_library_file(self, filename):
-        fname = os.path.basename(filename)
-        for folder in self._library_folders():
-            cand = os.path.join(folder, fname)
-            if os.path.isfile(cand):
-                return folder, cand
-        # Default destination if not found
-        if fname.lower().endswith(".txt"):
-            return self._notes_folder(), os.path.join(self._notes_folder(), fname)
-        return self._screenshots_folder(), os.path.join(self._screenshots_folder(), fname)
-
-    def _library_folder(self):
-        """Legacy helper returning screenshots folder."""
-        return self._screenshots_folder()
-
-    def _parse_library_filename(self, fname):
-        """Extract app name and timestamp from an iris_* filename.
-
-        New format: iris_APPNAME_YYYYMMDD_HHMMSS.png
-        Old format: iris_YYYYMMDD_HHMMSS.png  (app → 'unknown')
-        Note format: iris_note_APPNAME_YYYYMMDD_HHMMSS.txt
-        """
-        import re as _re
-        # Note file
-        m = _re.match(r'^iris_note_(.+)_(\d{8}_\d{6})\.txt$', fname)
-        if m:
-            return {"type": "note", "app": m.group(1), "ts_str": m.group(2)}
-        # New screenshot format
-        m = _re.match(r'^iris_([a-z0-9_]+)_(\d{8})_(\d{6})\.png$', fname)
-        if m:
-            app = m.group(1)
-            ts_str = m.group(2) + "_" + m.group(3)
-            return {"type": "screenshot", "app": app, "ts_str": ts_str}
-        # Old screenshot format iris_YYYYMMDD_HHMMSS.png
-        m = _re.match(r'^iris_(\d{8})_(\d{6})\.png$', fname)
-        if m:
-            ts_str = m.group(1) + "_" + m.group(2)
-            return {"type": "screenshot", "app": "unknown", "ts_str": ts_str}
-        return None
-
-    def _ts_from_str(self, ts_str):
-        """Convert YYYYMMDD_HHMMSS → unix timestamp."""
-        try:
-            import time as _t
-            return _t.mktime(_t.strptime(ts_str, "%Y%m%d_%H%M%S"))
-        except Exception:
-            return 0.0
-
-    def _sidecar_path(self, folder, img_fname):
-        base = os.path.splitext(img_fname)[0]
-        return os.path.join(folder, base + ".json")
-
-    def _handle_library_items(self):
-        """List all screenshots and notes across the library folders."""
-        items = []
-        seen = set()
-        try:
-            for folder in self._library_folders():
-                if not os.path.isdir(folder):
-                    continue
-                all_files = os.listdir(folder)
-                for fname in all_files:
-                    if fname in seen:
-                        continue
-                    meta = self._parse_library_filename(fname)
-
-                    # Unrecognised PNG — show as orphan using file mtime
-                    if meta is None:
-                        if fname.lower().endswith(".png"):
-                            fpath = os.path.join(folder, fname)
-                            ts = os.path.getmtime(fpath) if os.path.isfile(fpath) else 0.0
-                            sc_path = self._sidecar_path(folder, fname)
-                            title = ""
-                            if os.path.isfile(sc_path):
-                                try:
-                                    with open(sc_path, encoding="utf-8") as f:
-                                        sc = json.load(f)
-                                    title = sc.get("title", "")
-                                except Exception:
-                                    pass
-                            seen.add(fname)
-                            items.append({
-                                "type": "screenshot",
-                                "filename": fname,
-                                "app": "orphan",
-                                "ts": ts,
-                                "title": title,
-                            })
-                        continue
-
-                    seen.add(fname)
-                    ts = self._ts_from_str(meta["ts_str"])
-
-                    if meta["type"] == "screenshot":
-                        # Read title from sidecar if present
-                        sc_path = self._sidecar_path(folder, fname)
-                        title = ""
-                        if os.path.isfile(sc_path):
-                            try:
-                                with open(sc_path, encoding="utf-8") as f:
-                                    sc = json.load(f)
-                                title = sc.get("title", "")
-                            except Exception:
-                                pass
-                        items.append({
-                            "type": "screenshot",
-                            "filename": fname,
-                            "app": meta["app"],
-                            "ts": ts,
-                            "title": title,
-                        })
-
-                    elif meta["type"] == "note":
-                        title = ""
-                        preview = ""
-                        fpath = os.path.join(folder, fname)
-                        try:
-                            with open(fpath, encoding="utf-8") as f:
-                                content = f.read(500)
-                            lines = content.split("\n")
-                            body_lines = []
-                            for idx, line in enumerate(lines):
-                                if idx == 0 and line.startswith("title:"):
-                                    title = line[6:].strip()
-                                else:
-                                    clean_line = re.sub(r"<[^>]+>", " ", line)
-                                    clean_line = clean_line.replace("&nbsp;", " ").strip()
-                                    if clean_line:
-                                        body_lines.append(clean_line)
-                            preview = body_lines[0][:80] if body_lines else ""
-                        except Exception:
-                            pass
-                        items.append({
-                            "type": "note",
-                            "filename": fname,
-                            "app": meta["app"],
-                            "ts": ts,
-                            "title": title,
-                            "preview": preview,
-                        })
-
-            # Sort newest first
-            items.sort(key=lambda x: x["ts"], reverse=True)
-            self._send_json({"items": items})
-        except Exception as e:
-            log.warning("library items error: %s", e)
-            self._send_json({"items": []})
-
-    def _handle_library_image(self, filename):
-        """Serve a PNG from the library folder."""
-        from urllib.parse import unquote
-        filename = unquote(filename.split("?")[0])  # strip query string, decode %xx
-        filename = os.path.basename(filename)
-        if not filename.lower().endswith(".png"):
-            self.send_error(400)
-            return
-        folder, path = self._find_library_file(filename)
-        if not os.path.isfile(path):
-            self.send_error(404)
-            return
-        try:
-            with open(path, "rb") as f:
-                data = f.read()
-            self.send_response(200)
-            self.send_header("Content-Type", "image/png")
-            self.send_header("Content-Length", str(len(data)))
-            self.send_header("Cache-Control", "no-cache")
-            self.end_headers()
-            self.wfile.write(data)
-        except Exception as e:
-            log.warning("library image serve error: %s", e)
-            self.send_error(500)
-
-    def _handle_library_get_sidecar(self, filename):
-        """Return sidecar JSON for a screenshot (empty object if none exists)."""
-        filename = os.path.basename(filename)
-        folder, _ = self._find_library_file(filename)
-        sc_path = self._sidecar_path(folder, filename)
-        if not os.path.isfile(sc_path):
-            self._send_json({})
-            return
-        try:
-            with open(sc_path, encoding="utf-8") as f:
-                self._send_json(json.load(f))
-        except Exception:
-            self._send_json({})
-
-    def _handle_library_save_sidecar(self, filename):
-        """Save sidecar JSON for a screenshot."""
-        filename = os.path.basename(filename)
-        folder, img_path = self._find_library_file(filename)
-        if not os.path.isfile(img_path):
-            self.send_error(404)
-            return
-        try:
-            body = self._read_json()
-            sc_path = self._sidecar_path(folder, filename)
-            # Preserve existing annotation data; only update allowed keys
-            existing = {}
-            if os.path.isfile(sc_path):
-                try:
-                    with open(sc_path, encoding="utf-8") as f:
-                        existing = json.load(f)
-                except Exception:
-                    pass
-            if "title" in body:
-                existing["title"] = str(body["title"])
-            if "annotations" in body and isinstance(body["annotations"], list):
-                existing["annotations"] = body["annotations"]
-            with open(sc_path, "w", encoding="utf-8") as f:
-                json.dump(existing, f, ensure_ascii=False)
-            broadcast({"type": "library_update"})
-            self._send_json({"ok": True})
-        except Exception as e:
-            log.warning("library sidecar save error: %s", e)
-            self.send_error(500)
-
-    def _handle_library_get_note(self, filename):
-        """Return the content of a note file."""
-        filename = os.path.basename(filename)
-        folder, path = self._find_library_file(filename)
-        if not os.path.isfile(path):
-            self._send_json({"content": "", "app": "", "title": ""})
-            return
-        try:
-            with open(path, encoding="utf-8") as f:
-                content = f.read()
-            # First line is the title (prefixed "title:"), rest is body
-            lines = content.split("\n", 2)
-            title = ""
-            body = content
-            if lines and lines[0].startswith("title:"):
-                title = lines[0][6:].strip()
-                body = "\n".join(lines[1:]).lstrip("\n")
-            meta = self._parse_library_filename(filename) or {}
-            self._send_json({"content": body, "title": title, "app": meta.get("app", "")})
-        except Exception as e:
-            log.warning("library note read error: %s", e)
-            self.send_error(500)
-
-    def _handle_library_save_note(self):
-        """Create or overwrite a note file."""
-        import time as _t
-        import re as _re
-        try:
-            body = self._read_json()
-            app = body.get("app", "general") or "general"
-            app = _re.sub(r'[^a-z0-9]+', '_', app.lower()).strip('_') or "general"
-            title = str(body.get("title", "")).strip()
-            content = str(body.get("content", ""))
-            raw_filename = str(body.get("filename", "")).strip()
-
-            folder = self._notes_folder()
-            os.makedirs(folder, exist_ok=True)
-
-            if not raw_filename:
-                ts = _t.strftime("%Y%m%d_%H%M%S")
-                filename = "iris_note_%s_%s.txt" % (app, ts)
-            else:
-                base = os.path.basename(raw_filename)
-                # Strip extension and sanitize base name
-                if base.lower().endswith(".txt"):
-                    base = base[:-4]
-                base = _re.sub(r'[^a-zA-Z0-9_\-\. ]+', '_', base).strip('._ ')
-                if not base:
-                    base = f"note_{int(_t.time())}"
-                filename = f"{base}.txt"
-
-            path = os.path.join(folder, filename)
-            with open(path, "w", encoding="utf-8") as f:
-                f.write("title:%s\n%s" % (title, content))
-            broadcast({"type": "library_update"})
-            self._send_json({"ok": True, "filename": os.path.basename(path)})
-        except Exception as e:
-            log.warning("library note save error: %s", e)
-            self.send_error(500)
-
-    def _handle_library_delete(self, filename):
-        """Delete a library item (PNG + sidecar, or note txt)."""
-        if not self._is_loopback_peer():
-            self._send_json({"ok": False, "error": "forbidden"})
-            return
-        filename = os.path.basename(filename)
-        folder, path = self._find_library_file(filename)
-        try:
-            if not os.path.isfile(path):
-                self.send_error(404)
-                return
-            os.remove(path)
-            # Also remove sidecar if it's a PNG
-            if filename.lower().endswith(".png"):
-                sc = self._sidecar_path(folder, filename)
-                if os.path.isfile(sc):
-                    os.remove(sc)
-            broadcast({"type": "library_update"})
-            self._send_json({"ok": True})
-        except Exception as e:
-            log.warning("library delete error: %s", e)
-            self.send_error(500)
-
-    def _handle_library_open_folder(self):
-        """Open the screenshots library folder in Explorer, optionally selecting a specific file."""
-        if not self._is_loopback_peer():
-            self._send_json({"ok": False, "error": "forbidden"})
-            return
-        try:
-            fname = None
-            if self.command == "POST":
-                body = self._read_json()
-                fname = body.get("filename") if isinstance(body, dict) else None
-            elif "?" in self.path:
-                from urllib.parse import parse_qs, urlparse
-                qs = parse_qs(urlparse(self.path).query)
-                files = qs.get("file") or qs.get("filename")
-                if files:
-                    fname = files[0]
-
-            folder = self._screenshots_folder()
-            if not os.path.isdir(folder):
-                os.makedirs(folder, exist_ok=True)
-            if fname:
-                _, full_path = self._find_library_file(fname)
-                if full_path and os.path.isfile(full_path):
-                    import subprocess
-                    norm_path = os.path.normpath(full_path)
-                    subprocess.Popen(["explorer.exe", f"/select,{norm_path}"], shell=False)
-                    self._send_json({"ok": True, "path": norm_path})
-                    return
-            os.startfile(folder)
-            self._send_json({"ok": True, "path": folder})
-        except Exception as e:
-            log.warning("library open folder error: %s", e)
-            self.send_error(500, str(e))
-
-    def _handle_library_running_apps(self):
-        """Return a list of currently running process names for the note app picker."""
-        try:
-            from win_platform import get_running_process_names
-            names = get_running_process_names(ttl=1.0)
-            seen = set()
-            apps = []
-            import re as _re
-            for name in names:
-                try:
-                    key = _re.sub(r'\.exe$', '', name, flags=_re.IGNORECASE).lower()
-                    key = _re.sub(r'[^a-z0-9]+', '_', key).strip('_')
-                    if key and key not in seen:
-                        seen.add(key)
-                        apps.append(key)
-                except Exception:
-                    pass
-            apps.sort()
-            self._send_json({"apps": apps})
-        except Exception as e:
-            log.warning("library running apps error: %s", e)
-            self._send_json({"apps": []})
-
-    def _handle_vision_capture(self):
-        import vision
-        root = _app._root if _app is not None else None
-        rect = vision.select_region(root, timeout=90)
-        if not rect:
-            self._send_json({"cancelled": True})
-            return
-        x, y, w, h = rect
-        bbox = (x, y, x + w, y + h)
-        try:
-            img_b64 = vision.screenshot_b64(bbox)
-        except Exception as e:
-            log.warning("[vision] capture failed: %s", e)
-            self.send_error(500, str(e))
-            return
-        cx, cy = x + w // 2, y + h // 2
-        exe = vision.resolve_exe_for_point(cx, cy)
-        anchor = vision.monitor_containing(cx, cy)
-        region = vision.region_to_pct(anchor, (x, y, w, h))
-
-        ocr_res = {}
-        try:
-            img = vision.capture(bbox)
-            ocr_res = vision.ocr_extract(img)
-        except Exception:
-            pass
-
-        self._send_json({
-            "exe": exe,
-            "anchor": anchor,
-            "region": region,
-            "screenshot_b64": img_b64,
-            "detected_text": ocr_res.get("text", ""),
-            "words": ocr_res.get("words", []),
-        })
-
-    def _handle_vision_test(self):
-        try:
-            body = self._read_json()
-        except Exception as e:
-            self.send_error(400, str(e))
-            return
-        import vision
-        result = vision.measure(body)
-        self._send_json({
-            "value": result.get("value", 0.0),
-            "text": result.get("text", ""),
-            "active": result.get("active", False),
-            "mode": result.get("mode", ""),
-            "words": result.get("words", []),
-        })
-
-    def _handle_vision_create_sensor(self):
-        if not self._is_loopback_peer():
-            self.send_error(403, "Forbidden")
-            return
-        try:
-            body = self._read_json()
-        except Exception as e:
-            self.send_error(400, str(e))
-            return
-        if _app is None:
-            self.send_error(503, "App not registered")
-            return
-        sensor = _normalize_sensor(body, _vision_sensors())
-        _vision_sensors().append(sensor)
-        _save_vision_config()
-        self._send_json({"ok": True, "sensor": sensor})
-
-    def _handle_vision_update_sensor(self, sensor_id):
-        if not self._is_loopback_peer():
-            self.send_error(403, "Forbidden")
-            return
-        try:
-            body = self._read_json()
-        except Exception as e:
-            self.send_error(400, str(e))
-            return
-        sensors = _vision_sensors()
-        idx = next((i for i, s in enumerate(sensors) if s.get("id") == sensor_id), None)
-        if idx is None:
-            self.send_error(404, "sensor not found")
-            return
-        sensor = _normalize_sensor(body)
-        sensor["id"] = sensor_id
-        sensor["created"] = sensors[idx].get("created", 0)
-        sensors[idx] = sensor
-        _save_vision_config()
-        self._send_json({"ok": True, "sensor": sensor})
-
-    def _handle_vision_delete_sensor(self, sensor_id):
-        if not self._is_loopback_peer():
-            self.send_error(403, "Forbidden")
-            return
-        sensors = _vision_sensors()
-        before = len(sensors)
-        _vision_sensors()[:] = [s for s in sensors if s.get("id") != sensor_id]
-        _save_vision_config()
-        self._send_json({"ok": len(_vision_sensors()) < before})
 
     # ── Automations API Handlers ───────────────────────────────────
 
@@ -3385,42 +2606,15 @@ def _clear_hw_cache():
 # ── Vision API helpers ─────────────────────────────────────────
 
 def _vision_sensors():
-    """Return the (mutable) list of vision sensors from app config."""
-    if _app is None:
-        return []
-    return _app.cfg.setdefault("plugins", {}).setdefault("vision", {}).setdefault("sensors", [])
+    return _vision_sensors(_app)
 
 
 def _save_vision_config():
-    if _app is None:
-        return
-    from config import save_config
-    save_config(_app.cfg)
+    _save_vision_config(_app)
 
 
 def _normalize_sensor(body, existing=None):
-    import time as _t
-    sensor = dict(body or {})
-    if not sensor.get("id"):
-        ids = {s.get("id") for s in (existing or [])}
-        n = len(ids) + 1
-        while f"vs_{n}" in ids:
-            n += 1
-        sensor["id"] = f"vs_{n}"
-    sensor.setdefault("enabled", True)
-    sensor.setdefault("mode", "color_percentage")
-    sensor.setdefault("color", "#ff0000")
-    sensor.setdefault("pixel", {"x_pct": 50, "y_pct": 50})
-    sensor.setdefault("tolerance", 40)
-    sensor.setdefault("threshold", 30.0)
-    sensor.setdefault("direction", "below")
-    sensor.setdefault("poll_rate", 1.0)
-    sensor.setdefault("cooldown_s", 10.0)
-    sensor.setdefault("output_display", True)
-    sensor.setdefault("flash_name", False)
-    sensor.setdefault("require_foreground", False)
-    sensor.setdefault("created", int(_t.time()))
-    return sensor
+    return _normalize_sensor(body, existing)
 
 
 def _merge_vision_config(envelope):
