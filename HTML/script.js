@@ -107,10 +107,6 @@
     const mode = theme.mode || "iris";
     const neon = theme.neon || "";
     const accent = theme.accent || "";
-    const themeKey = `${mode}|${neon}|${accent}`;
-    if (themeKey === _lastAppliedThemeKey) return;
-    _lastAppliedThemeKey = themeKey;
-
     function hexToRgb(hex, def) {
       if (!hex || hex[0] !== "#" || (hex.length !== 7 && hex.length !== 4)) return def;
       const r = parseInt(hex.length === 7 ? hex.slice(1, 3) : hex[1] + hex[1], 16) || 0;
@@ -125,10 +121,17 @@
     if (mode === "monochrome") {
       c1 = "#FFFFFF"; // Primary White
       c2 = "#666666"; // Secondary Dim Grey
-    } else if (mode === "custom" || neon || accent) {
+    } else if (mode === "iris") {
+      c1 = "#48B2E9";
+      c2 = "#B23AF6";
+    } else if (mode === "custom" || (!theme.mode && (neon || accent))) {
       c1 = neon || "#48B2E9";
       c2 = accent || "#B23AF6";
     }
+
+    const themeKey = `${mode}|${c1}|${c2}`;
+    if (themeKey === _lastAppliedThemeKey) return;
+    _lastAppliedThemeKey = themeKey;
 
     const [r1, g1, b1] = hexToRgb(c1, [72, 178, 233]);
     const [r2, g2, b2] = hexToRgb(c2, [178, 58, 246]);

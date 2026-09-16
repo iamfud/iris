@@ -2485,8 +2485,8 @@ class SettingsRenderer {
     var self = this;
     var theme = config.theme || { mode: "iris", accent: "#B23AF6", neon: "#48B2E9" };
     var currentMode = theme.mode || "iris";
-    var currentAccent = theme.accent || "#B23AF6";
-    var currentNeon = theme.neon || "#48B2E9";
+    var currentAccent = currentMode === "iris" ? "#B23AF6" : (currentMode === "monochrome" ? "#666666" : (theme.accent || "#B23AF6"));
+    var currentNeon = currentMode === "iris" ? "#48B2E9" : (currentMode === "monochrome" ? "#FFFFFF" : (theme.neon || "#48B2E9"));
 
     var presetCards = container.querySelectorAll(".theme-preset-card");
     var customPickers = container.querySelector("#theme-custom-pickers");
@@ -2497,26 +2497,26 @@ class SettingsRenderer {
     var neonHex = container.querySelector("#theme-neon-hex");
 
     function updatePreviewAndTheme() {
+      var effNeon = currentMode === "iris" ? "#48B2E9" : (currentMode === "monochrome" ? "#FFFFFF" : currentNeon);
+      var effAccent = currentMode === "iris" ? "#B23AF6" : (currentMode === "monochrome" ? "#666666" : currentAccent);
       var themeObj = {
         mode: currentMode,
-        accent: currentAccent,
-        neon: currentNeon
+        accent: effAccent,
+        neon: effNeon
       };
       config.theme = themeObj;
       if (typeof window.applyTheme === "function") {
         window.applyTheme(themeObj);
       }
       if (customSwatch) {
-        customSwatch.style.background = "linear-gradient(135deg, " + currentNeon + " 0%, " + currentAccent + " 100%)";
+        customSwatch.style.background = "linear-gradient(135deg, " + effNeon + " 0%, " + effAccent + " 100%)";
       }
       var prevGrad = container.querySelector("#theme-preview-grad");
       if (prevGrad) {
         var stops = prevGrad.querySelectorAll("stop");
         if (stops.length >= 2) {
-          var c1 = currentMode === "iris" ? "#48B2E9" : (currentMode === "monochrome" ? "#FFFFFF" : currentNeon);
-          var c2 = currentMode === "iris" ? "#B23AF6" : (currentMode === "monochrome" ? "#666666" : currentAccent);
-          stops[0].setAttribute("stop-color", c1);
-          stops[1].setAttribute("stop-color", c2);
+          stops[0].setAttribute("stop-color", effNeon);
+          stops[1].setAttribute("stop-color", effAccent);
         }
       }
       var saveTimer = self._saveTimers["theme"];
@@ -2535,8 +2535,21 @@ class SettingsRenderer {
 
         if (mode === "custom") {
           if (customPickers) customPickers.style.display = "block";
+          if (neonNative && neonNative.value) currentNeon = neonNative.value;
+          if (accentNative && accentNative.value) currentAccent = accentNative.value;
         } else {
           if (customPickers) customPickers.style.display = "none";
+          if (mode === "iris") {
+            currentNeon = "#48B2E9";
+            currentAccent = "#B23AF6";
+          } else if (mode === "monochrome") {
+            currentNeon = "#FFFFFF";
+            currentAccent = "#666666";
+          }
+          if (neonNative) neonNative.value = currentNeon;
+          if (neonHex) neonHex.value = currentNeon;
+          if (accentNative) accentNative.value = currentAccent;
+          if (accentHex) accentHex.value = currentAccent;
         }
         updatePreviewAndTheme();
       });
@@ -2728,10 +2741,12 @@ class SettingsRenderer {
     var applyBtn = container.querySelector("#theme-apply-btn");
     if (applyBtn) {
       applyBtn.addEventListener("click", function () {
+        var effNeon = currentMode === "iris" ? "#48B2E9" : (currentMode === "monochrome" ? "#FFFFFF" : currentNeon);
+        var effAccent = currentMode === "iris" ? "#B23AF6" : (currentMode === "monochrome" ? "#666666" : currentAccent);
         var themeObj = {
           mode: currentMode,
-          accent: currentAccent,
-          neon: currentNeon
+          accent: effAccent,
+          neon: effNeon
         };
         config.theme = themeObj;
         config.ambient_lighting = lightingConfig;

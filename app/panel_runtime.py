@@ -196,7 +196,7 @@ def live_payload(cfg, client_cv=None):
         "media_player_path": cfg.get("media_player_path") or "",
         "screensaver_timeout": int(cfg.get("screensaver_timeout", 2) if cfg.get("screensaver_timeout") is not None else 2),
         "keep_alive": bool(cfg.get("keep_alive", True)),
-        "theme": cfg.get("theme") or {"mode": "iris", "accent": "#B23AF6", "neon": "#79E8FC"},
+        "theme": cfg.get("theme") or {"mode": "iris", "accent": "#B23AF6", "neon": "#48B2E9"},
     }
     import hashlib
     cv = hashlib.md5(json.dumps(cfg_data, sort_keys=True).encode()).hexdigest()[:12]

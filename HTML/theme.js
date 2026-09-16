@@ -9,7 +9,8 @@ function resolve(cfg) {
   const neon = cfg.neon || "";
   const accent = cfg.accent || "";
   if (mode === "monochrome") return ["#FFFFFF", "#666666"];
-  if (mode === "custom" || (neon && accent && (neon !== DEFAULT_C1 || accent !== DEFAULT_C2))) {
+  if (mode === "iris") return [DEFAULT_C1, DEFAULT_C2];
+  if (mode === "custom" || (!cfg.mode && (neon || accent))) {
     return [neon || DEFAULT_C1, accent || DEFAULT_C2];
   }
   return [DEFAULT_C1, DEFAULT_C2];
