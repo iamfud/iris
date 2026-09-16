@@ -10,6 +10,7 @@ build/
 # Config
 app/iris_config.json
 app/devices.json
+app/notifications.json
 *.bak
 
 # HTTPS panel self-signed cert/key (regenerated locally, never committed)
