@@ -1,0 +1,340 @@
+"""Game FPS tracking via PresentMon ETW trace with RTSS shared memory fallback."""
+
+import collections
+import ctypes
+import logging
+import math
+import os
+import subprocess
+import threading
+import time
+from typing import Any, Dict, List, Optional, Tuple
+
+from telemetry.paths import get_presentmon_exe_path
+
+log = logging.getLogger("iris.telemetry.fps")
+
+# Desktop utilities / background apps that hook 3D APIs or render with GPU but aren't games
+IGNORED_BACKGROUND = {
+    "camostudio.exe", "openrgb.exe", "nzxt cam.exe", "whatsapp.root.exe",
+    "chatgpt.exe", "chrome.exe", "msedge.exe", "explorer.exe", "dwm.exe",
+    "taskmgr.exe", "python.exe", "pythonw.exe", "iris.exe", "cam_helper.exe",
+    "discord.exe", "spotify.exe", "slack.exe", "teams.exe", "steam.exe",
+    "steamwebhelper.exe", "devenv.exe", "code.exe", "epicgameslauncher.exe",
+    "obs64.exe", "obs32.exe", "overwolf.exe", "overwolfbrowser.exe", "medal.exe",
+    "geforcenow.exe", "furmark_gui.exe"
+}
+
+
+def _calc_fps_and_low(intervals: List[float]) -> Tuple[Optional[float], Optional[float], Optional[float]]:
+    """Given presentation intervals in ms, returns (avg_fps, fps_1pct_low, avg_frametime_ms)."""
+    if not intervals:
+        return None, None, None
+
+    valid = [ms for ms in intervals if 0.1 <= ms <= 1000.0]
+    if not valid:
+        return None, None, None
+
+    avg_ms = sum(valid) / len(valid)
+    avg_fps = round(1000.0 / avg_ms, 1) if avg_ms > 0 else None
+
+    if len(valid) >= 10:
+        sorted_desc = sorted(valid, reverse=True)
+        count = max(1, int(math.ceil(len(sorted_desc) * 0.01)))
+        worst_avg_ms = sum(sorted_desc[:count]) / count
+        fps_1pct_low = round(1000.0 / worst_avg_ms, 1) if worst_avg_ms > 0 else None
+    else:
+        fps_1pct_low = avg_fps
+
+    return avg_fps, fps_1pct_low, round(avg_ms, 1)
+
+
+class FpsTracker:
+    """Captures real-time Game FPS using RTSS shared memory or standalone PresentMon."""
+
+    def __init__(self):
+        self._proc: Optional[subprocess.Popen] = None
+        self._thread: Optional[threading.Thread] = None
+        self._stop_event = threading.Event()
+        self._lock = threading.Lock()
+
+        self._apps: Dict[int, Dict[str, Any]] = {}
+        self._rtss_intervals: collections.deque = collections.deque(maxlen=300)
+        self._rtss_last_t1: int = 0
+
+        pmon_path = get_presentmon_exe_path()
+        if os.path.isfile(pmon_path):
+            self._start_presentmon(pmon_path)
+
+    def _read_rtss(self) -> Optional[Dict[str, Any]]:
+        """Reads FPS from RTSS shared memory if RTSS is active."""
+        try:
+            import struct
+            kernel32 = ctypes.windll.kernel32
+            user32 = ctypes.windll.user32
+
+            kernel32.OpenFileMappingW.argtypes = [ctypes.c_uint32, ctypes.c_bool, ctypes.c_wchar_p]
+            kernel32.OpenFileMappingW.restype = ctypes.c_void_p
+            kernel32.MapViewOfFile.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_size_t]
+            kernel32.MapViewOfFile.restype = ctypes.c_void_p
+            kernel32.UnmapViewOfFile.argtypes = [ctypes.c_void_p]
+            kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+
+            FILE_MAP_READ = 0x0004
+            h_map = kernel32.OpenFileMappingW(FILE_MAP_READ, False, "RTSSSharedMemoryV2")
+            if not h_map:
+                h_map = kernel32.OpenFileMappingW(FILE_MAP_READ, False, "RTSSSharedMemory")
+            if not h_map:
+                return None
+
+            ptr = kernel32.MapViewOfFile(h_map, FILE_MAP_READ, 0, 0, 0)
+            if not ptr:
+                kernel32.CloseHandle(h_map)
+                return None
+
+            hdr_raw = bytes((ctypes.c_ubyte * 20).from_address(ptr))
+            sig, ver, app_size, app_offset, app_margin = struct.unpack("<IIIII", hdr_raw)
+
+            if sig != 0x52545353 or app_size == 0 or app_margin == 0:
+                kernel32.UnmapViewOfFile(ptr)
+                kernel32.CloseHandle(h_map)
+                return None
+
+            fg_hwnd = user32.GetForegroundWindow()
+            fg_pid_c = ctypes.c_uint32(0)
+            if fg_hwnd:
+                user32.GetWindowThreadProcessId(fg_hwnd, ctypes.byref(fg_pid_c))
+            fg_pid = fg_pid_c.value
+
+            current_tick = kernel32.GetTickCount()
+
+            active_app = None
+            highest_fps_app = None
+
+            for i in range(min(app_margin, 256)):
+                off = app_offset + i * app_size
+                raw = bytes((ctypes.c_ubyte * 300).from_address(ptr + off))
+                pid = struct.unpack("<I", raw[:4])[0]
+                if pid == 0:
+                    continue
+
+                raw_name = raw[4:264].split(b"\x00")[0].decode("latin-1", errors="ignore")
+                exe_name = raw_name.replace("/", "\\").split("\\")[-1]
+                exe_lower = exe_name.lower()
+
+                flags, t0, t1, frames, ftime = struct.unpack("<IIIII", raw[264:284])
+
+                time_since_present = current_tick - t1 if current_tick >= t1 else 0
+                if t1 > 0 and time_since_present > 3500:
+                    continue
+
+                dt = t1 - t0
+                fps = 0.0
+                if dt > 0 and frames > 0:
+                    fps = 1000.0 * frames / dt
+                elif ftime > 0 and ftime < 1_000_000:
+                    fps = 1_000_000.0 / ftime
+
+                ftime_ms = ftime / 1000.0 if ftime > 0 else (1000.0 / fps if fps > 0 else 0.0)
+
+                is_utility = exe_lower in IGNORED_BACKGROUND
+                if is_utility and pid != fg_pid:
+                    continue
+
+                if fps > 1.0:
+                    candidate = {
+                        "fps": round(fps, 1),
+                        "game_name": exe_name,
+                        "frametime_ms": round(ftime_ms, 1),
+                        "_t1": t1,
+                        "_ftime_ms": ftime_ms,
+                    }
+                    if pid == fg_pid:
+                        active_app = candidate
+                        break
+                    elif not is_utility:
+                        if highest_fps_app is None or fps > highest_fps_app["fps"]:
+                            highest_fps_app = candidate
+
+            kernel32.UnmapViewOfFile(ptr)
+            kernel32.CloseHandle(h_map)
+
+            app_result = active_app or highest_fps_app
+            if app_result:
+                t1_val = app_result.pop("_t1", 0)
+                f_val = app_result.pop("_ftime_ms", 0.0)
+                if t1_val > 0 and t1_val != self._rtss_last_t1:
+                    self._rtss_last_t1 = t1_val
+                    if 0.1 <= f_val <= 1000.0:
+                        self._rtss_intervals.append(f_val)
+
+                r_fps, r_low, r_ms = _calc_fps_and_low(list(self._rtss_intervals))
+                if r_fps is not None:
+                    app_result["fps"] = r_fps
+                    app_result["fps_1pct_low"] = r_low
+                    app_result["frametime_ms"] = r_ms
+                else:
+                    app_result["fps_1pct_low"] = app_result.get("fps")
+            else:
+                self._rtss_intervals.clear()
+
+            return app_result
+        except Exception:
+            return None
+
+    def _start_presentmon(self, pmon_path: str):
+        try:
+            cmd = [
+                pmon_path,
+                "--stop_existing_session",
+                "--output_stdout",
+                "--v1_metrics",
+                "--no_track_input",
+                "--no_track_gpu",
+                "--exclude", "python.exe",
+                "--exclude", "pythonw.exe",
+                "--exclude", "msedge.exe",
+                "--exclude", "chrome.exe",
+                "--exclude", "dwm.exe",
+                "--exclude", "explorer.exe",
+                "--exclude", "Taskmgr.exe",
+                "--exclude", "Discord.exe",
+                "--exclude", "Spotify.exe",
+                "--exclude", "steamwebhelper.exe",
+            ]
+            creationflags = 0x08000000  # CREATE_NO_WINDOW
+            self._proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+                creationflags=creationflags
+            )
+            self._thread = threading.Thread(target=self._reader_loop, daemon=True, name="telemetry-pmon")
+            self._thread.start()
+        except Exception as ex:
+            log.debug("[telemetry.fps] PresentMon start error: %s", ex)
+            self._proc = None
+
+    def _reader_loop(self):
+        if not self._proc or not self._proc.stdout:
+            return
+
+        col_app = 0
+        col_pid = 1
+        col_between = 9
+
+        try:
+            for line in iter(self._proc.stdout.readline, ""):
+                if self._stop_event.is_set():
+                    break
+                line = line.strip()
+                if not line:
+                    continue
+
+                if line.startswith("Application,"):
+                    headers = [h.strip() for h in line.split(",")]
+                    if "Application" in headers:
+                        col_app = headers.index("Application")
+                    if "ProcessID" in headers:
+                        col_pid = headers.index("ProcessID")
+                    if "msBetweenPresents" in headers:
+                        col_between = headers.index("msBetweenPresents")
+                    continue
+
+                parts = line.split(",")
+                max_col = max(col_app, col_pid, col_between)
+                if len(parts) > max_col:
+                    try:
+                        app = parts[col_app].strip()
+                        if not app or app.startswith("<") or app.lower() in IGNORED_BACKGROUND:
+                            continue
+
+                        pid = int(parts[col_pid])
+                        ms_between = float(parts[col_between])
+
+                        if 0.1 <= ms_between <= 2000.0:
+                            now = time.time()
+                            with self._lock:
+                                if pid not in self._apps:
+                                    self._apps[pid] = {
+                                        "name": app,
+                                        "intervals": collections.deque(maxlen=300),
+                                        "last_ts": now,
+                                    }
+                                entry = self._apps[pid]
+                                entry["name"] = app
+                                entry["intervals"].append(ms_between)
+                                entry["last_ts"] = now
+                    except (ValueError, IndexError):
+                        pass
+        except Exception:
+            pass
+
+    def get_stats(self) -> Dict[str, Any]:
+        # Priority 1: Check RTSS
+        rtss = self._read_rtss()
+        if rtss and rtss.get("fps", 0) > 0:
+            return rtss
+
+        # Priority 2: PresentMon stats
+        with self._lock:
+            now = time.time()
+            stale_pids = [pid for pid, info in self._apps.items() if now - info["last_ts"] > 3.5]
+            for pid in stale_pids:
+                del self._apps[pid]
+
+            if not self._apps:
+                return {"fps": None, "fps_1pct_low": None, "frametime_ms": None, "game_name": None}
+
+            fg_pid = 0
+            try:
+                user32 = ctypes.windll.user32
+                fg_hwnd = user32.GetForegroundWindow()
+                if fg_hwnd:
+                    fg_pid_c = ctypes.c_uint32(0)
+                    user32.GetWindowThreadProcessId(fg_hwnd, ctypes.byref(fg_pid_c))
+                    fg_pid = fg_pid_c.value
+            except Exception:
+                pass
+
+            target_app = None
+            if fg_pid and fg_pid in self._apps:
+                target_app = self._apps[fg_pid]
+            else:
+                target_app = max(self._apps.values(), key=lambda a: a["last_ts"])
+
+            if not target_app or not target_app["intervals"]:
+                return {"fps": None, "fps_1pct_low": None, "frametime_ms": None, "game_name": None}
+
+            if now - target_app["last_ts"] > 2.0:
+                return {"fps": None, "fps_1pct_low": None, "frametime_ms": None, "game_name": None}
+
+            intervals = list(target_app["intervals"])
+            fps, fps_low, avg_ms = _calc_fps_and_low(intervals)
+
+            raw_name = target_app["name"]
+            game_name = raw_name[:-4] if raw_name.lower().endswith(".exe") else raw_name
+            if game_name.islower():
+                game_name = game_name.capitalize()
+
+            return {
+                "fps": fps,
+                "fps_1pct_low": fps_low,
+                "frametime_ms": avg_ms,
+                "game_name": game_name,
+            }
+
+    def close(self):
+        self._stop_event.set()
+        if self._proc:
+            try:
+                self._proc.terminate()
+                self._proc.wait(timeout=1.0)
+            except Exception:
+                try:
+                    self._proc.kill()
+                except Exception:
+                    pass
+            self._proc = None

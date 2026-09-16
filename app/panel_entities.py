@@ -359,6 +359,50 @@ def get_core_entities() -> List[Dict[str, Any]]:
             "writable": False,
             "description": "System memory utilization percentage",
         },
+        {
+            "id": "pc_stats.cpu_freq",
+            "domain": "PC Stats",
+            "name": "CPU Boost Clock",
+            "type": "data",
+            "icon": "speedometer",
+            "color": "#ffb703",
+            "unit": "GHz",
+            "writable": False,
+            "description": "Live active CPU boost frequency",
+        },
+        {
+            "id": "pc_stats.cpu_clock_ratio",
+            "domain": "PC Stats",
+            "name": "CPU Base / Boost Ratio",
+            "type": "data",
+            "icon": "chip",
+            "color": "#ffb703",
+            "unit": "GHz",
+            "writable": False,
+            "description": "CPU base frequency vs active peak boost",
+        },
+        {
+            "id": "pc_stats.vram_usage",
+            "domain": "PC Stats",
+            "name": "GPU VRAM Usage",
+            "type": "data",
+            "icon": "expansion-card",
+            "color": "#00ff88",
+            "unit": "%",
+            "writable": False,
+            "description": "GPU video memory utilization percentage",
+        },
+        {
+            "id": "pc_stats.gpu_power",
+            "domain": "PC Stats",
+            "name": "GPU Power Draw",
+            "type": "data",
+            "icon": "flash",
+            "color": "#ff5c8a",
+            "unit": "W",
+            "writable": False,
+            "description": "Live GPU board power consumption",
+        },
     ]
 
 
@@ -663,16 +707,27 @@ def get_live_entity_states(plugin_button_states=None) -> Dict[str, Dict[str, Any
             stats_prov = getattr(_app, "_stats_provider", None)
             if stats_prov is not None:
                 st = getattr(stats_prov, "last_stats", {}) or {}
-                if "cpu_temp" in st:
+                if "cpu_temp" in st and st["cpu_temp"] is not None:
                     states["pc_stats.cpu_temp"] = {"value": st["cpu_temp"], "label": f"{st['cpu_temp']}°C"}
-                if "gpu_temp" in st:
+                if "gpu_temp" in st and st["gpu_temp"] is not None:
                     states["pc_stats.gpu_temp"] = {"value": st["gpu_temp"], "label": f"{st['gpu_temp']}°C"}
-                if "fps" in st:
+                if "fps" in st and st["fps"] is not None:
                     states["pc_stats.fps"] = {"value": st["fps"], "label": f"{st['fps']} FPS"}
-                if "cpu_usage" in st:
+                if "cpu_usage" in st and st["cpu_usage"] is not None:
                     states["pc_stats.cpu_usage"] = {"value": st["cpu_usage"], "label": f"{st['cpu_usage']}%"}
-                if "ram_usage" in st:
+                if "ram_usage" in st and st["ram_usage"] is not None:
                     states["pc_stats.ram_usage"] = {"value": st["ram_usage"], "label": f"{st['ram_usage']}%"}
+
+    except Exception:
+        pass
+
+    # Telemetry Engine live hardware states
+    try:
+        from telemetry import get_telemetry_engine
+        t_states = get_telemetry_engine().get_entity_states()
+        for k, v in t_states.items():
+            if k not in states or states[k].get("value") is None:
+                states[k] = v
     except Exception:
         pass
 

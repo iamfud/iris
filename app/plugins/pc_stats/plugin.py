@@ -13,7 +13,11 @@ from plugins.pc_stats.connector import PCStatsConnector
 
 log = logging.getLogger("iris.plugins.pc_stats")
 
-Snapshot = namedtuple("Snapshot", "cpu_temp gpu_temp fps exe cpu_pct refresh_rate")
+Snapshot = namedtuple(
+    "Snapshot",
+    "cpu_temp gpu_temp fps exe cpu_pct refresh_rate cpu_freq cpu_clock_ratio vram_pct gpu_power",
+    defaults=(None, None, None, None),
+)
 
 
 class _RtssReader:
@@ -180,6 +184,12 @@ class Plugin:
         self._connector = PCStatsConnector(cfg, serial_sender)
         self._rtss = _RtssReader()
         self._mahm = _MahmReader()
+        self._engine = None
+        try:
+            from telemetry import get_telemetry_engine
+            self._engine = get_telemetry_engine()
+        except Exception as ex:
+            log.debug("[pc_stats] telemetry engine init failed: %s", ex)
         self._running = False
         self._snapshot = Snapshot(None, None, None, "", 0.0, 60)
         self._lock = threading.Lock()
@@ -195,6 +205,8 @@ class Plugin:
         self._connector.normalize_limits()
         self._connector.connect()
         self._running = True
+        if self._engine:
+            self._engine.start(interval_sec=1.0)
         if self._serial:
             alarm_on = bool(self._pcfg().get("overheat_alarm", True))
             self._serial.queue_on_connect("temp_alert", "1" if alarm_on else "0")
@@ -205,6 +217,8 @@ class Plugin:
 
     def stop(self):
         self._running = False
+        if self._engine:
+            self._engine.stop()
         self._connector.disconnect()
 
     def on_tap(self, control_id, value=None):
@@ -227,6 +241,10 @@ class Plugin:
             "refresh_rate": rr,
             "exe": s.exe,
             "cpu_pct": s.cpu_pct,
+            "cpu_freq": getattr(s, "cpu_freq", None),
+            "cpu_clock_ratio": getattr(s, "cpu_clock_ratio", None),
+            "vram_pct": getattr(s, "vram_pct", None),
+            "gpu_power": getattr(s, "gpu_power", None),
             "cpu_temp_unit": "\u00b0F" if use_f else "\u00b0C",
             "cpu_temp_max": 212 if use_f else 100,
             "gpu_temp_unit": "\u00b0F" if use_f else "\u00b0C",
@@ -234,8 +252,6 @@ class Plugin:
         }
 
     def snapshot(self):
-        with self._lock:
-            s = self._snapshot
         d = self.poll()
         d["layout"] = [
             {
@@ -244,6 +260,8 @@ class Plugin:
                     {"key": "cpu_temp", "label": "CPU Temperature"},
                     {"key": "gpu_temp", "label": "GPU Temperature"},
                     {"key": "fps", "label": "FPS"},
+                    {"key": "cpu_freq", "label": "CPU Boost Clock"},
+                    {"key": "gpu_power", "label": "GPU Power"},
                 ],
             }
         ]
@@ -300,33 +318,68 @@ class Plugin:
         was_overheat = False
 
         while self._running:
-            fps_data = None
-            try:
-                fps_data = self._rtss.read()
-            except Exception:
-                pass
-
             now = time.time()
-            with self._lock:
-                if fps_data:
-                    fps, exe = fps_data
-                else:
-                    fps, exe = None, ""
-                cpu_temp = self._snapshot.cpu_temp
-                gpu_temp = self._snapshot.gpu_temp
+            cpu_freq = None
+            cpu_clock_ratio = None
+            vram_pct = None
+            gpu_power = None
 
-            if now - last_temp_poll >= temp_interval:
-                last_temp_poll = now
-                mahm = None
+            if self._engine:
+                snap = self._engine.get_snapshot()
+                fps = snap.get("fps")
+                exe = snap.get("game_name") or ""
+                cpu_temp = snap.get("cpu_temp")
+                gpu_temp = snap.get("gpu_temp")
+                cpu_pct = snap.get("cpu_usage", 0.0)
+                cpu_freq = snap.get("cpu_boost_peak")
+                cpu_clock_ratio = snap.get("cpu_clock_ratio")
+                vram_pct = snap.get("vram_pct")
+                gpu_power = snap.get("gpu_power")
+
+                if (cpu_temp is None or gpu_temp is None) and (now - last_temp_poll >= temp_interval):
+                    last_temp_poll = now
+                    try:
+                        mahm = self._mahm.read()
+                        if mahm:
+                            if cpu_temp is None and mahm.get("cpu_temp") is not None:
+                                cpu_temp = mahm.get("cpu_temp")
+                            if gpu_temp is None and mahm.get("gpu_temp") is not None:
+                                gpu_temp = mahm.get("gpu_temp")
+                    except Exception:
+                        pass
+            else:
+                fps_data = None
                 try:
-                    mahm = self._mahm.read()
+                    fps_data = self._rtss.read()
                 except Exception:
                     pass
-                if mahm:
-                    if mahm.get("cpu_temp") is not None:
-                        cpu_temp = mahm.get("cpu_temp")
-                    if mahm.get("gpu_temp") is not None:
-                        gpu_temp = mahm.get("gpu_temp")
+
+                with self._lock:
+                    if fps_data:
+                        fps, exe = fps_data
+                    else:
+                        fps, exe = None, ""
+                    cpu_temp = self._snapshot.cpu_temp
+                    gpu_temp = self._snapshot.gpu_temp
+
+                if now - last_temp_poll >= temp_interval:
+                    last_temp_poll = now
+                    mahm = None
+                    try:
+                        mahm = self._mahm.read()
+                    except Exception:
+                        pass
+                    if mahm:
+                        if mahm.get("cpu_temp") is not None:
+                            cpu_temp = mahm.get("cpu_temp")
+                        if mahm.get("gpu_temp") is not None:
+                            gpu_temp = mahm.get("gpu_temp")
+
+                cpu_pct = 0.0
+                try:
+                    cpu_pct = psutil.cpu_percent(interval=None)
+                except Exception:
+                    pass
 
             if now - last_refresh_poll >= refresh_interval:
                 last_refresh_poll = now
@@ -335,18 +388,15 @@ class Plugin:
                 except Exception:
                     pass
 
-            cpu_pct = 0.0
-            try:
-                cpu_pct = psutil.cpu_percent(interval=None)
-            except Exception:
-                pass
-
             with self._lock:
-                self._snapshot = Snapshot(cpu_temp, gpu_temp, fps, exe, cpu_pct, refresh_rate)
+                self._snapshot = Snapshot(
+                    cpu_temp, gpu_temp, fps, exe, cpu_pct, refresh_rate,
+                    cpu_freq, cpu_clock_ratio, vram_pct, gpu_power
+                )
 
             rtss_name = os.path.basename(exe).lower().strip() if exe else ""
             fg_name = self._foreground_exe()
-            game_active = bool(fps is not None and rtss_name and fg_name and fg_name == rtss_name)
+            game_active = bool(fps is not None and (fps > 0 or (rtss_name and fg_name and fg_name == rtss_name)))
             pcfg = self._pcfg()
             cpu_lim = pcfg.get("cpu_temp_lim", 90)
             gpu_lim = pcfg.get("gpu_temp_lim", 75)
