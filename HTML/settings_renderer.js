@@ -1165,8 +1165,8 @@ class SettingsRenderer {
   _renderTheme(ctrl, config) {
     var theme = config.theme || { mode: "iris", accent: "#B23AF6", neon: "#48B2E9" };
     var mode = theme.mode || "iris";
-    var accent = theme.accent || "#B23AF6";
-    var neon = theme.neon || "#48B2E9";
+    var customNeon = theme.custom_neon || theme.neon || "#48B2E9";
+    var customAccent = theme.custom_accent || theme.accent || "#B23AF6";
 
     var html = '<div class="settings-control theme-engine-control">';
     html += '<label class="settings-label" style="font-weight:700; margin-bottom:8px; display:block;">Visual Theme</label>';
@@ -1188,7 +1188,7 @@ class SettingsRenderer {
 
     // 3. Custom preset
     html += '<div class="theme-preset-card' + (mode === 'custom' ? ' active' : '') + '" data-theme-mode="custom">';
-    html += '<div class="theme-preset-swatch" style="background: linear-gradient(135deg, ' + this._esc(neon) + ' 0%, ' + this._esc(accent) + ' 100%);" id="theme-custom-swatch"></div>';
+    html += '<div class="theme-preset-swatch" style="background: linear-gradient(135deg, ' + this._esc(customNeon) + ' 0%, ' + this._esc(customAccent) + ' 100%);" id="theme-custom-swatch"></div>';
     html += '<span class="theme-preset-title">Custom</span>';
     html += '</div>';
 
@@ -1201,16 +1201,16 @@ class SettingsRenderer {
     html += '<div class="theme-color-field">';
     html += '<label class="settings-label" style="font-size:12px; margin-bottom:4px;">Color 1: Primary Neon</label>';
     html += '<div class="theme-color-picker-wrap">';
-    html += '<input type="color" class="theme-color-native" id="theme-neon-color" value="' + this._esc(neon) + '">';
-    html += '<input type="text" class="settings-input theme-color-hex" id="theme-neon-hex" value="' + this._esc(neon) + '" maxlength="7">';
+    html += '<input type="color" class="theme-color-native" id="theme-neon-color" value="' + this._esc(customNeon) + '">';
+    html += '<input type="text" class="settings-input theme-color-hex" id="theme-neon-hex" value="' + this._esc(customNeon) + '" maxlength="7">';
     html += '</div>';
     html += '</div>';
 
     html += '<div class="theme-color-field">';
     html += '<label class="settings-label" style="font-size:12px; margin-bottom:4px;">Color 2: Neon Accent</label>';
     html += '<div class="theme-color-picker-wrap">';
-    html += '<input type="color" class="theme-color-native" id="theme-accent-color" value="' + this._esc(accent) + '">';
-    html += '<input type="text" class="settings-input theme-color-hex" id="theme-accent-hex" value="' + this._esc(accent) + '" maxlength="7">';
+    html += '<input type="color" class="theme-color-native" id="theme-accent-color" value="' + this._esc(customAccent) + '">';
+    html += '<input type="text" class="settings-input theme-color-hex" id="theme-accent-hex" value="' + this._esc(customAccent) + '" maxlength="7">';
     html += '</div>';
     html += '</div>';
 
@@ -2485,8 +2485,8 @@ class SettingsRenderer {
     var self = this;
     var theme = config.theme || { mode: "iris", accent: "#B23AF6", neon: "#48B2E9" };
     var currentMode = theme.mode || "iris";
-    var currentAccent = currentMode === "iris" ? "#B23AF6" : (currentMode === "monochrome" ? "#666666" : (theme.accent || "#B23AF6"));
-    var currentNeon = currentMode === "iris" ? "#48B2E9" : (currentMode === "monochrome" ? "#FFFFFF" : (theme.neon || "#48B2E9"));
+    var customNeon = theme.custom_neon || theme.neon || "#48B2E9";
+    var customAccent = theme.custom_accent || theme.accent || "#B23AF6";
 
     var presetCards = container.querySelectorAll(".theme-preset-card");
     var customPickers = container.querySelector("#theme-custom-pickers");
@@ -2496,27 +2496,37 @@ class SettingsRenderer {
     var neonNative = container.querySelector("#theme-neon-color");
     var neonHex = container.querySelector("#theme-neon-hex");
 
+    if (accentNative) accentNative.value = customAccent;
+    if (accentHex) accentHex.value = customAccent;
+    if (neonNative) neonNative.value = customNeon;
+    if (neonHex) neonHex.value = customNeon;
+    if (customPickers && currentMode === "custom") {
+      customPickers.style.display = "block";
+    }
+
     function updatePreviewAndTheme() {
-      var effNeon = currentMode === "iris" ? "#48B2E9" : (currentMode === "monochrome" ? "#FFFFFF" : currentNeon);
-      var effAccent = currentMode === "iris" ? "#B23AF6" : (currentMode === "monochrome" ? "#666666" : currentAccent);
       var themeObj = {
         mode: currentMode,
-        accent: effAccent,
-        neon: effNeon
+        accent: customAccent,
+        neon: customNeon,
+        custom_accent: customAccent,
+        custom_neon: customNeon
       };
       config.theme = themeObj;
       if (typeof window.applyTheme === "function") {
         window.applyTheme(themeObj);
       }
       if (customSwatch) {
-        customSwatch.style.background = "linear-gradient(135deg, " + effNeon + " 0%, " + effAccent + " 100%)";
+        customSwatch.style.background = "linear-gradient(135deg, " + customNeon + " 0%, " + customAccent + " 100%)";
       }
       var prevGrad = container.querySelector("#theme-preview-grad");
       if (prevGrad) {
         var stops = prevGrad.querySelectorAll("stop");
         if (stops.length >= 2) {
-          stops[0].setAttribute("stop-color", effNeon);
-          stops[1].setAttribute("stop-color", effAccent);
+          var p1 = currentMode === "iris" ? "#48B2E9" : (currentMode === "monochrome" ? "#FFFFFF" : customNeon);
+          var p2 = currentMode === "iris" ? "#B23AF6" : (currentMode === "monochrome" ? "#666666" : customAccent);
+          stops[0].setAttribute("stop-color", p1);
+          stops[1].setAttribute("stop-color", p2);
         }
       }
       var saveTimer = self._saveTimers["theme"];
@@ -2535,21 +2545,8 @@ class SettingsRenderer {
 
         if (mode === "custom") {
           if (customPickers) customPickers.style.display = "block";
-          if (neonNative && neonNative.value) currentNeon = neonNative.value;
-          if (accentNative && accentNative.value) currentAccent = accentNative.value;
         } else {
           if (customPickers) customPickers.style.display = "none";
-          if (mode === "iris") {
-            currentNeon = "#48B2E9";
-            currentAccent = "#B23AF6";
-          } else if (mode === "monochrome") {
-            currentNeon = "#FFFFFF";
-            currentAccent = "#666666";
-          }
-          if (neonNative) neonNative.value = currentNeon;
-          if (neonHex) neonHex.value = currentNeon;
-          if (accentNative) accentNative.value = currentAccent;
-          if (accentHex) accentHex.value = currentAccent;
         }
         updatePreviewAndTheme();
       });
@@ -2557,14 +2554,14 @@ class SettingsRenderer {
 
     if (accentNative && accentHex) {
       accentNative.addEventListener("input", function () {
-        currentAccent = accentNative.value;
-        accentHex.value = currentAccent;
+        customAccent = accentNative.value;
+        accentHex.value = customAccent;
         updatePreviewAndTheme();
       });
       accentHex.addEventListener("input", function () {
         var val = accentHex.value.trim();
         if (/^#[0-9A-Fa-f]{6}$/.test(val)) {
-          currentAccent = val;
+          customAccent = val;
           accentNative.value = val;
           updatePreviewAndTheme();
         }
@@ -2573,14 +2570,14 @@ class SettingsRenderer {
 
     if (neonNative && neonHex) {
       neonNative.addEventListener("input", function () {
-        currentNeon = neonNative.value;
-        neonHex.value = currentNeon;
+        customNeon = neonNative.value;
+        neonHex.value = customNeon;
         updatePreviewAndTheme();
       });
       neonHex.addEventListener("input", function () {
         var val = neonHex.value.trim();
         if (/^#[0-9A-Fa-f]{6}$/.test(val)) {
-          currentNeon = val;
+          customNeon = val;
           neonNative.value = val;
           updatePreviewAndTheme();
         }
@@ -2741,12 +2738,12 @@ class SettingsRenderer {
     var applyBtn = container.querySelector("#theme-apply-btn");
     if (applyBtn) {
       applyBtn.addEventListener("click", function () {
-        var effNeon = currentMode === "iris" ? "#48B2E9" : (currentMode === "monochrome" ? "#FFFFFF" : currentNeon);
-        var effAccent = currentMode === "iris" ? "#B23AF6" : (currentMode === "monochrome" ? "#666666" : currentAccent);
         var themeObj = {
           mode: currentMode,
-          accent: effAccent,
-          neon: effNeon
+          accent: customAccent,
+          neon: customNeon,
+          custom_accent: customAccent,
+          custom_neon: customNeon
         };
         config.theme = themeObj;
         config.ambient_lighting = lightingConfig;

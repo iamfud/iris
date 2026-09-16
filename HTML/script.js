@@ -105,8 +105,8 @@
   window.applyTheme = function (theme) {
     theme = theme || {};
     const mode = theme.mode || "iris";
-    const neon = theme.neon || "";
-    const accent = theme.accent || "";
+    const neon = theme.custom_neon || theme.neon || "";
+    const accent = theme.custom_accent || theme.accent || "";
     function hexToRgb(hex, def) {
       if (!hex || hex[0] !== "#" || (hex.length !== 7 && hex.length !== 4)) return def;
       const r = parseInt(hex.length === 7 ? hex.slice(1, 3) : hex[1] + hex[1], 16) || 0;

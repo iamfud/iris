@@ -6,8 +6,8 @@ const STEP_MS = 333.33;    // ~3 fps tick
 function resolve(cfg) {
   if (!cfg) return [DEFAULT_C1, DEFAULT_C2];
   const mode = cfg.mode || "iris";
-  const neon = cfg.neon || "";
-  const accent = cfg.accent || "";
+  const neon = cfg.custom_neon || cfg.neon || "";
+  const accent = cfg.custom_accent || cfg.accent || "";
   if (mode === "monochrome") return ["#FFFFFF", "#666666"];
   if (mode === "iris") return [DEFAULT_C1, DEFAULT_C2];
   if (mode === "custom" || (!cfg.mode && (neon || accent))) {

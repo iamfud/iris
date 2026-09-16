@@ -103,8 +103,8 @@ def get_current_theme_colors():
         neon_hex = "#FFFFFF"
         accent_hex = "#888888"
     elif mode == "custom":
-        neon_hex = theme.get("neon") or "#48B2E9"
-        accent_hex = theme.get("accent") or "#B23AF6"
+        neon_hex = theme.get("custom_neon") or theme.get("neon") or "#48B2E9"
+        accent_hex = theme.get("custom_accent") or theme.get("accent") or "#B23AF6"
     else:  # "iris"
         neon_hex = "#48B2E9"
         accent_hex = "#B23AF6"
