@@ -1,4 +1,8 @@
-"""Game FPS tracking via PresentMon ETW trace with RTSS shared memory fallback."""
+"""Game FPS tracking via PresentMon ETW trace with RTSS shared memory fallback.
+
+RTSS is a passive read-only fallback — Iris NEVER starts, requires, or manages RTSS.
+PresentMon (bundled in lib/) is the primary standalone capture method.
+"""
 
 import collections
 import ctypes
@@ -49,8 +53,23 @@ def _calc_fps_and_low(intervals: List[float]) -> Tuple[Optional[float], Optional
     return avg_fps, fps_1pct_low, round(avg_ms, 1)
 
 
+def _resolve_name_from_pid(pid: int) -> Optional[str]:
+    """Attempt to resolve a process name from its PID using psutil."""
+    try:
+        import psutil
+        return psutil.Process(pid).name()
+    except Exception:
+        return None
+
+
 class FpsTracker:
-    """Captures real-time Game FPS using RTSS shared memory or standalone PresentMon."""
+    """Captures real-time Game FPS using standalone PresentMon with passive RTSS fallback.
+
+    Priority order:
+      1. RTSS shared memory — if RTSS happens to already be running (passive read only,
+         Iris never starts or manages RTSS).
+      2. PresentMon ETW capture (bundled lib/PresentMon-x64.exe).
+    """
 
     def __init__(self):
         self._proc: Optional[subprocess.Popen] = None
@@ -65,9 +84,15 @@ class FpsTracker:
         pmon_path = get_presentmon_exe_path()
         if os.path.isfile(pmon_path):
             self._start_presentmon(pmon_path)
+        else:
+            log.warning("[telemetry.fps] PresentMon not found at: %s", pmon_path)
 
     def _read_rtss(self) -> Optional[Dict[str, Any]]:
-        """Reads FPS from RTSS shared memory if RTSS is active."""
+        """Passively reads FPS from RTSS shared memory if RTSS is already running.
+
+        This is a pure read — Iris never starts, restarts, or manages RTSS.
+        If the shared memory segment is absent, returns None immediately.
+        """
         try:
             import struct
             kernel32 = ctypes.windll.kernel32
@@ -85,6 +110,7 @@ class FpsTracker:
             if not h_map:
                 h_map = kernel32.OpenFileMappingW(FILE_MAP_READ, False, "RTSSSharedMemory")
             if not h_map:
+                # RTSS is not running — silently return, do not attempt to start it
                 return None
 
             ptr = kernel32.MapViewOfFile(h_map, FILE_MAP_READ, 0, 0, 0)
@@ -95,7 +121,7 @@ class FpsTracker:
             hdr_raw = bytes((ctypes.c_ubyte * 20).from_address(ptr))
             sig, ver, app_size, app_offset, app_margin = struct.unpack("<IIIII", hdr_raw)
 
-            if sig != 0x52545353 or app_size == 0 or app_margin == 0:
+            if sig not in (0x52545353, 0xDEAD) or app_size == 0 or app_margin == 0:
                 kernel32.UnmapViewOfFile(ptr)
                 kernel32.CloseHandle(h_map)
                 return None
@@ -113,7 +139,10 @@ class FpsTracker:
 
             for i in range(min(app_margin, 256)):
                 off = app_offset + i * app_size
-                raw = bytes((ctypes.c_ubyte * 300).from_address(ptr + off))
+                read_len = min(app_size, 1024)
+                if read_len < 284:
+                    continue
+                raw = bytes((ctypes.c_ubyte * read_len).from_address(ptr + off))
                 pid = struct.unpack("<I", raw[:4])[0]
                 if pid == 0:
                     continue
@@ -124,16 +153,25 @@ class FpsTracker:
 
                 flags, t0, t1, frames, ftime = struct.unpack("<IIIII", raw[264:284])
 
-                time_since_present = current_tick - t1 if current_tick >= t1 else 0
+                time_since_present = (current_tick - t1) & 0xFFFFFFFF
                 if t1 > 0 and time_since_present > 3500:
                     continue
 
-                dt = t1 - t0
                 fps = 0.0
-                if dt > 0 and frames > 0:
-                    fps = 1000.0 * frames / dt
-                elif ftime > 0 and ftime < 1_000_000:
-                    fps = 1_000_000.0 / ftime
+                if read_len >= 816:
+                    fps_raw = struct.unpack("<I", raw[812:816])[0]
+                    if fps_raw > 0:
+                        fps = fps_raw / 1000.0
+                if fps <= 0.0 and read_len >= 824:
+                    fps_avg_raw = struct.unpack("<I", raw[820:824])[0]
+                    if fps_avg_raw > 0:
+                        fps = fps_avg_raw / 1000.0
+                if fps <= 0.0:
+                    dt = (t1 - t0) & 0xFFFFFFFF
+                    if dt > 0 and frames > 0:
+                        fps = 1000.0 * frames / dt
+                    elif ftime > 0 and ftime < 1_000_000:
+                        fps = 1_000_000.0 / ftime
 
                 ftime_ms = ftime / 1000.0 if ftime > 0 else (1000.0 / fps if fps > 0 else 0.0)
 
@@ -170,7 +208,8 @@ class FpsTracker:
 
                 r_fps, r_low, r_ms = _calc_fps_and_low(list(self._rtss_intervals))
                 if r_fps is not None:
-                    app_result["fps"] = r_fps
+                    if app_result.get("fps", 0) <= 0:
+                        app_result["fps"] = r_fps
                     app_result["fps_1pct_low"] = r_low
                     app_result["frametime_ms"] = r_ms
                 else:
@@ -206,13 +245,14 @@ class FpsTracker:
             self._proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,  # Discard stderr — never read, prevents pipe-buffer deadlock
                 text=True,
                 bufsize=1,
-                creationflags=creationflags
+                creationflags=creationflags,
             )
             self._thread = threading.Thread(target=self._reader_loop, daemon=True, name="telemetry-pmon")
             self._thread.start()
+            log.info("[telemetry.fps] PresentMon started (pid=%s)", self._proc.pid)
         except Exception as ex:
             log.debug("[telemetry.fps] PresentMon start error: %s", ex)
             self._proc = None
@@ -223,7 +263,7 @@ class FpsTracker:
 
         col_app = 0
         col_pid = 1
-        col_between = 9
+        col_between = 9  # PresentMon 1.x v1_metrics index for msBetweenPresents
 
         try:
             for line in iter(self._proc.stdout.readline, ""):
@@ -233,6 +273,7 @@ class FpsTracker:
                 if not line:
                     continue
 
+                # Parse CSV header to locate column indices
                 if line.startswith("Application,"):
                     headers = [h.strip() for h in line.split(",")]
                     if "Application" in headers:
@@ -245,49 +286,66 @@ class FpsTracker:
 
                 parts = line.split(",")
                 max_col = max(col_app, col_pid, col_between)
-                if len(parts) > max_col:
-                    try:
-                        app = parts[col_app].strip()
-                        if not app or app.startswith("<") or app.lower() in IGNORED_BACKGROUND:
-                            continue
+                if len(parts) <= max_col:
+                    continue
 
-                        pid = int(parts[col_pid])
-                        ms_between = float(parts[col_between])
+                try:
+                    app = parts[col_app].strip()
+                    pid = int(parts[col_pid].strip())
+                    ms_between = float(parts[col_between].strip())
 
-                        if 0.1 <= ms_between <= 2000.0:
-                            now = time.time()
-                            with self._lock:
-                                if pid not in self._apps:
-                                    self._apps[pid] = {
-                                        "name": app,
-                                        "intervals": collections.deque(maxlen=300),
-                                        "last_ts": now,
-                                    }
-                                entry = self._apps[pid]
-                                entry["name"] = app
-                                entry["intervals"].append(ms_between)
-                                entry["last_ts"] = now
-                    except (ValueError, IndexError):
-                        pass
+                    # When running non-elevated, PresentMon outputs "<unknown>" for the
+                    # Application column on elevated/cross-session processes.
+                    # Resolve the real name from the PID via psutil instead of discarding.
+                    if not app or app.startswith("<"):
+                        resolved = _resolve_name_from_pid(pid)
+                        if resolved:
+                            app = resolved
+                        else:
+                            continue  # Cannot identify process — skip
+
+                    if app.lower() in IGNORED_BACKGROUND:
+                        continue
+
+                    # Valid frame interval: 0.1 ms (10 000 FPS cap) to 2 000 ms (0.5 FPS floor)
+                    if 0.1 <= ms_between <= 2000.0:
+                        now = time.time()
+                        with self._lock:
+                            if pid not in self._apps:
+                                self._apps[pid] = {
+                                    "name": app,
+                                    "intervals": collections.deque(maxlen=300),
+                                    "last_ts": now,
+                                }
+                            entry = self._apps[pid]
+                            entry["name"] = app
+                            entry["intervals"].append(ms_between)
+                            entry["last_ts"] = now
+                except (ValueError, IndexError):
+                    pass
         except Exception:
             pass
 
     def get_stats(self) -> Dict[str, Any]:
-        # Priority 1: Check RTSS
+        _null = {"fps": None, "fps_1pct_low": None, "frametime_ms": None, "game_name": None}
+
+        # Priority 1: Passive RTSS read (only if RTSS is already running)
         rtss = self._read_rtss()
         if rtss and rtss.get("fps", 0) > 0:
             return rtss
 
-        # Priority 2: PresentMon stats
+        # Priority 2: PresentMon ETW stats
         with self._lock:
             now = time.time()
+            # Prune stale apps (no frames in last 3.5 seconds)
             stale_pids = [pid for pid, info in self._apps.items() if now - info["last_ts"] > 3.5]
             for pid in stale_pids:
                 del self._apps[pid]
 
             if not self._apps:
-                return {"fps": None, "fps_1pct_low": None, "frametime_ms": None, "game_name": None}
+                return _null
 
+            # Prefer the foreground window's process
             fg_pid = 0
             try:
                 user32 = ctypes.windll.user32
@@ -303,13 +361,15 @@ class FpsTracker:
             if fg_pid and fg_pid in self._apps:
                 target_app = self._apps[fg_pid]
             else:
+                # Foreground is desktop/Iris overlay — pick the most recently active tracked app
                 target_app = max(self._apps.values(), key=lambda a: a["last_ts"])
 
             if not target_app or not target_app["intervals"]:
-                return {"fps": None, "fps_1pct_low": None, "frametime_ms": None, "game_name": None}
+                return _null
 
+            # No frame in the last 2 s → game is paused or idle
             if now - target_app["last_ts"] > 2.0:
-                return {"fps": None, "fps_1pct_low": None, "frametime_ms": None, "game_name": None}
+                return _null
 
             intervals = list(target_app["intervals"])
             fps, fps_low, avg_ms = _calc_fps_and_low(intervals)
