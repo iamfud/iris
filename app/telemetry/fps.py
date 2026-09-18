@@ -227,7 +227,6 @@ class FpsTracker:
                 pmon_path,
                 "--stop_existing_session",
                 "--output_stdout",
-                "--v1_metrics",
                 "--no_track_input",
                 "--no_track_gpu",
                 "--exclude", "python.exe",
@@ -247,6 +246,8 @@ class FpsTracker:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,  # Discard stderr — never read, prevents pipe-buffer deadlock
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 bufsize=1,
                 creationflags=creationflags,
             )
@@ -263,13 +264,13 @@ class FpsTracker:
 
         col_app = 0
         col_pid = 1
-        col_between = 9  # PresentMon 1.x v1_metrics index for msBetweenPresents
+        col_between = 9
 
         try:
             for line in iter(self._proc.stdout.readline, ""):
                 if self._stop_event.is_set():
                     break
-                line = line.strip()
+                line = line.replace("\x00", "").strip()
                 if not line:
                     continue
 
@@ -280,8 +281,12 @@ class FpsTracker:
                         col_app = headers.index("Application")
                     if "ProcessID" in headers:
                         col_pid = headers.index("ProcessID")
-                    if "msBetweenPresents" in headers:
+                    if "FrameTime" in headers:
+                        col_between = headers.index("FrameTime")
+                    elif "msBetweenPresents" in headers:
                         col_between = headers.index("msBetweenPresents")
+                    elif "MsBetweenPresents" in headers:
+                        col_between = headers.index("MsBetweenPresents")
                     continue
 
                 parts = line.split(",")
