@@ -221,6 +221,16 @@ class FpsTracker:
         except Exception:
             return None
 
+    def _drain_stderr(self):
+        if not self._proc or not self._proc.stderr:
+            return
+        try:
+            for _ in iter(self._proc.stderr.readline, ""):
+                if self._stop_event.is_set():
+                    break
+        except Exception:
+            pass
+
     def _start_presentmon(self, pmon_path: str):
         try:
             cmd = [
@@ -244,7 +254,7 @@ class FpsTracker:
             self._proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,  # Discard stderr — never read, prevents pipe-buffer deadlock
+                stderr=subprocess.PIPE,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
@@ -253,6 +263,8 @@ class FpsTracker:
             )
             self._thread = threading.Thread(target=self._reader_loop, daemon=True, name="telemetry-pmon")
             self._thread.start()
+            self._err_thread = threading.Thread(target=self._drain_stderr, daemon=True, name="telemetry-pmon-err")
+            self._err_thread.start()
             log.info("[telemetry.fps] PresentMon started (pid=%s)", self._proc.pid)
         except Exception as ex:
             log.debug("[telemetry.fps] PresentMon start error: %s", ex)
@@ -264,7 +276,7 @@ class FpsTracker:
 
         col_app = 0
         col_pid = 1
-        col_between = 9
+        col_between = 9  # Fallback index if parsing glitches
 
         try:
             for line in iter(self._proc.stdout.readline, ""):
@@ -274,60 +286,57 @@ class FpsTracker:
                 if not line:
                     continue
 
-                # Parse CSV header to locate column indices
-                if line.startswith("Application,"):
-                    headers = [h.strip() for h in line.split(",")]
-                    if "Application" in headers:
-                        col_app = headers.index("Application")
-                    if "ProcessID" in headers:
-                        col_pid = headers.index("ProcessID")
-                    if "FrameTime" in headers:
-                        col_between = headers.index("FrameTime")
-                    elif "msBetweenPresents" in headers:
-                        col_between = headers.index("msBetweenPresents")
-                    elif "MsBetweenPresents" in headers:
-                        col_between = headers.index("MsBetweenPresents")
+                # Strip all structural padding out of the parts list immediately
+                parts = [p.strip() for p in line.split(",")]
+
+                if "Application" in parts:
+                    col_app = parts.index("Application")
+                    if "ProcessID" in parts:
+                        col_pid = parts.index("ProcessID")
+                    if "FrameTime" in parts:
+                        col_between = parts.index("FrameTime")
+                    elif "msBetweenPresents" in parts:
+                        col_between = parts.index("msBetweenPresents")
+                    elif "MsBetweenPresents" in parts:
+                        col_between = parts.index("MsBetweenPresents")
                     continue
 
-                parts = line.split(",")
                 max_col = max(col_app, col_pid, col_between)
-                if len(parts) <= max_col:
-                    continue
+                if len(parts) > max_col:
+                    try:
+                        app = parts[col_app]
+                        pid = int(parts[col_pid])
+                        ms_between = float(parts[col_between])
 
-                try:
-                    app = parts[col_app].strip()
-                    pid = int(parts[col_pid].strip())
-                    ms_between = float(parts[col_between].strip())
+                        # When running non-elevated, PresentMon outputs "<unknown>" for the
+                        # Application column on elevated/cross-session processes.
+                        # Resolve the real name from the PID via psutil instead of discarding.
+                        if not app or app.startswith("<"):
+                            resolved = _resolve_name_from_pid(pid)
+                            if resolved:
+                                app = resolved
+                            else:
+                                continue  # Cannot identify process — skip
 
-                    # When running non-elevated, PresentMon outputs "<unknown>" for the
-                    # Application column on elevated/cross-session processes.
-                    # Resolve the real name from the PID via psutil instead of discarding.
-                    if not app or app.startswith("<"):
-                        resolved = _resolve_name_from_pid(pid)
-                        if resolved:
-                            app = resolved
-                        else:
-                            continue  # Cannot identify process — skip
+                        if app.lower() in IGNORED_BACKGROUND:
+                            continue
 
-                    if app.lower() in IGNORED_BACKGROUND:
-                        continue
-
-                    # Valid frame interval: 0.1 ms (10 000 FPS cap) to 2 000 ms (0.5 FPS floor)
-                    if 0.1 <= ms_between <= 2000.0:
-                        now = time.time()
-                        with self._lock:
-                            if pid not in self._apps:
-                                self._apps[pid] = {
-                                    "name": app,
-                                    "intervals": collections.deque(maxlen=300),
-                                    "last_ts": now,
-                                }
-                            entry = self._apps[pid]
-                            entry["name"] = app
-                            entry["intervals"].append(ms_between)
-                            entry["last_ts"] = now
-                except (ValueError, IndexError):
-                    pass
+                        # Valid frame interval: 0.1 ms (10 000 FPS cap) to 2 000 ms (0.5 FPS floor)
+                        if 0.1 <= ms_between <= 2000.0:
+                            now = time.time()
+                            with self._lock:
+                                if pid not in self._apps:
+                                    self._apps[pid] = {
+                                        "name": app,
+                                        "intervals": collections.deque(maxlen=300),
+                                        "last_ts": now,
+                                    }
+                                entry = self._apps[pid]
+                                entry["name"] = app
+                                entry["intervals"].append(ms_between)
+                                entry["last_ts"] = now
+                    except (ValueError, IndexError):
+                        pass
         except Exception:
             pass
 
