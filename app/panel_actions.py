@@ -721,6 +721,8 @@ def sanitize_profiles(raw):
             "lighting_enabled": bool(item.get("lighting_enabled", True)),
             "lighting_theme_enabled": bool(item.get("lighting_theme_enabled", True)),
             "lighting_alerts_enabled": bool(item.get("lighting_alerts_enabled", True)),
+            "auto_switch": bool(item.get("auto_switch", True)),
+            "latch_while_running": bool(item.get("latch_while_running", True)),
             "lighting": item.get("lighting", {}) if isinstance(item.get("lighting"), dict) else {},
             "board": sanitize_board(item.get("board")),
             "automations": sanitize_automations(item.get("automations")),
@@ -745,6 +747,7 @@ def foreground_exe():
 
 def _running_profile_exes(profiles):
     """Return set of lowercased exe basenames (no .exe) for profiles whose process is running."""
+    import os
     running = set()
     try:
         from win_platform import get_running_process_names
@@ -754,7 +757,8 @@ def _running_profile_exes(profiles):
     for p in (profiles or []):
         if not isinstance(p, dict) or not p.get("enabled", True):
             continue
-        pexe = str(p.get("exe") or "").lower().strip().replace(".exe", "")
+        raw_exe = str(p.get("exe") or "").strip()
+        pexe = os.path.basename(raw_exe.replace("\\", "/")).lower().replace(".exe", "")
         if not pexe:
             continue
         if pexe in procs:
@@ -961,6 +965,7 @@ def panel_payload(cfg):
         "media_player_path": cfg.get("media_player_path") or "",
         "hardware_connected": hw,
         "actions": action_catalog(),
+        "default_profile_name": cfg.get("default_profile_name") or "",
         "panel_default_automations": sanitize_automations(cfg.get("panel_default_automations") or []),
     }
 
@@ -969,6 +974,8 @@ def apply_panel_save(cfg, body):
     """Merge POST /api/panel body into cfg. Returns cfg."""
     if not isinstance(body, dict):
         return cfg
+    if "default_profile_name" in body:
+        cfg["default_profile_name"] = str(body.get("default_profile_name") or "").strip()
     if "panel_board" in body:
         cfg["panel_board"] = sanitize_board(body["panel_board"])
         _RESOLVE_CACHE["ts"] = 0.0

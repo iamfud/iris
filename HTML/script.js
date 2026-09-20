@@ -453,7 +453,10 @@
     });
   }
 
-  let currentPage = "dashboard";
+  let currentPage = "command";
+  let workspaceMode = "use";
+  let activityTab = "notifications";
+  let systemTab = "settings";
   let pageHistory = [];
   let pluginState = {};
   let pollTimer = null;
@@ -559,11 +562,20 @@
       item.classList.add("active");
       const page = item.getAttribute("data-page");
       if (page) {
-        if (page === currentPage && !(page === "hardware" && selectedHardwarePlugin) && !(page === "plugins" && selectedPlugin)) {
+        if (page === currentPage && !(page === "system" && (selectedHardwarePlugin || selectedPlugin))) {
           return;
         }
         if (page !== currentPage) pushNavSnapshot();
-        if (page === "profiles" || page === "panel") {
+        if (page === "command" || page === "dashboard") {
+          currentPage = "command";
+          selectedPlugin = null;
+          selectedHardwarePlugin = null;
+          exitPanelView();
+          renderPage();
+          fetchPanel();
+          fetchPanelLive();
+          if (!panelLiveTimer) panelLiveTimer = setInterval(fetchPanelLive, 1000);
+        } else if (page === "profiles" || page === "panel") {
           if (IS_MOBILE && !IS_APP) {
             portalAutoPanel = true;
             fetchPanel();
@@ -583,8 +595,22 @@
           if (panelLiveTimer) { clearInterval(panelLiveTimer); panelLiveTimer = null; }
           renderPage();
           fetchPanel();
+        } else if (page === "activity") {
+          currentPage = "activity";
+          selectedPlugin = null;
+          selectedHardwarePlugin = null;
+          exitPanelView();
+          renderPage();
+        } else if (page === "system") {
+          currentPage = "system";
+          selectedPlugin = null;
+          selectedHardwarePlugin = null;
+          exitPanelView();
+          renderPage();
+          fetchPluginsConfig();
+          fetchConfig();
         } else if (page === "vision" && IS_MOBILE && !IS_APP) {
-          currentPage = "dashboard";
+          currentPage = "command";
           renderPage();
         } else {
           currentPage = page;
@@ -601,9 +627,24 @@
     });
   });
 
-  window.navigateToPage = function (pageName) {
+  window.navigateToPage = function (pageName, subTab) {
     if (!pageName) return;
-    if (pageName === "features") pageName = "hardware";
+    if (pageName === "dashboard") pageName = "command";
+    if (pageName === "notifications" || pageName === "alarms") {
+      if (subTab) activityTab = subTab;
+      else if (pageName === "alarms") activityTab = "alarms";
+      else activityTab = "notifications";
+      pageName = "activity";
+    }
+    if (pageName === "features" || pageName === "hardware" || pageName === "plugins" || pageName === "settings" || pageName === "displays" || pageName === "connections" || pageName === "appearance" || pageName === "integrations" || pageName === "network") {
+      if (subTab) systemTab = subTab;
+      else if (pageName === "appearance") systemTab = "appearance";
+      else if (pageName === "displays" || pageName === "hardware" || pageName === "features") systemTab = "displays";
+      else if (pageName === "integrations" || pageName === "plugins" || pageName === "connections") systemTab = "integrations";
+      else if (pageName === "network") systemTab = "network";
+      else systemTab = "settings";
+      pageName = "system";
+    }
     const targetNav = document.querySelector(`.nav-item[data-page="${pageName}"]`);
     if (targetNav) {
       targetNav.click();
@@ -889,22 +930,36 @@
       }
       const sc = main.querySelector('.settings-content') || main.querySelector('.content') || main;
       const prevScroll = sc ? sc.scrollTop : 0;
-      if (currentPage === "dashboard") {
-        renderDashboard();
+      if (currentPage === "command" || currentPage === "dashboard") {
+        renderCommandCentre();
+      } else if (currentPage === "activity") {
+        renderActivityPage();
+      } else if (currentPage === "system") {
+        renderSystemPage();
       } else if (currentPage === "alarms") {
         alarms = featureConfig.alarms || [];
-        renderAlarms();
+        activityTab = "alarms";
+        renderActivityPage();
       } else if (currentPage === "notifications") {
-        renderNotifications();
+        activityTab = "notifications";
+        renderActivityPage();
       } else if (currentPage === "library") {
         renderLibrary();
-      } else if (currentPage === "hardware" || currentPage === "features") {
-        renderHardwarePage();
-      } else if (currentPage === "plugins") {
+      } else if (currentPage === "hardware" || currentPage === "features" || currentPage === "displays") {
+        systemTab = "displays";
+        renderSystemPage();
+      } else if (currentPage === "appearance") {
+        systemTab = "appearance";
+        renderSystemPage();
+      } else if (currentPage === "network") {
+        systemTab = "network";
+        renderSystemPage();
+      } else if (currentPage === "integrations" || currentPage === "plugins" || currentPage === "connections") {
         if (selectedPlugin) {
           renderPluginSettings(selectedPlugin);
         } else {
-          renderPlugins();
+          systemTab = "integrations";
+          renderSystemPage();
         }
       } else if (settingsRenderer && settingsRenderer.getPage(currentPage)) {
         renderDeclarativePage(currentPage);
@@ -1031,27 +1086,26 @@
   }
 
   async function fetchDeviceStatus() {
-    if (currentPage === "dashboard" || currentPage === "features") {
-      try {
-        const res = await apiFetch(`${API_BASE}/api/status`);
-        if (res.ok) {
-          const next = await res.json();
-          const prev = deviceStatus;
-          deviceStatus = next;
-          var changed = !prev
-            || prev.connected !== next.connected
-            || prev.port !== next.port
-            || prev.last_notification !== next.last_notification;
+    try {
+      const res = await apiFetch(`${API_BASE}/api/status`);
+      if (res.ok) {
+        const next = await res.json();
+        const prev = deviceStatus;
+        deviceStatus = next;
+        var changed = !prev
+          || prev.connected !== next.connected
+          || prev.port !== next.port
+          || prev.last_notification !== next.last_notification;
+        if (changed) {
           if (currentPage === "dashboard") {
-            if (changed) renderDashboard();
-          } else if (currentPage === "features") {
-            var prevConnected = prev ? prev.connected : undefined;
-            if (prevConnected !== next.connected) renderPage();
+            renderDashboard();
+          } else if (currentPage === "features" || currentPage === "displays" || (currentPage === "system" && (systemTab === "displays" || systemTab === "hardware") && !selectedHardwarePlugin && !selectedPlugin)) {
+            renderPage();
           }
         }
-      } catch (_) {}
-      setTimeout(fetchDeviceStatus, 5000);
-    }
+      }
+    } catch (_) {}
+    setTimeout(fetchDeviceStatus, 5000);
   }
 
   function getClockMode() {
@@ -1467,7 +1521,7 @@
         const nextJson = JSON.stringify(next);
         pluginsConfig = next;
         if (prevJson !== nextJson) {
-          if (currentPage === "plugins" || currentPage === "hardware" || currentPage === "features") renderPage();
+          if (currentPage === "system" || currentPage === "displays" || currentPage === "integrations" || currentPage === "plugins" || currentPage === "hardware") renderPage();
           else if (currentPage === "dashboard") renderDashboard();
         }
       }
@@ -1476,62 +1530,55 @@
     setTimeout(fetchPluginsConfig, 30000);
   }
 
-  function renderHardwarePage() {
+  function renderDisplaysPage() {
     if (selectedHardwarePlugin) {
       renderPluginSettings(selectedHardwarePlugin);
       return;
     }
 
-    const allKeys = Object.keys(pluginsConfig);
-    const hwKeys = allKeys.filter((k) => {
-      const p = pluginsConfig[k];
-      return p && (p.is_hardware || k === "matrix_display" || k === "ha" || k === "openrgb" || k === "rgb" || k === "pc_stats");
-    });
+    const pMatrix = pluginsConfig["matrix_display"] || {};
+    const isMatrixConnected = Boolean((typeof deviceStatus !== "undefined" && deviceStatus && deviceStatus.connected) || pMatrix.running);
+    let matrixPort = "USB";
+    if (typeof deviceStatus !== "undefined" && deviceStatus && deviceStatus.port) matrixPort = deviceStatus.port;
+    else if (pMatrix.message && pMatrix.message.startsWith("Port: ")) matrixPort = pMatrix.message.replace("Port: ", "");
 
-    if (!hwKeys.includes("matrix_display")) {
-      hwKeys.unshift("matrix_display");
-    } else {
-      hwKeys.sort((a, b) => (a === "matrix_display" ? -1 : b === "matrix_display" ? 1 : 0));
-    }
+    const pAkp = pluginsConfig["akp02_stats"];
+    const isAkpConnected = Boolean(pAkp && (pAkp.running || pAkp.status_code === "running" || pAkp.status_code === "connected" || pAkp.status_code === "active"));
 
-    const tiles = hwKeys.map((name) => {
-      const p = pluginsConfig[name] || {};
-      const icon = p.icon || (name === "matrix_display" ? "developer_board" : (name === "ha" ? "home" : "palette"));
-      const isCore = p.is_core || (name === "matrix_display");
-      let statusCode = p.status_code || "inactive";
-      let statusLabel = p.status_label || (p.running ? "Active" : "Offline");
-      if (name === "matrix_display" && typeof deviceStatus !== "undefined" && deviceStatus) {
-        if (deviceStatus.connected) {
-          statusCode = "active";
-          statusLabel = `Connected (${deviceStatus.port || "USB"})`;
-        } else if (!p.running) {
-          statusCode = "inactive";
-          statusLabel = "Offline";
-        }
-      }
-      const statusColor = STATUS_COLORS[statusCode] || (statusCode === "active" ? "var(--neon-grn)" : "var(--fg-dim)");
-      const desc = p.description || (name === "matrix_display" ? "Physical 32x8 LED pixel matrix display connected via USB serial" : "");
+    // Matrix settings snapshot
+    const clockMode = getClockMode();
+    const timeOn = featureConfig.feature_time !== false;
+    const dateOn = featureConfig.feature_date === true;
+    const minuteOn = featureConfig.feature_minute_bar === true;
+    const greetOn = featureConfig.feature_greeting !== false;
+    const brightVal = featureConfig.brightness !== undefined ? featureConfig.brightness : 3;
+    const eyesOn = featureConfig.feature_eyes === true;
+    const nightOn = featureConfig.night_mode_enabled === true;
+    const notifsOn = featureConfig.feature_notifications !== false;
+    const pcStatsOn = featureConfig.pc_stats_enabled !== false;
 
-      return `
-        <div class="dash-plugin profile-card hw-plugin-tile" data-name="${esc(name)}" style="cursor:pointer;">
+    // Optional physical USB panel card (only displayed when physically connected)
+    let usbPanelCardHtml = "";
+    if (isAkpConnected && pAkp) {
+      const akpBrightness = (featureConfig && featureConfig.plugins && featureConfig.plugins.akp02_stats && featureConfig.plugins.akp02_stats.brightness) || 85;
+      usbPanelCardHtml = `
+        <div class="dash-plugin profile-card hw-plugin-tile" data-name="akp02_stats" style="cursor:pointer;margin-top:16px;">
           <div class="dash-plugin-icon">
-            <span class="material-icons-outlined">${esc(icon)}</span>
+            <span class="material-icons-outlined">monitor</span>
           </div>
           <div class="dash-plugin-info" style="flex:1;min-width:0;">
             <div style="display:flex;align-items:center;gap:8px;">
-              <span class="dash-plugin-name" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(p.display_name || name)}</span>
-              <span class="profile-card-badge ${isCore ? 'profile-badge-default' : 'profile-badge-app'}">
-                ${isCore ? 'Core Hardware' : 'Hardware Addon'}
-              </span>
+              <span class="dash-plugin-name" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">USB Stats Display</span>
+              <span class="profile-card-badge profile-badge-app">Connected USB</span>
             </div>
             <div class="dash-plugin-status" style="display:flex;align-items:center;gap:8px;font-size:12px;margin-top:2px;">
-              <span style="color:${statusColor};font-weight:600;">● ${esc(statusLabel)}</span>
-              ${desc ? `<span style="color:var(--fg-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">· ${esc(desc)}</span>` : ''}
+              <span style="color:var(--neon-grn);font-weight:700;">● Connected (USB)</span>
+              <span style="color:var(--fg-dim);">· 1920x462 LCD stats frame buffer</span>
             </div>
           </div>
           <span class="material-icons-outlined plugin-tile-arrow" style="margin-left:auto;">chevron_right</span>
         </div>`;
-    }).join("");
+    }
 
     main.innerHTML = `
       <header>
@@ -1540,15 +1587,208 @@
             <span class="material-icons-outlined">menu</span>
           </button>
           <div>
-            <h1>Hardware Plugins</h1>
-            <p>Physical peripherals, matrix display &amp; smart home integrations</p>
+            <h1>Displays &amp; Outputs</h1>
           </div>
         </div>
         <button class="done-btn" id="done-btn">Close</button>
       </header>
-      <section class="content settings-content">
-        ${tiles || '<div class="card"><p style="color:var(--fg-dim);margin:0">No hardware plugins detected</p></div>'}
+      <section class="content settings-content displays-content">
+        <!-- 1. VIRTUAL SURFACES / WEB OUTPUTS (Always available to all users) -->
+        <h2 class="surfaces-section-title">
+          <span class="material-icons-outlined" style="font-size:16px;color:var(--neon);">desktop_windows</span> Virtual Surfaces &amp; Outputs
+        </h2>
+
+        <div class="surfaces-grid">
+          <!-- Circular Gauge Surface -->
+          <div class="surface-card">
+            <div class="surface-card-icon">
+              <span class="material-icons-outlined">album</span>
+            </div>
+            <div class="surface-card-body">
+              <div class="surface-card-title">
+                Circular Telemetry Gauge
+                <span class="profile-card-badge profile-badge-default">Web Surface</span>
+              </div>
+              <div class="surface-card-desc">
+                Edge-to-edge circular SVG gauge for AIO LCD liquid coolers (NZXT Kraken, Turing), round secondary screens, or OBS stream overlays.
+              </div>
+            </div>
+            <div class="surface-card-actions">
+              <button type="button" class="cc-tab-btn" id="btn-copy-gauge-url" style="border:1px solid var(--border);padding:6px 14px;cursor:pointer;">
+                <span class="material-icons-outlined" style="font-size:15px;">link</span> Copy URL
+              </button>
+              <button type="button" class="cc-tab-btn" id="btn-open-gauge-win" style="border:1px solid var(--border);padding:6px 14px;cursor:pointer;">
+                <span class="material-icons-outlined" style="font-size:15px;">open_in_new</span> Preview
+              </button>
+            </div>
+          </div>
+
+          <!-- Companion Web Deck -->
+          <div class="surface-card">
+            <div class="surface-card-icon">
+              <span class="material-icons-outlined">grid_view</span>
+            </div>
+            <div class="surface-card-body">
+              <div class="surface-card-title">
+                Companion Touch Deck
+                <span class="profile-card-badge profile-badge-default">Web &amp; PWA</span>
+              </div>
+              <div class="surface-card-desc">
+                Full-screen touchscreen macro deck and status panel. Runs in any browser or full-screen PWA on iOS and Android devices.
+              </div>
+            </div>
+            <div class="surface-card-actions">
+              <button type="button" class="cc-tab-btn" id="btn-open-deck-win" style="border:1px solid var(--border);padding:6px 14px;cursor:pointer;">
+                <span class="material-icons-outlined" style="font-size:15px;">touch_app</span> Open Deck
+              </button>
+            </div>
+          </div>
+
+          <!-- Desktop Overlay HUD -->
+          <div class="surface-card">
+            <div class="surface-card-icon">
+              <span class="material-icons-outlined">layers</span>
+            </div>
+            <div class="surface-card-body">
+              <div class="surface-card-title">
+                Desktop In-Game HUD
+                <span class="profile-card-badge profile-badge-default">Desktop Overlay</span>
+              </div>
+              <div class="surface-card-desc">
+                Featherweight transparent stats overlay. Toggle over active games and apps instantly using hotkey <strong style="color:var(--neon-bright);">${esc(featureConfig.hotkey_overlay || 'Ctrl+Alt+I')}</strong>.
+              </div>
+            </div>
+            <div class="surface-card-actions">
+              <button type="button" class="cc-tab-btn" id="btn-toggle-overlay-hud" style="border:1px solid var(--border);padding:6px 14px;cursor:pointer;">
+                <span class="material-icons-outlined" style="font-size:15px;">visibility</span> Toggle HUD
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 2. PHYSICAL COMPANION HARDWARE -->
+        <h2 class="surfaces-section-title">
+          <span class="material-icons-outlined" style="font-size:16px;color:var(--neon);">memory</span> Physical Companion Hardware
+        </h2>
+
+        <!-- IRIS PIXEL MAX7219 LED Matrix (Premier in-house display) -->
+        <div class="dash-plugin profile-card hw-matrix-wide" style="cursor:default;flex-direction:column;align-items:stretch;">
+          <div style="display:flex;align-items:center;gap:18px;width:100%;">
+            <div class="dash-plugin-icon">
+              <span class="material-icons-outlined">developer_board</span>
+            </div>
+            <div class="dash-plugin-info" style="flex:1;min-width:0;">
+              <div style="display:flex;align-items:center;gap:8px;">
+                <span class="dash-plugin-name" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">IRIS PIXEL Matrix Display</span>
+                <span class="profile-card-badge profile-badge-default">Iris Hardware</span>
+              </div>
+              <div class="dash-plugin-status" style="display:flex;align-items:center;gap:8px;font-size:12px;margin-top:2px;">
+                <span style="color:${isMatrixConnected ? 'var(--neon-grn)' : 'var(--fg-dim)'};font-weight:700;">● ${isMatrixConnected ? `Connected (${matrixPort})` : 'Offline / Standby'}</span>
+                <span style="color:var(--fg-dim);">· Bespoke 32x8 pixel LED companion display</span>
+              </div>
+            </div>
+            <button type="button" class="cc-tab-btn hw-plugin-tile" data-name="matrix_display" style="border:1px solid var(--border);padding:6px 14px;cursor:pointer;">
+              <span class="material-icons-outlined" style="font-size:16px;">tune</span> Full Settings
+            </button>
+          </div>
+
+          <!-- 2-Column Split: Clock Controls & Display / Visual Controls -->
+          <div class="hw-matrix-split-grid">
+            <!-- Left Column: Clock & Time Settings -->
+            <div class="hw-matrix-subcard">
+              <div class="hw-matrix-subcard-title">
+                <span class="material-icons-outlined" style="font-size:16px;color:var(--neon);">schedule</span> Clock &amp; Time
+              </div>
+              <div class="plugin-detail-row" style="padding:6px 0;">
+                <span class="plugin-detail-label">Clock Mode</span>
+                <span class="plugin-detail-value" style="color:var(--neon-bright);font-weight:600;">${esc(clockMode)}</span>
+              </div>
+              <div class="plugin-detail-row" style="padding:6px 0;">
+                <span class="plugin-detail-label">Time Display</span>
+                <span class="plugin-data-badge ${timeOn ? 'plugin-data-badge--on' : 'plugin-data-badge--off'}">${timeOn ? 'On' : 'Off'}</span>
+              </div>
+              <div class="plugin-detail-row" style="padding:6px 0;">
+                <span class="plugin-detail-label">Date Reminder</span>
+                <span class="plugin-data-badge ${dateOn ? 'plugin-data-badge--on' : 'plugin-data-badge--off'}">${dateOn ? 'On' : 'Off'}</span>
+              </div>
+              <div class="plugin-detail-row" style="padding:6px 0;">
+                <span class="plugin-detail-label">Minute Progress Bar</span>
+                <span class="plugin-data-badge ${minuteOn ? 'plugin-data-badge--on' : 'plugin-data-badge--off'}">${minuteOn ? 'On' : 'Off'}</span>
+              </div>
+              <div class="plugin-detail-row" style="padding:6px 0;">
+                <span class="plugin-detail-label">Startup Greeting</span>
+                <span class="plugin-data-badge ${greetOn ? 'plugin-data-badge--on' : 'plugin-data-badge--off'}">${greetOn ? 'On' : 'Off'}</span>
+              </div>
+            </div>
+
+            <!-- Right Column: Display, Brightness & PC Stats -->
+            <div class="hw-matrix-subcard">
+              <div class="hw-matrix-subcard-title">
+                <span class="material-icons-outlined" style="font-size:16px;color:var(--neon);">brightness_6</span> Display &amp; Visuals
+              </div>
+              <div class="plugin-detail-row" style="padding:6px 0;">
+                <span class="plugin-detail-label">Brightness Level</span>
+                <span class="plugin-detail-value" style="color:var(--neon-bright);font-weight:600;">Level ${brightVal} / 4</span>
+              </div>
+              <div class="plugin-detail-row" style="padding:6px 0;">
+                <span class="plugin-detail-label">Night Dimming</span>
+                <span class="plugin-data-badge ${nightOn ? 'plugin-data-badge--on' : 'plugin-data-badge--off'}">${nightOn ? 'On' : 'Off'}</span>
+              </div>
+              <div class="plugin-detail-row" style="padding:6px 0;">
+                <span class="plugin-detail-label">Animated Motion Eyes</span>
+                <span class="plugin-data-badge ${eyesOn ? 'plugin-data-badge--on' : 'plugin-data-badge--off'}">${eyesOn ? 'On' : 'Off'}</span>
+              </div>
+              <div class="plugin-detail-row" style="padding:6px 0;">
+                <span class="plugin-detail-label">System Notifications</span>
+                <span class="plugin-data-badge ${notifsOn ? 'plugin-data-badge--on' : 'plugin-data-badge--off'}">${notifsOn ? 'On' : 'Off'}</span>
+              </div>
+              <div class="plugin-detail-row" style="padding:6px 0;">
+                <span class="plugin-detail-label">PC Stats Game Detection</span>
+                <span class="plugin-data-badge ${pcStatsOn ? 'plugin-data-badge--on' : 'plugin-data-badge--off'}">${pcStatsOn ? 'Active' : 'Off'}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        ${usbPanelCardHtml}
       </section>`;
+
+    // Wire actions for Virtual Surfaces
+    const copyGaugeBtn = document.getElementById("btn-copy-gauge-url");
+    if (copyGaugeBtn) {
+      copyGaugeBtn.addEventListener("click", () => {
+        const fullUrl = `${window.location.origin}/kraken.html`;
+        navigator.clipboard.writeText(fullUrl).then(() => {
+          copyGaugeBtn.innerHTML = '<span class="material-icons-outlined" style="font-size:15px;color:var(--neon-grn);">check</span> Copied!';
+          setTimeout(() => {
+            copyGaugeBtn.innerHTML = '<span class="material-icons-outlined" style="font-size:15px;">link</span> Copy URL';
+          }, 2000);
+        });
+      });
+    }
+
+    const openGaugeBtn = document.getElementById("btn-open-gauge-win");
+    if (openGaugeBtn) {
+      openGaugeBtn.addEventListener("click", () => {
+        window.open("/kraken.html", "IrisGauge", "width=640,height=640,menubar=no,toolbar=no,location=no,status=no");
+      });
+    }
+
+    const openDeckBtn = document.getElementById("btn-open-deck-win");
+    if (openDeckBtn) {
+      openDeckBtn.addEventListener("click", () => {
+        currentPage = "panel";
+        portalAutoPanel = true;
+        fetchPanel();
+      });
+    }
+
+    const toggleHudBtn = document.getElementById("btn-toggle-overlay-hud");
+    if (toggleHudBtn) {
+      toggleHudBtn.addEventListener("click", () => {
+        apiFetch("/api/overlay/toggle", { method: "POST" });
+      });
+    }
 
     main.querySelectorAll(".hw-plugin-tile").forEach((el) => {
       el.addEventListener("click", () => {
@@ -1569,25 +1809,77 @@
     rebindHamburger();
   }
 
-  function renderPlugins() {
-    const names = Object.keys(pluginsConfig);
+  function renderIntegrationsPage() {
+    if (selectedPlugin) {
+      renderPluginSettings(selectedPlugin);
+      return;
+    }
 
-    const tiles = names.map((name) => {
-      const p = pluginsConfig[name];
-      const icon = (pluginsConfig[name] || {}).icon || "extension";
-      const color = STATUS_COLORS[p.status_code] || "var(--fg-dim)";
+    const allKeys = Object.keys(pluginsConfig);
+    // Exclude hardware display devices from integrations (they belong strictly in Displays & Outputs)
+    const intKeys = allKeys.filter((k) => {
+      return k !== "matrix_display" && k !== "akp02_stats" && k !== "kraken";
+    });
+
+    // Categorize integrations into Services & Bridges vs Telemetry & Gaming
+    const serviceKeys = ["ha", "openrgb", "rgb"];
+    const services = intKeys.filter((k) => serviceKeys.includes(k));
+    const extensions = intKeys.filter((k) => !serviceKeys.includes(k));
+
+    function renderIntegrationTile(name) {
+      const p = pluginsConfig[name] || {};
+      let icon = p.icon || "extension";
+      if (name === "ha") icon = "home";
+      else if (name === "rgb" || name === "openrgb") icon = "palette";
+      else if (name === "pc_stats") icon = "query_stats";
+      else if (name === "elite_dangerous") icon = "rocket_launch";
+      else if (name === "vision") icon = "visibility";
+
+      let statusCode = p.status_code || "inactive";
+      let isRunning = Boolean(p.running || statusCode === "running" || statusCode === "connected" || statusCode === "active");
+      let statusLabel = p.status_label || (isRunning ? "Active" : "Offline");
+      const statusColor = STATUS_COLORS[statusCode] || (isRunning ? "var(--neon-grn)" : "var(--fg-dim)");
+
+      let categoryBadge = "Application Extension";
+      let desc = p.description || "";
+      if (name === "ha") {
+        categoryBadge = "Ecosystem";
+        desc = "Home Assistant IoT gateway and remote entity triggers";
+      } else if (name === "rgb" || name === "openrgb") {
+        categoryBadge = "Ecosystem";
+        desc = "OpenRGB ambient lighting synchronization";
+      } else if (name === "pc_stats") {
+        categoryBadge = "Telemetry";
+        desc = "Real-time CPU, GPU, RAM and thermal hardware monitor";
+      } else if (name === "elite_dangerous") {
+        categoryBadge = "Game Watcher";
+        desc = "Elite Dangerous journal and status watcher";
+      } else if (name === "vision") {
+        categoryBadge = "Screen Sensor";
+        desc = "Region-based screen color and state detection";
+      }
+
       return `
-        <div class="plugin-tile" data-name="${esc(name)}">
-          <div class="plugin-tile-icon">
-            <span class="material-icons-outlined">${icon}</span>
+        <div class="dash-plugin profile-card int-plugin-tile" data-name="${esc(name)}" style="cursor:pointer;">
+          <div class="dash-plugin-icon">
+            <span class="material-icons-outlined">${esc(icon)}</span>
           </div>
-          <div class="plugin-tile-info">
-            <span class="plugin-tile-name">${esc(p.display_name)}</span>
-            <span class="plugin-tile-status" style="color:${color}">${esc(p.status_label)}</span>
+          <div class="dash-plugin-info" style="flex:1;min-width:0;">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span class="dash-plugin-name" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(p.display_name || name)}</span>
+              <span class="profile-card-badge profile-badge-app">${esc(categoryBadge)}</span>
+            </div>
+            <div class="int-plugin-status-line" style="color:${statusColor};">
+              ● ${esc(statusLabel)}
+            </div>
+            ${desc ? `<div class="int-plugin-desc-line">${esc(desc)}</div>` : ''}
           </div>
-          <span class="material-icons-outlined plugin-tile-arrow">chevron_right</span>
+          <span class="material-icons-outlined plugin-tile-arrow" style="margin-left:auto;">chevron_right</span>
         </div>`;
-    }).join("");
+    }
+
+    const servicesHtml = services.map(renderIntegrationTile).join("");
+    const extensionsHtml = extensions.map(renderIntegrationTile).join("");
 
     main.innerHTML = `
       <header>
@@ -1596,24 +1888,60 @@
             <span class="material-icons-outlined">menu</span>
           </button>
           <div>
-            <h1>Plugins</h1>
+            <h1>Integrations</h1>
           </div>
         </div>
         <button class="done-btn" id="done-btn">Close</button>
       </header>
-      <section class="content plugin-content">
-        ${tiles || '<div class="card"><h2>No plugins</h2><p>Install plugins to get started.</p></div>'}
+      <section class="content settings-content integrations-content">
+        ${services.length > 0 ? `
+          <h2 class="surfaces-section-title">
+            <span class="material-icons-outlined" style="font-size:16px;color:var(--neon);">hub</span> Ecosystems
+          </h2>
+          <div class="integrations-grid">
+            ${servicesHtml}
+          </div>` : ''}
+
+        ${extensions.length > 0 ? `
+          <h2 class="surfaces-section-title">
+            <span class="material-icons-outlined" style="font-size:16px;color:var(--neon);">extension</span> Application Extensions
+          </h2>
+          <div class="integrations-grid">
+            ${extensionsHtml}
+          </div>` : ''}
+
+        ${intKeys.length === 0 ? '<div class="card"><p style="color:var(--fg-dim);margin:0">No active integrations configured</p></div>' : ''}
       </section>`;
 
-    document.querySelectorAll(".plugin-tile").forEach((el) => {
+    main.querySelectorAll(".int-plugin-tile").forEach((el) => {
       el.addEventListener("click", () => {
         selectedPlugin = el.dataset.name;
-        fetchConfig();
         renderPage();
       });
     });
 
+    const doneBtn = document.getElementById("done-btn");
+    if (doneBtn) {
+      doneBtn.addEventListener("click", () => {
+        currentPage = "dashboard";
+        navItems.forEach((n) => n.classList.toggle("active", n.dataset.page === "dashboard"));
+        renderPage();
+      });
+    }
+
     rebindHamburger();
+  }
+
+  function renderConnectionsPage() {
+    renderIntegrationsPage();
+  }
+
+  function renderHardwarePage() {
+    renderDisplaysPage();
+  }
+
+  function renderPlugins() {
+    renderIntegrationsPage();
   }
 
   function renderPluginSettings(name) {
@@ -1632,22 +1960,21 @@
           '</button>' +
           '<div>' +
             '<h1>' + esc(p.display_name || name) + '</h1>' +
-            (currentPage === "hardware" ? '<p>Hardware Plugin · Peripheral &amp; service configuration</p>' : '') +
           '</div>' +
         '</div>' +
         '<div style="display:flex;align-items:center;gap:8px">' +
-          '<button class="done-btn" id="back-btn">' + (currentPage === "hardware" ? 'Back to Hardware' : 'Back') + '</button>' +
+          '<button class="done-btn" id="back-btn">' + ((currentPage === "system" && (systemTab === "displays" || systemTab === "hardware")) || currentPage === "hardware" || currentPage === "displays" ? 'Back to Displays' : 'Back to Integrations') + '</button>' +
           '<button class="done-btn" id="done-btn">Close</button>' +
         '</div>' +
       '</header>' +
       contentHtml;
 
     function returnFromPlugin() {
-      if (currentPage === "hardware") {
-        selectedHardwarePlugin = null;
+      selectedPlugin = null;
+      selectedHardwarePlugin = null;
+      if (currentPage === "hardware" || currentPage === "displays" || currentPage === "connections" || currentPage === "system" || currentPage === "plugins" || currentPage === "integrations") {
         renderPage();
       } else {
-        selectedPlugin = null;
         currentPage = "dashboard";
         navItems.forEach((n) => n.classList.toggle("active", n.dataset.page === "dashboard"));
         renderPage();
@@ -2820,17 +3147,18 @@
 
   async function fetchNotifications() {
     clearTimeout(notifTimer);
-    if (currentPage !== "notifications") return;
+    const isNotifActive = (currentPage === "notifications") || (currentPage === "activity" && activityTab === "notifications");
+    if (!isNotifActive) return;
     try {
       const res = await apiFetch(`${API_BASE}/api/notifications`);
       if (res.ok) {
         notifData = await res.json();
-        if (currentPage === "notifications") {
+        if ((currentPage === "notifications") || (currentPage === "activity" && activityTab === "notifications")) {
           renderNotificationsList();
         }
       }
     } catch (_) {}
-    if (currentPage === "notifications") {
+    if ((currentPage === "notifications") || (currentPage === "activity" && activityTab === "notifications")) {
       notifTimer = setTimeout(fetchNotifications, 2500);
     }
   }
@@ -6085,6 +6413,7 @@
           media_player_path: data.media_player_path || "",
           hardware_connected: !!data.hardware_connected,
           panel_profiles: data.panel_profiles || [],
+          default_profile_name: data.default_profile_name || "",
           panel_default_automations: data.panel_default_automations || [],
         };
         // Universal dynamic icon preload: scan board, utility, core, and all profile boards
@@ -6101,6 +6430,8 @@
         if (portalAutoPanel || panelViewMode) {
           portalAutoPanel = false;
           openPanelView();
+        } else if (currentPage === "command" || currentPage === "dashboard") {
+          renderCommandCentre();
         } else if (currentPage === "profiles") {
           renderProfilesPage();
         } else if (currentPage === "panel") {
@@ -6116,6 +6447,8 @@
         if (portalAutoPanel || panelViewMode) {
           portalAutoPanel = false;
           openPanelView();
+        } else if (currentPage === "command" || currentPage === "dashboard") {
+          renderCommandCentre();
         } else if (currentPage === "profiles") {
           renderProfilesPage();
         } else if (currentPage === "panel") {
@@ -6352,7 +6685,7 @@
     const isCore = ctx.scope === "core";
     const isUtil = ctx.scope === "utility" || ctx.scope === "util" || isCore;
 
-    let profName = "Profile";
+    let profName = "Workspace";
     if (currentPage === "profiles") {
       if (panelProfileSel === "__default__") {
         profName = "Default Profile";
@@ -6360,6 +6693,10 @@
         const p = ((panelDraft && panelDraft.panel_profiles) || []).find((x) => x.id === panelProfileSel);
         if (p) profName = p.name || p.id;
       }
+    } else if (currentPage === "command" || currentPage === "dashboard") {
+      const cur = panelProfileCurrent();
+      const p = cur.profile;
+      profName = p ? (p.name || p.id) : "Desktop Workspace";
     } else if (currentPage === "panel") {
       profName = "Panel Editor";
     }
@@ -7474,9 +7811,16 @@
     preloadBoardIcons(curUtil);
     preloadBoardIcons(curCore);
 
+    const cpuVal = (gauges.cpu_pct !== undefined && gauges.cpu_pct !== null && (!gauges.cpu_temp || gauges.cpu_temp_unit === "%"))
+      ? gauges.cpu_pct
+      : (gauges.cpu_temp !== undefined && gauges.cpu_temp !== null ? gauges.cpu_temp : (gauges.cpu_pct || 0));
+    const cpuUnit = (gauges.cpu_pct !== undefined && gauges.cpu_pct !== null && (!gauges.cpu_temp || gauges.cpu_temp_unit === "%"))
+      ? "%"
+      : (gauges.cpu_temp_unit || "°C");
+
     const gaugesHtml = gOn
       ? '<div class="prev-gauges">' +
-          panelGauge("CPU", gauges.cpu_temp, gauges.cpu_temp_max || 100, gauges.cpu_temp_unit || "") +
+          panelGauge("CPU", cpuVal, 100, cpuUnit) +
           panelGauge("GPU", gauges.gpu_temp, gauges.gpu_temp_max || 100, gauges.gpu_temp_unit || "") +
           panelGauge("FPS", gauges.fps, gauges.fps_max || gauges.refresh_rate || 60) +
         '</div>'
@@ -9015,6 +9359,11 @@
 
         // Live in-place DOM updates for all views (Desktop preview & Phone overlay)
         updatePanelView();
+        if (currentPage === "command" || currentPage === "dashboard") {
+          if (typeof updateCommandCentreTelemetry === "function") {
+            updateCommandCentreTelemetry();
+          }
+        }
 
         if (!panelViewMode) return;
 
@@ -9297,7 +9646,7 @@
       }
       lastNotifKey = notifKey();
       triggerNotificationSlide(normalizeNotifTheme(msg.theme), isAlert, msg);
-      if (currentPage === "notifications") {
+      if (currentPage === "notifications" || (currentPage === "activity" && activityTab === "notifications")) {
         fetchNotifications();
       }
     } else if (msg.type === "event") {
@@ -9694,9 +10043,15 @@
     }
 
     let html = '<div class="pv-screen">' + statusBarHtml;
+    const cpuVal = (gauges.cpu_pct !== undefined && gauges.cpu_pct !== null && (!gauges.cpu_temp || gauges.cpu_temp_unit === "%"))
+      ? gauges.cpu_pct
+      : (gauges.cpu_temp !== undefined && gauges.cpu_temp !== null ? gauges.cpu_temp : (gauges.cpu_pct || 0));
+    const cpuUnit = (gauges.cpu_pct !== undefined && gauges.cpu_pct !== null && (!gauges.cpu_temp || gauges.cpu_temp_unit === "%"))
+      ? "%"
+      : (gauges.cpu_temp_unit || "°C");
     const gaugesHtml = gOn
       ? '<div class="pv-gauges">' +
-        panelGauge("CPU", gauges.cpu_temp, gauges.cpu_temp_max || 100, gauges.cpu_temp_unit || "") +
+        panelGauge("CPU", cpuVal, 100, cpuUnit) +
         panelGauge("GPU", gauges.gpu_temp, gauges.gpu_temp_max || 100, gauges.gpu_temp_unit || "") +
         panelGauge("FPS", gauges.fps, gauges.fps_max || gauges.refresh_rate || 60) +
         '</div>'
@@ -9866,7 +10221,13 @@
     }, 50);
   });
 
-  function gaugeNum(value) {
+  function gaugeNum(value, label) {
+    if (label === "FPS" || label === "fps") {
+      if (value === null || value === undefined || value <= 0 || value === "--" || isNaN(value)) {
+        return "—";
+      }
+      return String(Math.round(value));
+    }
     const v = (value === null || value === undefined) ? 0 : Math.round(value);
     return String(v);
   }
@@ -9874,9 +10235,11 @@
   const GAUGE_CIRCUMFERENCE = 163.36;
 
   function panelGauge(label, value, max, unit) {
-    const v = (value === null || value === undefined) ? 0 : value;
+    const isFps = (label === "FPS" || label === "fps");
+    const isInvalidFps = isFps && (value === null || value === undefined || value <= 0 || value === "--" || isNaN(value));
+    const v = (value === null || value === undefined || isInvalidFps) ? 0 : value;
     const m = max || 100;
-    const pct = Math.max(0, Math.min(100, (v / m) * 100));
+    const pct = isInvalidFps ? 0 : Math.max(0, Math.min(100, (v / m) * 100));
     const offset = GAUGE_CIRCUMFERENCE - (pct / 100) * GAUGE_CIRCUMFERENCE;
     return '<div class="pdev-gauge">' +
       '<div class="pdev-gring" data-gauge="' + esc(label) + '" style="--val:' + pct.toFixed(1) + '%;">' +
@@ -9892,7 +10255,7 @@
             'stroke-dasharray="' + GAUGE_CIRCUMFERENCE + '" ' +
             'stroke-dashoffset="' + offset.toFixed(2) + '" />' +
         '</svg>' +
-        '<span class="pdev-gval"><span class="pdev-gnum" data-gvalue="' + esc(label) + '">' + gaugeNum(v) + '</span></span>' +
+        '<span class="pdev-gval"><span class="pdev-gnum" data-gvalue="' + esc(label) + '">' + (isInvalidFps ? "—" : gaugeNum(v, label)) + '</span></span>' +
       '</div>' +
       '<span class="pdev-glabel" data-glabel="' + esc(label) + '">' + esc(label) + (unit ? ' ' + esc(unit) : '') + '</span>' +
     '</div>';
@@ -10908,7 +11271,14 @@
       }
     }
 
-    updateGauge("CPU", gauges.cpu_temp, gauges.cpu_temp_max || 100, gauges.cpu_temp_unit || "°C");
+    const cpuLiveVal = (gauges.cpu_pct !== undefined && gauges.cpu_pct !== null && (!gauges.cpu_temp || gauges.cpu_temp_unit === "%"))
+      ? gauges.cpu_pct
+      : (gauges.cpu_temp !== undefined && gauges.cpu_temp !== null ? gauges.cpu_temp : (gauges.cpu_pct || 0));
+    const cpuLiveUnit = (gauges.cpu_pct !== undefined && gauges.cpu_pct !== null && (!gauges.cpu_temp || gauges.cpu_temp_unit === "%"))
+      ? "%"
+      : (gauges.cpu_temp_unit || "°C");
+
+    updateGauge("CPU", cpuLiveVal, 100, cpuLiveUnit);
     updateGauge("GPU", gauges.gpu_temp, gauges.gpu_temp_max || 100, gauges.gpu_temp_unit || "°C");
     updateGauge("FPS", gauges.fps, gauges.fps_max || gauges.refresh_rate || 60, "");
 
@@ -11334,13 +11704,15 @@
 
   let _lastGaugeVals = {};
   function updateGauge(label, value, max, unit) {
-    const v = (value === null || value === undefined) ? 0 : value;
+    const isFps = (label === "FPS" || label === "fps");
+    const isInvalidFps = isFps && (value === null || value === undefined || value <= 0 || value === "--" || isNaN(value));
+    const v = (value === null || value === undefined || isInvalidFps) ? 0 : value;
     const m = max || 100;
-    const key = `${label}|${v}|${m}|${unit || ''}`;
+    const key = `${label}|${value}|${m}|${unit || ''}`;
     if (_lastGaugeVals[label] === key) return;
     _lastGaugeVals[label] = key;
 
-    const pct = Math.max(0, Math.min(100, (v / m) * 100));
+    const pct = isInvalidFps ? 0 : Math.max(0, Math.min(100, (v / m) * 100));
     const offset = GAUGE_CIRCUMFERENCE - (pct / 100) * GAUGE_CIRCUMFERENCE;
     const ringEls = document.querySelectorAll('.pdev-gring[data-gauge="' + label + '"]');
     ringEls.forEach((ringEl) => {
@@ -11349,7 +11721,7 @@
       if (arc) arc.style.strokeDashoffset = offset.toFixed(2);
     });
     const numEls = document.querySelectorAll('.pdev-gnum[data-gvalue="' + label + '"]');
-    numEls.forEach((numEl) => { numEl.textContent = gaugeNum(v); });
+    numEls.forEach((numEl) => { numEl.textContent = isInvalidFps ? "—" : gaugeNum(v, label); });
     if (unit) {
       const lblEls = document.querySelectorAll('.pdev-glabel[data-glabel="' + label + '"]');
       lblEls.forEach((lblEl) => { lblEl.textContent = label + " " + unit; });
@@ -12598,6 +12970,8 @@
       panelEdit = null;
       if (currentPage === "profiles") {
         renderProfilesPage();
+      } else if (currentPage === "command" || currentPage === "dashboard") {
+        renderCommandCentre();
       } else {
         renderPanel();
       }
@@ -13130,39 +13504,665 @@
     renderPage();
   }
 
-  function renderDashboard() {
-    const userName = featureConfig.user_name || "";
-    const greeting = featureConfig.feature_greeting !== false
-      ? `<span class="dash-greeting">Welcome back${userName ? ", " + esc(userName) : ""}</span>`
-      : "";
+  function openWorkspaceTemplateModal() {
+    let oldModal = document.getElementById("workspace-template-modal");
+    if (oldModal) oldModal.remove();
+
+    let selectedTemplate = "desktop";
+
+    const modal = document.createElement("div");
+    modal.id = "workspace-template-modal";
+    modal.className = "modal-overlay";
+    modal.style.cssText = "display:flex;align-items:center;justify-content:center;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9999;backdrop-filter:blur(4px);";
+    modal.innerHTML = `
+      <div class="modal-box" style="max-width:540px;width:90%;background:var(--bg-panel, #12161f);border:1px solid rgba(255,255,255,0.12);border-radius:var(--radius-panel, 12px);box-shadow:0 12px 40px rgba(0,0,0,0.6);overflow:hidden;">
+        <div class="modal-header" style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid rgba(255,255,255,0.08);">
+          <div style="font-size:16px;font-weight:700;color:#fff;">Create New Workspace</div>
+          <button type="button" class="modal-close" id="wt-close" style="background:none;border:none;color:var(--fg-dim);font-size:20px;cursor:pointer;">&times;</button>
+        </div>
+        <div class="modal-body" style="padding:20px;display:flex;flex-direction:column;gap:14px;">
+          <div style="font-size:12px;color:var(--fg-dim);">Choose a starting template for this workspace:</div>
+          <div class="wt-templates" style="display:grid;grid-template-columns:repeat(3, 1fr);gap:10px;">
+            <div class="wt-card selected" data-template="desktop">
+              <span class="material-icons-outlined" style="font-size:28px;color:var(--neon)">dashboard</span>
+              <div style="font-weight:700;font-size:12px;margin-top:6px;color:#fff;">Desktop Starter</div>
+              <p style="font-size:10px;color:var(--fg-dim);margin-top:4px;line-height:1.3;">Action deck, media, status & tools.</p>
+            </div>
+            <div class="wt-card" data-template="game">
+              <span class="material-icons-outlined" style="font-size:28px;color:#ffaa00">sports_esports</span>
+              <div style="font-weight:700;font-size:12px;margin-top:6px;color:#fff;">Game / App</div>
+              <p style="font-size:10px;color:var(--fg-dim);margin-top:4px;line-height:1.3;">Targeted controls for a specific app.</p>
+            </div>
+            <div class="wt-card" data-template="blank">
+              <span class="material-icons-outlined" style="font-size:28px;color:var(--fg-dim)">crop_free</span>
+              <div style="font-weight:700;font-size:12px;margin-top:6px;color:#fff;">Blank Canvas</div>
+              <p style="font-size:10px;color:var(--fg-dim);margin-top:4px;line-height:1.3;">Empty layout ready for your design.</p>
+            </div>
+          </div>
+          <div style="margin-top:6px;">
+            <label style="font-size:11px;font-weight:600;color:var(--fg-dim);display:block;margin-bottom:4px;">Workspace Name</label>
+            <input type="text" id="wt-name-input" class="settings-input" style="width:100%;box-sizing:border-box;" placeholder="e.g. Flight Sim, Creative, Gaming" value="New Workspace">
+          </div>
+          <div id="wt-game-field" style="display:none;">
+            <label style="font-size:11px;font-weight:600;color:var(--fg-dim);display:block;margin-bottom:4px;">Target Executable (Optional)</label>
+            <div style="display:flex;gap:6px;">
+              <input type="text" id="wt-exe-input" class="settings-input" style="flex:1;box-sizing:border-box;" placeholder="C:\\Games\\Game.exe">
+              <button type="button" class="settings-btn" id="wt-exe-browse">Browse...</button>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer" style="padding:14px 20px;display:flex;justify-content:flex-end;gap:8px;border-top:1px solid rgba(255,255,255,0.08);background:rgba(0,0,0,0.2);">
+          <button type="button" class="settings-btn" id="wt-cancel-btn">Cancel</button>
+          <button type="button" class="settings-btn settings-btn-primary" id="wt-create-btn">Create Workspace</button>
+        </div>
+      </div>`;
+
+    document.body.appendChild(modal);
+
+    const nameInput = modal.querySelector("#wt-name-input");
+    const exeInput = modal.querySelector("#wt-exe-input");
+    const gameField = modal.querySelector("#wt-game-field");
+
+    modal.querySelectorAll(".wt-card").forEach((card) => {
+      card.addEventListener("click", () => {
+        modal.querySelectorAll(".wt-card").forEach((c) => c.classList.remove("selected"));
+        card.classList.add("selected");
+        selectedTemplate = card.dataset.template;
+        if (selectedTemplate === "game") {
+          gameField.style.display = "block";
+          if (nameInput.value === "New Workspace" || nameInput.value === "Blank Canvas") nameInput.value = "Game Workspace";
+        } else if (selectedTemplate === "blank") {
+          gameField.style.display = "none";
+          if (nameInput.value === "New Workspace" || nameInput.value === "Game Workspace") nameInput.value = "Blank Canvas";
+        } else {
+          gameField.style.display = "none";
+          if (nameInput.value === "Game Workspace" || nameInput.value === "Blank Canvas") nameInput.value = "New Workspace";
+        }
+      });
+    });
+
+    const browseBtn = modal.querySelector("#wt-exe-browse");
+    if (browseBtn) {
+      browseBtn.addEventListener("click", async () => {
+        try {
+          const res = await apiFetch(`${API_BASE}/api/dialog/browse?type=exe`);
+          const data = await res.json();
+          if (data && data.path) {
+            exeInput.value = data.path;
+            if (!nameInput.value || nameInput.value === "New Workspace" || nameInput.value === "Game Workspace") {
+              const base = data.path.split(/[\\\\/]/).pop().replace(/\.exe$/i, "");
+              nameInput.value = base.charAt(0).toUpperCase() + base.slice(1);
+            }
+          }
+        } catch (_) {}
+      });
+    }
+
+    const closeModal = () => { modal.remove(); };
+    modal.querySelector("#wt-close").addEventListener("click", closeModal);
+    modal.querySelector("#wt-cancel-btn").addEventListener("click", closeModal);
+
+    modal.querySelector("#wt-create-btn").addEventListener("click", () => {
+      const wName = (nameInput.value || "").trim() || "New Workspace";
+      const wExe = (exeInput.value || "").trim();
+      const newId = uniqueProfileId();
+
+      let starterSlots = [];
+      if (selectedTemplate === "desktop") {
+        starterSlots = [
+          { type: "CORE", name: "Note", icon: "note-outline", show_name: false, show_icon: true, core_action: "note_webview" },
+          { type: "CORE", name: "PC Stats", icon: "speedometer", show_name: false, show_icon: true, core_action: "overlay" },
+          { type: "TOGGLE", name: "Mic Mute", icon: "microphone", show_name: false, show_icon: true, entity: "system.mic_mute" },
+          { type: "CORE", name: "Screenshot", icon: "camera-alt", show_name: false, show_icon: true, core_action: "screenshot" },
+        ];
+      } else if (selectedTemplate === "game") {
+        starterSlots = [
+          ...(wExe ? [{ type: "SHORTCUT", name: wName, shortcut_path: wExe, app_icon_path: wExe, use_app_icon: true, show_name: true, show_icon: true }] : []),
+          { type: "CORE", name: "HUD Overlay", icon: "speedometer", show_name: true, show_icon: true, core_action: "overlay" },
+          { type: "TOGGLE", name: "Mic Mute", icon: "microphone", show_name: true, show_icon: true, entity: "system.mic_mute" },
+          { type: "CORE", name: "Screenshot", icon: "camera-alt", show_name: true, show_icon: true, core_action: "screenshot" },
+        ];
+      } else {
+        starterSlots = [];
+      }
+
+      if (!panelDraft.panel_profiles) panelDraft.panel_profiles = [];
+      const newProf = {
+        id: newId,
+        name: wName,
+        exe: wExe,
+        auto_switch: true,
+        latch_while_running: true,
+        enabled: true,
+        board: starterSlots,
+      };
+
+      panelDraft.panel_profiles.push(newProf);
+      panelProfileSel = newId;
+      workspaceMode = "design";
+      setPanelDirty(true);
+      closeModal();
+      renderCommandCentre();
+    });
+  }
+
+  function openRenameWorkspaceModal() {
+    let oldModal = document.getElementById("workspace-rename-modal");
+    if (oldModal) oldModal.remove();
+
+    const cur = panelProfileCurrent();
+    const prof = cur.profile;
+    const isDefault = (panelProfileSel === "__default__");
+    const currentName = prof ? (prof.name || prof.id) : ((panelDraft && panelDraft.default_profile_name) || "Desktop");
+    const currentExe = prof ? (prof.exe || "") : "";
+    const currentAutoSwitch = prof ? (prof.auto_switch !== false) : true;
+    const currentLatch = prof ? (prof.latch_while_running !== false) : true;
+
+    const modal = document.createElement("div");
+    modal.id = "workspace-rename-modal";
+    modal.className = "modal-overlay";
+    modal.style.cssText = "display:flex;align-items:center;justify-content:center;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9999;backdrop-filter:blur(4px);";
+    modal.innerHTML = `
+      <div class="modal-box" style="max-width:460px;width:90%;background:var(--bg-panel, #12161f);border:1px solid rgba(255,255,255,0.12);border-radius:var(--radius-panel, 12px);box-shadow:0 12px 40px rgba(0,0,0,0.6);overflow:hidden;">
+        <div class="modal-header" style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid rgba(255,255,255,0.08);">
+          <div style="font-size:15px;font-weight:700;color:#fff;">Configure Workspace</div>
+          <button type="button" class="modal-close" id="wr-close" style="background:none;border:none;color:var(--fg-dim);font-size:20px;cursor:pointer;">&times;</button>
+        </div>
+        <div class="modal-body" style="padding:20px;display:flex;flex-direction:column;gap:14px;">
+          <div>
+            <label style="font-size:11px;font-weight:600;color:var(--fg-dim);display:block;margin-bottom:4px;">Workspace Name</label>
+            <input type="text" id="wr-name-input" class="settings-input" style="width:100%;box-sizing:border-box;" value="${esc(currentName)}">
+          </div>
+          ${!isDefault ? `
+          <div>
+            <label style="font-size:11px;font-weight:600;color:var(--fg-dim);display:block;margin-bottom:4px;">Target Executable (Optional)</label>
+            <div style="display:flex;gap:6px;">
+              <input type="text" id="wr-exe-input" class="settings-input" style="flex:1;box-sizing:border-box;" placeholder="e.g. Game.exe" value="${esc(currentExe)}">
+              <button type="button" class="settings-btn" id="wr-exe-browse">Browse...</button>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px;padding-top:2px;">
+            <label style="display:inline-flex;align-items:center;gap:8px;font-size:12px;color:var(--fg, #e0e4ec);cursor:pointer;">
+              <input type="checkbox" id="wr-auto-switch-input" ${currentAutoSwitch ? 'checked' : ''}>
+              <span>Auto-switch to this workspace when focused</span>
+            </label>
+            <label style="display:inline-flex;align-items:center;gap:8px;font-size:12px;color:var(--fg, #e0e4ec);cursor:pointer;">
+              <input type="checkbox" id="wr-latch-input" ${currentLatch ? 'checked' : ''}>
+              <span>Keep active while running in background (latch)</span>
+            </label>
+          </div>
+          ` : ''}
+        </div>
+        <div class="modal-footer" style="padding:14px 20px;display:flex;justify-content:space-between;align-items:center;gap:8px;border-top:1px solid rgba(255,255,255,0.08);background:rgba(0,0,0,0.2);">
+          ${!isDefault ? `
+          <button type="button" class="settings-btn settings-btn-danger" id="wr-delete-btn" style="display:inline-flex;align-items:center;gap:4px;background:rgba(224,82,82,0.15);color:#e05252;border:1px solid rgba(224,82,82,0.3);">
+            <span class="material-icons-outlined" style="font-size:16px;">delete</span> Delete
+          </button>
+          ` : '<div></div>'}
+          <div style="display:flex;gap:8px;">
+            <button type="button" class="settings-btn" id="wr-cancel-btn">Cancel</button>
+            <button type="button" class="settings-btn settings-btn-primary" id="wr-save-btn">Save Changes</button>
+          </div>
+        </div>
+      </div>`;
+
+    document.body.appendChild(modal);
+
+    const nameInput = modal.querySelector("#wr-name-input");
+    const exeInput = modal.querySelector("#wr-exe-input");
+    const autoSwitchInput = modal.querySelector("#wr-auto-switch-input");
+    const latchInput = modal.querySelector("#wr-latch-input");
+    const browseBtn = modal.querySelector("#wr-exe-browse");
+    const delModalBtn = modal.querySelector("#wr-delete-btn");
+
+    if (delModalBtn) {
+      delModalBtn.addEventListener("click", () => {
+        closeModal();
+        handleDeleteWorkspace();
+      });
+    }
+
+    if (browseBtn) {
+      browseBtn.addEventListener("click", async () => {
+        try {
+          const res = await apiFetch(`${API_BASE}/api/dialog/browse?type=exe`);
+          const data = await res.json();
+          if (data && data.path && exeInput) {
+            exeInput.value = data.path;
+          }
+        } catch (_) {}
+      });
+    }
+
+    const closeModal = () => modal.remove();
+    modal.querySelector("#wr-close").addEventListener("click", closeModal);
+    modal.querySelector("#wr-cancel-btn").addEventListener("click", closeModal);
+
+    modal.querySelector("#wr-save-btn").addEventListener("click", () => {
+      const newName = (nameInput.value || "").trim() || currentName;
+      if (prof) {
+        prof.name = newName;
+        if (exeInput) prof.exe = (exeInput.value || "").trim();
+        if (autoSwitchInput) prof.auto_switch = !!autoSwitchInput.checked;
+        if (latchInput) prof.latch_while_running = !!latchInput.checked;
+      } else if (isDefault) {
+        if (!panelDraft) panelDraft = {};
+        panelDraft.default_profile_name = newName;
+      }
+      setPanelDirty(true);
+      savePanelLive();
+      closeModal();
+      renderCommandCentre();
+      syncHeaderControls();
+    });
+
+    setTimeout(() => {
+      if (nameInput) {
+        nameInput.focus();
+        nameInput.select();
+      }
+    }, 100);
+  }
+
+  function handleDeleteWorkspace() {
+    if (panelProfileSel === "__default__") {
+      alert("The default Desktop workspace cannot be deleted.");
+      return;
+    }
+    const profiles = (panelDraft && panelDraft.panel_profiles) || [];
+    const prof = profiles.find((x) => x && x.id === panelProfileSel);
+    const pName = prof ? (prof.name || prof.id) : "this workspace";
+
+    let oldDelModal = document.getElementById("workspace-delete-modal");
+    if (oldDelModal) oldDelModal.remove();
+
+    const modal = document.createElement("div");
+    modal.id = "workspace-delete-modal";
+    modal.className = "modal-overlay";
+    modal.style.cssText = "display:flex;align-items:center;justify-content:center;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9999;backdrop-filter:blur(4px);";
+    modal.innerHTML = `
+      <div class="modal-box" style="max-width:400px;width:90%;background:var(--bg-panel, #12161f);border:1px solid rgba(255,255,255,0.12);border-radius:var(--radius-panel, 12px);box-shadow:0 12px 40px rgba(0,0,0,0.6);overflow:hidden;">
+        <div class="modal-header" style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid rgba(255,255,255,0.08);">
+          <div style="font-size:15px;font-weight:700;color:var(--alert, #e05252);display:flex;align-items:center;gap:6px;">
+            <span class="material-icons-outlined">warning</span> Delete Workspace
+          </div>
+          <button type="button" class="modal-close" id="wd-close" style="background:none;border:none;color:var(--fg-dim);font-size:20px;cursor:pointer;">&times;</button>
+        </div>
+        <div class="modal-body" style="padding:20px;">
+          <p style="font-size:13px;line-height:1.5;color:var(--fg, #e0e4ec);margin:0;">
+            Are you sure you want to delete <strong>${esc(pName)}</strong>? This will remove all buttons and layout for this workspace and cannot be undone.
+          </p>
+        </div>
+        <div class="modal-footer" style="padding:14px 20px;display:flex;justify-content:flex-end;gap:8px;border-top:1px solid rgba(255,255,255,0.08);background:rgba(0,0,0,0.2);">
+          <button type="button" class="settings-btn" id="wd-cancel-btn">Cancel</button>
+          <button type="button" class="settings-btn settings-btn-danger" id="wd-confirm-btn" style="background:#e05252;color:#fff;border:none;">Delete Workspace</button>
+        </div>
+      </div>`;
+
+    document.body.appendChild(modal);
+
+    const closeDel = () => modal.remove();
+    modal.querySelector("#wd-close").addEventListener("click", closeDel);
+    modal.querySelector("#wd-cancel-btn").addEventListener("click", closeDel);
+    modal.querySelector("#wd-confirm-btn").addEventListener("click", () => {
+      panelDraft.panel_profiles = profiles.filter((x) => x && x.id !== panelProfileSel);
+      panelProfileSel = "__default__";
+      setPanelDirty(true);
+      savePanelLive();
+      closeDel();
+      renderCommandCentre();
+      syncHeaderControls();
+    });
+  }
+
+  function syncHeaderControls() {
+    const profSelWrap = document.getElementById("header-profile-selector");
+    const modeBtn = document.getElementById("header-mode-btn");
+
+    if (currentPage === "command" || currentPage === "dashboard") {
+      if (profSelWrap) {
+        profSelWrap.style.display = "inline-flex";
+        const sel = document.getElementById("header-profile-select");
+        if (sel) {
+          const profilesList = (panelDraft && panelDraft.panel_profiles) || [];
+          const defName = (panelDraft && panelDraft.default_profile_name) || "Desktop";
+          let optsHtml = `<option value="__default__" ${panelProfileSel === '__default__' ? 'selected' : ''}>${esc(defName)}</option>`;
+          profilesList.forEach((p) => {
+            if (p && p.id) {
+              optsHtml += `<option value="${esc(p.id)}" ${panelProfileSel === p.id ? 'selected' : ''}>${esc(p.name || p.id)}</option>`;
+            }
+          });
+          optsHtml += `<option value="__new__">+ New Workspace...</option>`;
+          sel.innerHTML = optsHtml;
+          sel.onchange = function () {
+            if (this.value === "__new__") {
+              this.value = panelProfileSel;
+              openWorkspaceTemplateModal();
+              return;
+            }
+            panelProfileSel = this.value;
+            _ccManualSelectionOverride = this.value;
+            renderCommandCentre();
+            savePanelLive();
+          };
+        }
+
+        // Manage Workspace Buttons in Header (always visible for easy workspace management)
+        let renBtn = document.getElementById("header-profile-rename-btn");
+        let delBtn = document.getElementById("header-profile-delete-btn");
+        if (!renBtn) {
+          renBtn = document.createElement("button");
+          renBtn.type = "button";
+          renBtn.id = "header-profile-rename-btn";
+          renBtn.className = "header-action-icon-btn";
+          renBtn.title = "Rename workspace";
+          renBtn.innerHTML = '<span class="material-icons-outlined">drive_file_rename_outline</span>';
+          renBtn.onclick = () => openRenameWorkspaceModal();
+          profSelWrap.appendChild(renBtn);
+        } else {
+          renBtn.style.display = "inline-flex";
+          renBtn.onclick = () => openRenameWorkspaceModal();
+        }
+
+        if (panelProfileSel !== "__default__") {
+          if (!delBtn) {
+            delBtn = document.createElement("button");
+            delBtn.type = "button";
+            delBtn.id = "header-profile-delete-btn";
+            delBtn.className = "header-action-icon-btn danger";
+            delBtn.title = "Delete workspace";
+            delBtn.innerHTML = '<span class="material-icons-outlined">delete_outline</span>';
+            delBtn.onclick = () => handleDeleteWorkspace();
+            profSelWrap.appendChild(delBtn);
+          } else {
+            delBtn.style.display = "inline-flex";
+            delBtn.onclick = () => handleDeleteWorkspace();
+          }
+        } else if (delBtn) {
+          delBtn.style.display = "none";
+        }
+      }
+      if (modeBtn) {
+        modeBtn.style.display = "inline-flex";
+        if (workspaceMode === "design") {
+          modeBtn.className = "header-mode-btn active";
+          modeBtn.innerHTML = `<span class="material-icons-outlined">check</span><span class="header-mode-btn-text">Done</span>`;
+          modeBtn.title = "Finish editing and return to Use mode";
+        } else {
+          modeBtn.className = "header-mode-btn";
+          modeBtn.innerHTML = `<span class="material-icons-outlined">edit</span><span class="header-mode-btn-text">Edit workspace</span>`;
+          modeBtn.title = "Customize buttons and layout";
+        }
+        modeBtn.onclick = function () {
+          workspaceMode = (workspaceMode === "use" ? "design" : "use");
+          renderCommandCentre();
+        };
+      }
+    } else {
+      if (profSelWrap) profSelWrap.style.display = "none";
+      if (modeBtn) modeBtn.style.display = "none";
+    }
+  }
+
+  let _ccLastForegroundApp = null;
+  let _ccLatchedProfileId = null;
+  let _ccManualSelectionOverride = null;
+
+  const NEUTRAL_FOREGROUND_EXES = new Set([
+    "",
+    "iris",
+    "python",
+    "pythonw",
+    "msedge",
+    "webview2",
+    "electron",
+    "explorer",
+    "searchhost",
+    "startmenuexperiencehost",
+    "shellexperiencehost",
+    "taskhostw",
+    "lockapp",
+    "textinputhost",
+    "applicationframehost",
+    "systemsettings",
+    "taskmgr",
+  ]);
+
+  function checkCommandCentreAutoSwitch(data) {
+    if (!data) return;
+    if (currentPage !== "command" && currentPage !== "dashboard") return;
+    if (workspaceMode === "design") return; // Safety: Never interrupt active design mode
+
+    const rawFg = (data.foreground_app || "").trim();
+    const fg = rawFg.toLowerCase().replace(/\.exe$/i, "").split(/[\\\/]/).pop();
+    const prevFg = _ccLastForegroundApp;
+    _ccLastForegroundApp = fg;
+
+    const profiles = ((panelDraft && panelDraft.panel_profiles) || (panelLive && panelLive.config && panelLive.config.panel_profiles) || []).filter((p) => p && p.enabled !== false);
+    const activeIds = data.active_profiles || [];
+
+    // Initialize latched ID if active profile already matches a running game on cold load
+    if (!_ccLatchedProfileId && panelProfileSel !== "__default__" && activeIds.includes(panelProfileSel)) {
+      _ccLatchedProfileId = panelProfileSel;
+    }
+
+    // Find profile matching current foreground application
+    let matchedProf = null;
+    if (fg) {
+      matchedProf = profiles.find((p) => {
+        if (p.auto_switch === false) return false;
+        const pexe = String(p.exe || "").toLowerCase().trim().replace(/\.exe$/i, "").split(/[\\\/]/).pop();
+        return pexe && (pexe === fg || fg.indexOf(pexe) !== -1 || pexe.indexOf(fg) !== -1);
+      });
+    }
+
+    if (matchedProf) {
+      const isNewForeground = (fg !== prevFg);
+      if (isNewForeground) {
+        _ccManualSelectionOverride = null; // Refocusing the game clears any manual override
+      }
+
+      if (!_ccManualSelectionOverride && panelProfileSel !== matchedProf.id) {
+        panelProfileSel = matchedProf.id;
+        _ccLatchedProfileId = matchedProf.id;
+        if (matchedProf.theme && typeof window.applyTheme === "function") {
+          window.applyTheme(matchedProf.theme);
+        }
+        renderCommandCentre();
+        syncHeaderControls();
+        return;
+      }
+      _ccLatchedProfileId = matchedProf.id;
+      return;
+    }
+
+    // No profile matches current foreground application
+    // 1. If foreground is Iris itself or Windows shell/system, preserve current latched game workspace
+    if (NEUTRAL_FOREGROUND_EXES.has(fg)) {
+      if (_ccLatchedProfileId && !activeIds.includes(_ccLatchedProfileId)) {
+        // Latched game process has terminated
+        _ccLatchedProfileId = null;
+        _ccManualSelectionOverride = null;
+        if (panelProfileSel !== "__default__") {
+          panelProfileSel = "__default__";
+          renderCommandCentre();
+          syncHeaderControls();
+        }
+      }
+      return;
+    }
+
+    // 2. Foreground is an unlinked third-party app
+    if (_ccLatchedProfileId) {
+      const latchedProf = profiles.find((p) => p.id === _ccLatchedProfileId);
+      const isStillRunning = activeIds.includes(_ccLatchedProfileId);
+      const shouldUnlatchOnBlur = latchedProf && (latchedProf.latch_while_running === false);
+
+      if (!isStillRunning || shouldUnlatchOnBlur) {
+        _ccLatchedProfileId = null;
+        _ccManualSelectionOverride = null;
+        if (panelProfileSel !== "__default__") {
+          panelProfileSel = "__default__";
+          renderCommandCentre();
+          syncHeaderControls();
+        }
+      }
+    }
+  }
+
+  function updateCommandCentreTelemetry() {
+    if (currentPage !== "command" && currentPage !== "dashboard") return;
+    if (panelLive) {
+      checkCommandCentreAutoSwitch(panelLive);
+    }
+    const gauges = (panelLive && panelLive.gauges) || {};
+    const eStates = (panelLive && panelLive.entity_states) || {};
+
+    let cpuVal = gauges.cpu_pct;
+    if ((cpuVal === undefined || cpuVal === null || cpuVal === 0) && eStates["pc_stats.cpu_usage"]) {
+      const eVal = eStates["pc_stats.cpu_usage"].value;
+      if (eVal !== undefined && eVal !== null) cpuVal = eVal;
+    }
+    const cpuPct = (cpuVal !== undefined && cpuVal !== null && cpuVal !== "--") ? Math.round(Number(cpuVal)) : "--";
+
+    let ramVal = gauges.ram_pct;
+    if ((ramVal === undefined || ramVal === null || ramVal === 0) && eStates["pc_stats.ram_usage"]) {
+      const eVal = eStates["pc_stats.ram_usage"].value;
+      if (eVal !== undefined && eVal !== null) ramVal = eVal;
+    }
+    const ramPct = (ramVal !== undefined && ramVal !== null && ramVal !== "--") ? Math.round(Number(ramVal)) : "--";
+
+    let gpuTemp = gauges.gpu_temp || gauges.cpu_temp || null;
+    if (!gpuTemp && eStates["pc_stats.gpu_temp"]) {
+      gpuTemp = eStates["pc_stats.gpu_temp"].value;
+    }
+
+    let fps = gauges.fps || null;
+    if (!fps && eStates["pc_stats.fps"]) {
+      fps = eStates["pc_stats.fps"].value;
+    }
+
+    const masterVol = typeof (panelLive && panelLive.master_volume) === "number" ? Math.round(panelLive.master_volume) : 50;
+
+    const elCpuVal = document.getElementById("cc-cpu-val");
+    const elCpuBar = document.getElementById("cc-cpu-bar");
+    if (elCpuVal) elCpuVal.textContent = (cpuPct !== "--" ? cpuPct + "%" : "--");
+    if (elCpuBar && cpuPct !== "--") elCpuBar.style.width = Math.min(100, Math.max(0, cpuPct)) + "%";
+
+    const elRamVal = document.getElementById("cc-ram-val");
+    const elRamBar = document.getElementById("cc-ram-bar");
+    if (elRamVal) elRamVal.textContent = (ramPct !== "--" ? ramPct + "%" : "--");
+    if (elRamBar && ramPct !== "--") elRamBar.style.width = Math.min(100, Math.max(0, ramPct)) + "%";
+
+    const elGpuVal = document.getElementById("cc-gpu-val");
+    if (elGpuVal) elGpuVal.textContent = (gpuTemp ? Math.round(gpuTemp) + "°C" : "—") + (fps && Number(fps) > 0 ? " · " + Math.round(Number(fps)) + " FPS" : "");
+
+    const elVolPct = document.getElementById("cc-vol-pct");
+    const elVolSlider = document.getElementById("cc-master-vol-slider");
+    if (elVolPct) elVolPct.textContent = masterVol + "%";
+    if (elVolSlider && !elVolSlider.matches(":active")) elVolSlider.value = masterVol;
+  }
+
+  function renderCommandCentre() {
+    const cur = panelProfileCurrent();
+    const activeProf = cur.profile;
+    const defaultName = (panelDraft && panelDraft.default_profile_name) || "Desktop";
+    const profName = activeProf ? (activeProf.name || activeProf.id) : defaultName;
+    const boardSlots = cur.board || [];
     const connected = deviceStatus.connected;
     const port = deviceStatus.port || "—";
 
-    const plugins = Object.keys(pluginsConfig).filter((p) => p !== "vision");
-    const pluginNames = {};
-    const pluginIcons = {};
-    plugins.forEach((p) => {
-      pluginNames[p] = pluginsConfig[p].display_name || p;
-      pluginIcons[p] = (pluginsConfig[p] || {}).icon || "extension";
-    });
+    const userName = featureConfig.user_name || "";
+    const greeting = featureConfig.feature_greeting !== false
+      ? `Welcome back${userName ? ", " + esc(userName) : ""}`
+      : "Active Workspace";
 
-    const pluginCards = plugins.map((p) => {
-      const cfg = pluginsConfig[p] || {};
-      const statusLabel = cfg.status_label || "Unknown";
-      const statusCode = cfg.status_code || "inactive";
-      const color = STATUS_COLORS[statusCode] || "var(--fg-dim)";
-      return `
-        <div class="dash-plugin" data-name="${esc(p)}">
-          <div class="dash-plugin-icon">
-            <span class="material-icons-outlined">${pluginIcons[p]}</span>
-          </div>
-          <div class="dash-plugin-info">
-            <span class="dash-plugin-name">${esc(pluginNames[p])}</span>
-            <span class="dash-plugin-status" style="color:${color}">${esc(statusLabel)}</span>
-          </div>
-          <span class="material-icons-outlined plugin-tile-arrow" style="margin-left:auto">chevron_right</span>
+    // Telemetry initial values
+    const gauges = (panelLive && panelLive.gauges) || {};
+    const eStates = (panelLive && panelLive.entity_states) || {};
+
+    let initCpu = gauges.cpu_pct;
+    if ((initCpu === undefined || initCpu === null || initCpu === 0) && eStates["pc_stats.cpu_usage"]) {
+      initCpu = eStates["pc_stats.cpu_usage"].value;
+    }
+    const cpuPct = (initCpu !== undefined && initCpu !== null && initCpu !== "--") ? Math.round(Number(initCpu)) : "--";
+
+    let initRam = gauges.ram_pct;
+    if ((initRam === undefined || initRam === null || initRam === 0) && eStates["pc_stats.ram_usage"]) {
+      initRam = eStates["pc_stats.ram_usage"].value;
+    }
+    const ramPct = (initRam !== undefined && initRam !== null && initRam !== "--") ? Math.round(Number(initRam)) : "--";
+
+    let gpuTemp = gauges.gpu_temp || gauges.cpu_temp || null;
+    if (!gpuTemp && eStates["pc_stats.gpu_temp"]) gpuTemp = eStates["pc_stats.gpu_temp"].value;
+
+    let fps = gauges.fps || null;
+    if (!fps && eStates["pc_stats.fps"]) fps = eStates["pc_stats.fps"].value;
+
+    const masterVol = typeof (panelLive && panelLive.master_volume) === "number" ? Math.round(panelLive.master_volume) : 50;
+
+    // Active media
+    const mediaVol = (panelLive && panelLive.volume) || {};
+    const mediaApp = mediaVol.app || null;
+
+    // Build Action Deck grid HTML
+    let deckHtml = "";
+    const activeSlots = boardSlots.filter((s) => s && s.type !== "EMPTY");
+
+    // Preload any MDI icons for the active board
+    preloadBoardIcons(boardSlots);
+
+    if (boardSlots.length === 0 || (activeSlots.length === 0 && workspaceMode === "use")) {
+      deckHtml = `
+        <div class="cc-empty-deck">
+          <span class="material-icons-outlined" style="font-size:36px;color:var(--neon)">space_dashboard</span>
+          <div style="font-size:14px;font-weight:700;color:#ffffff">Ready to personalize ${esc(profName)}</div>
+          <p style="font-size:12px;color:var(--fg-dim);margin:0;max-width:320px">
+            Your workspace is ready. Click "Edit workspace" to assign your primary tools, shortcuts, or integrations.
+          </p>
+          <button type="button" class="header-mode-btn active" id="cc-starter-edit-btn" style="margin-top:8px">
+            <span class="material-icons-outlined">add</span> Customize Workspace
+          </button>
         </div>`;
-    }).join("");
+    } else {
+      const displayCount = Math.max(8, Math.min(16, boardSlots.length || 8));
+      deckHtml = '<div class="cc-deck-grid">';
+      for (let i = 0; i < displayCount; i++) {
+        const slot = boardSlots[i] || { type: "EMPTY" };
+        const isEmpty = !slot || slot.type === "EMPTY";
+        if (isEmpty && workspaceMode === "use") {
+          continue;
+        }
+        const sName = slot.name || (isEmpty ? "Add Action" : "Slot " + (i + 1));
+        const showLabel = workspaceMode === "design" || (slot.show_name !== false && !isEmpty);
+
+        let iconHtml = "";
+        if (slot.use_app_icon && (slot.app_icon_path || slot.shortcut_path)) {
+          const iconPath = slot.app_icon_path || slot.shortcut_path;
+          iconHtml = `<img class="cc-slot-img" src="${API_BASE}/api/panel/icon?path=${encodeURIComponent(iconPath)}" alt="" onerror="this.style.display='none'">`;
+        }
+        if (!iconHtml) {
+          const sIcon = slot.icon || (isEmpty ? "add" : "touch_app");
+          const char = mdiChar(sIcon);
+          if (char) {
+            iconHtml = `<span class="md" data-md="${esc(sIcon)}">${esc(char)}</span>`;
+          } else if (sIcon.includes("-") || sIcon.startsWith("mdi:") || sIcon.startsWith("mdi-") || !["add", "touch_app", "space_dashboard", "photo_library", "layers", "tune", "menu", "folder"].includes(sIcon)) {
+            // Pending MDI icon to be filled by preload/applyMdiIcons
+            iconHtml = `<span class="md" data-md="${esc(sIcon)}"></span>`;
+          } else {
+            iconHtml = `<span class="material-icons-outlined">${esc(sIcon)}</span>`;
+          }
+        }
+
+        deckHtml += `
+          <button type="button" class="cc-slot-btn ${workspaceMode === 'design' ? 'is-design' : ''} ${showLabel ? 'has-label' : 'no-label'}" data-idx="${i}" style="${!isEmpty && slot.color ? 'border-bottom: 2px solid ' + esc(slot.color) : ''}">
+            ${workspaceMode === 'design' ? `<span class="cc-slot-badge">${i + 1}</span>` : ''}
+            <div class="cc-slot-icon" style="${slot.color ? 'color:' + esc(slot.color) : ''}">${iconHtml}</div>
+            ${showLabel ? `<span class="cc-slot-label">${esc(sName)}</span>` : ''}
+          </button>`;
+      }
+      deckHtml += '</div>';
+    }
 
     main.innerHTML = `
       <header>
@@ -13170,76 +14170,449 @@
           <button class="hamburger" id="hamburger" aria-label="Menu">
             <span class="material-icons-outlined">menu</span>
           </button>
-          <div>
-            <h1>Dashboard</h1>
-          </div>
+          <h1 id="header-title">Iris</h1>
         </div>
-        <button class="done-btn" id="done-btn">Close</button>
+        <div class="header-actions" id="header-actions">
+          <div class="header-profile-selector" id="header-profile-selector">
+            <select class="header-profile-select" id="header-profile-select" aria-label="Select workspace profile"></select>
+          </div>
+          <button type="button" class="header-mode-btn" id="header-mode-btn" title="Toggle workspace mode"></button>
+          <button class="done-btn" id="done-btn">Close</button>
+        </div>
       </header>
-      <section class="content dash-content">
-        <div class="dash-hero">
-          <div class="dash-hero-text">
-            ${greeting}
-            <span class="dash-status-line">
-              <span class="dash-status-dot" style="background:${connected ? "var(--neon-grn)" : "var(--neon-red)"}"></span>
-              Iris Device: ${connected ? "Online" : "Offline"} &bull; ${esc(port)}
+      <section class="content cc-content">
+        <div class="cc-hero-bar">
+          <div class="cc-hero-left">
+            <span class="cc-profile-badge">
+              <span class="material-icons-outlined">space_dashboard</span>
+              ${esc(profName)} Workspace
+            </span>
+            <button type="button" class="cc-hero-btn" id="cc-hero-rename-btn" title="Rename workspace">
+              <span class="material-icons-outlined">drive_file_rename_outline</span> Rename
+            </button>
+            ${panelProfileSel !== '__default__' ? `
+            <button type="button" class="cc-hero-btn danger" id="cc-hero-delete-btn" title="Delete workspace">
+              <span class="material-icons-outlined">delete_outline</span> Delete
+            </button>
+            ` : ''}
+            ${activeProf && activeProf.exe ? `<span class="cc-tag-chip" title="${activeProf.auto_switch !== false ? 'Auto-switches on focus' : 'Manual switch only'}"><span class="material-icons-outlined">sports_esports</span> Linked: ${esc(activeProf.exe.split(/[\\\/]/).pop())}${activeProf.auto_switch !== false ? ' (Auto)' : ''}</span>` : ''}
+            <span class="cc-tag-chip">
+              <span class="dash-status-dot" style="background:${connected ? 'var(--neon-grn)' : 'var(--fg-dim)'}"></span>
+              ${connected ? 'Hardware Display Connected (' + esc(port) + ')' : 'Iris Ready'}
             </span>
           </div>
+          <div class="cc-hero-right">
+            <span class="cc-mode-indicator ${workspaceMode}">${workspaceMode === 'design' ? 'DESIGN MODE' : 'USE MODE'}</span>
+          </div>
         </div>
-        <div class="dash-plugins">
-          ${pluginCards || '<div class="card"><p style="color:var(--fg-dim);margin:0">No plugins detected</p></div>'}
+
+        <div class="cc-grid">
+          <!-- Column 1: Action Deck & Notes -->
+          <div style="display:flex;flex-direction:column;gap:20px;">
+            <div class="cc-card cc-deck-card">
+              <div class="cc-card-header">
+                <span class="cc-card-title">
+                  <span class="material-icons-outlined">grid_view</span> Action Deck
+                </span>
+                <span class="cc-card-meta">${activeSlots.length} active controls</span>
+              </div>
+              ${deckHtml}
+            </div>
+
+            <div class="cc-card cc-capture-card">
+              <div class="cc-card-header">
+                <span class="cc-card-title">
+                  <span class="material-icons-outlined">sticky_note_2</span> Quick Note &amp; Capture
+                </span>
+                <span class="cc-card-meta"><a href="#" id="cc-open-lib-link" style="color:var(--neon);text-decoration:none;font-weight:600">Open Library &rarr;</a></span>
+              </div>
+              <div class="cc-note-form">
+                <input type="text" class="cc-note-input" id="cc-quick-note-input" placeholder="Type a fast note or scratchpad memo...">
+                <button type="button" class="cc-note-save-btn" id="cc-quick-note-save">Save Note</button>
+              </div>
+              <button type="button" class="cc-tab-btn" id="cc-snap-btn" style="width:100%;justify-content:center;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:var(--radius-control);padding:8px">
+                <span class="material-icons-outlined" style="font-size:16px">camera_alt</span> Instant Screenshot
+              </button>
+            </div>
+          </div>
+
+          <!-- Column 2: Live Telemetry, Audio, Now Playing -->
+          <div style="display:flex;flex-direction:column;gap:20px;">
+            <div class="cc-card cc-telemetry-card">
+              <div class="cc-card-header">
+                <span class="cc-card-title">
+                  <span class="material-icons-outlined">speed</span> Telemetry &amp; Audio
+                </span>
+                <span class="cc-card-meta" id="cc-gpu-val">${gpuTemp ? gpuTemp + "°C" : "—"}${fps && Number(fps) > 0 ? " &bull; " + Math.round(Number(fps)) + " FPS" : ""}</span>
+              </div>
+              <div class="cc-meter-group">
+                <div class="cc-meter-row">
+                  <div class="cc-meter-labels">
+                    <span>CPU Usage</span>
+                    <span id="cc-cpu-val">${cpuPct !== "--" ? cpuPct + "%" : "--"}</span>
+                  </div>
+                  <div class="cc-meter-track">
+                    <div class="cc-meter-fill" id="cc-cpu-bar" style="width:${cpuPct !== '--' ? cpuPct : 0}%"></div>
+                  </div>
+                </div>
+                <div class="cc-meter-row">
+                  <div class="cc-meter-labels">
+                    <span>Memory Usage</span>
+                    <span id="cc-ram-val">${ramPct !== "--" ? ramPct + "%" : "--"}</span>
+                  </div>
+                  <div class="cc-meter-track">
+                    <div class="cc-meter-fill" id="cc-ram-bar" style="width:${ramPct !== '--' ? ramPct : 0}%"></div>
+                  </div>
+                </div>
+              </div>
+
+              <div style="display:flex;flex-direction:column;gap:6px;margin-top:6px;">
+                <div style="font-size:12px;font-weight:600;color:var(--fg-dim);display:flex;justify-content:space-between">
+                  <span>Master Volume</span>
+                  <span id="cc-vol-pct">${masterVol}%</span>
+                </div>
+                <div class="cc-volume-wrap">
+                  <button type="button" class="cc-vol-mute-btn" id="cc-vol-mute-btn" style="background:none;border:none;color:var(--fg);cursor:pointer;display:flex">
+                    <span class="material-icons-outlined" id="cc-vol-icon" style="font-size:18px">volume_up</span>
+                  </button>
+                  <input type="range" min="0" max="100" value="${masterVol}" class="cc-volume-slider" id="cc-master-vol-slider">
+                </div>
+              </div>
+            </div>
+
+            <div class="cc-card cc-media-card">
+              <div class="cc-card-header">
+                <span class="cc-card-title">
+                  <span class="material-icons-outlined">music_note</span> Now Playing
+                </span>
+                <span class="cc-card-meta">${mediaApp ? esc(mediaApp) : "Desktop Audio"}</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:12px;background:rgba(255,255,255,0.03);padding:12px;border-radius:var(--radius-control);border:1px solid rgba(255,255,255,0.06)">
+                <span class="material-icons-outlined" style="font-size:28px;color:var(--neon)">album</span>
+                <div style="flex:1;min-width:0">
+                  <div style="font-size:13px;font-weight:700;color:#ffffff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+                    ${mediaApp ? esc(mediaApp) : "No active playback"}
+                  </div>
+                  <div style="font-size:11px;color:var(--fg-dim)">Media playback controls</div>
+                </div>
+                <div style="display:flex;gap:4px">
+                  <button type="button" class="cc-tab-btn" id="cc-media-prev" style="padding:6px"><span class="material-icons-outlined" style="font-size:18px">skip_previous</span></button>
+                  <button type="button" class="cc-tab-btn" id="cc-media-play" style="padding:6px"><span class="material-icons-outlined" style="font-size:18px">play_arrow</span></button>
+                  <button type="button" class="cc-tab-btn" id="cc-media-next" style="padding:6px"><span class="material-icons-outlined" style="font-size:18px">skip_next</span></button>
+                </div>
+              </div>
+            </div>
+
+            <div class="cc-card cc-activity-card">
+              <div class="cc-card-header">
+                <span class="cc-card-title">
+                  <span class="material-icons-outlined">notifications</span> Activity &amp; Alarms
+                </span>
+                <span class="cc-card-meta"><a href="#" id="cc-open-act-link" style="color:var(--neon);text-decoration:none;font-weight:600">View all &rarr;</a></span>
+              </div>
+              <div style="font-size:12px;color:var(--fg-dim);display:flex;flex-direction:column;gap:8px">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <span class="material-icons-outlined" style="font-size:16px;color:var(--neon)">alarm</span>
+                  <span>${(alarms || []).length} active scheduled alarms</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px">
+                  <span class="material-icons-outlined" style="font-size:16px;color:var(--neon)">notifications</span>
+                  <span>${((notifData && notifData.notifications) || []).length} notifications in inbox</span>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </section>`;
 
-    main.querySelectorAll(".dash-plugin").forEach((el) => {
-      el.addEventListener("click", () => {
-        const plgName = el.dataset.name;
-        if (pluginsConfig[plgName] && (pluginsConfig[plgName].is_hardware || plgName === "ha" || plgName === "openrgb" || plgName === "rgb" || plgName === "matrix_display" || plgName === "pc_stats")) {
-          selectedHardwarePlugin = plgName;
-          currentPage = "hardware";
-          navItems.forEach((n) => n.classList.toggle("active", n.dataset.page === "hardware"));
-          fetchConfig();
-          renderPage();
-          return;
-        }
-        // Check if there is a profile matching this plugin
-        const profilesList = (panelDraft && panelDraft.panel_profiles) || [];
-        const norm = (s) => (s || "").toLowerCase().replace(/[\s_\-\.]/g, "").replace("exe", "");
-        const targetNorm = norm(plgName);
-        const match = profilesList.find((prof) => {
-          if (!prof) return false;
-          if (prof.id === `prof_${plgName}` || prof.id === plgName) return true;
-          const profExeNorm = norm(prof.exe);
-          const profNameNorm = norm(prof.name);
-          const profIdNorm = norm(prof.id);
-          return (profExeNorm && (profExeNorm.includes(targetNorm) || targetNorm.includes(profExeNorm))) ||
-                 (profNameNorm && (profNameNorm.includes(targetNorm) || targetNorm.includes(profNameNorm))) ||
-                 (profIdNorm && (profIdNorm.includes(targetNorm) || targetNorm.includes(profIdNorm)));
-        });
+    syncHeaderControls();
+    rebindHamburger();
+    applyMdiIcons(main);
 
-        if (match) {
-          panelProfileSel = match.id;
-          profilesViewMode = "edit";
-          currentPage = "profiles";
+    // Wire Slot Clicks
+    main.querySelectorAll(".cc-slot-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const idx = parseInt(btn.dataset.idx, 10);
+        const slot = boardSlots[idx] || { type: "EMPTY" };
+        if (workspaceMode === "design") {
+          panelEdit = { scope: "board", index: idx, path: [] };
+          renderSlotEditorPage();
         } else {
-          selectedPlugin = plgName;
-          currentPage = "plugins";
+          if (slot && slot.type !== "EMPTY") {
+            runSlotAction(slot);
+          }
         }
-        fetchConfig();
-        renderPage();
       });
     });
 
-    var dashDoneBtn = document.getElementById("done-btn");
-    if (dashDoneBtn) {
-      dashDoneBtn.addEventListener("click", () => {
-        if (typeof window.pywebview !== "undefined" && window.pywebview.api && window.pywebview.api.close_window) {
-          window.pywebview.api.close_window();
+    const starterBtn = document.getElementById("cc-starter-edit-btn");
+    if (starterBtn) {
+      starterBtn.addEventListener("click", () => {
+        workspaceMode = "design";
+        renderCommandCentre();
+      });
+    }
+
+    const heroRen = document.getElementById("cc-hero-rename-btn");
+    if (heroRen) heroRen.onclick = () => openRenameWorkspaceModal();
+    const heroDel = document.getElementById("cc-hero-delete-btn");
+    if (heroDel) heroDel.onclick = () => handleDeleteWorkspace();
+
+    // Wire Quick Note
+    const noteInput = document.getElementById("cc-quick-note-input");
+    const noteSaveBtn = document.getElementById("cc-quick-note-save");
+    function handleSaveQuickNote() {
+      if (!noteInput) return;
+      const text = (noteInput.value || "").trim();
+      if (!text) return;
+      openNotepad(null, "general", false, "Quick Note", text);
+      noteInput.value = "";
+    }
+    if (noteSaveBtn) noteSaveBtn.addEventListener("click", handleSaveQuickNote);
+    if (noteInput) {
+      noteInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          handleSaveQuickNote();
         }
       });
     }
 
-    rebindHamburger();
+    // Wire Screenshot button
+    const snapBtn = document.getElementById("cc-snap-btn");
+    if (snapBtn) {
+      snapBtn.addEventListener("click", () => {
+        doScreenshotRequest({ type: "SCREENSHOT", entity: "system.screenshot" });
+      });
+    }
+
+    // Wire Volume slider
+    const volSlider = document.getElementById("cc-master-vol-slider");
+    if (volSlider) {
+      volSlider.addEventListener("input", (e) => {
+        const val = parseInt(e.target.value, 10);
+        const pct = document.getElementById("cc-vol-pct");
+        if (pct) pct.textContent = val + "%";
+        apiFetch(`${API_BASE}/api/panel/action`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "master_volume", value: val }),
+        }).catch(() => {});
+      });
+    }
+
+    const muteBtn = document.getElementById("cc-vol-mute-btn");
+    if (muteBtn) {
+      muteBtn.addEventListener("click", () => {
+        apiFetch(`${API_BASE}/api/panel/action`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "master_mute" }),
+        }).catch(() => {});
+      });
+    }
+
+    // Wire Media playback buttons
+    const prevBtn = document.getElementById("cc-media-prev");
+    if (prevBtn) {
+      prevBtn.addEventListener("click", () => {
+        apiFetch(`${API_BASE}/api/panel/action`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "media_prev" }),
+        }).catch(() => {});
+      });
+    }
+    const playBtn = document.getElementById("cc-media-play");
+    if (playBtn) {
+      playBtn.addEventListener("click", () => {
+        apiFetch(`${API_BASE}/api/panel/action`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "media_play_pause" }),
+        }).catch(() => {});
+      });
+    }
+    const nextBtn = document.getElementById("cc-media-next");
+    if (nextBtn) {
+      nextBtn.addEventListener("click", () => {
+        apiFetch(`${API_BASE}/api/panel/action`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "media_next" }),
+        }).catch(() => {});
+      });
+    }
+
+    // Wire Links
+    const openLibLink = document.getElementById("cc-open-lib-link");
+    if (openLibLink) {
+      openLibLink.addEventListener("click", (e) => {
+        e.preventDefault();
+        navigateToPage("library");
+      });
+    }
+    const openActLink = document.getElementById("cc-open-act-link");
+    if (openActLink) {
+      openActLink.addEventListener("click", (e) => {
+        e.preventDefault();
+        navigateToPage("activity");
+      });
+    }
+  }
+
+  function renderActivityPage() {
+    if (activityTab === "alarms") {
+      renderAlarms();
+    } else {
+      renderNotifications();
+    }
+    injectActivityTabs();
+  }
+
+  function injectActivityTabs() {
+    const header = main.querySelector("header");
+    if (!header) return;
+    const existing = document.getElementById("cc-activity-tab-bar");
+    if (existing) existing.remove();
+
+    const titleEl = header.querySelector("h1");
+    if (titleEl) titleEl.textContent = "Activity";
+    const subEl = header.querySelector("p");
+    if (subEl) subEl.textContent = activityTab === "alarms" ? "Scheduled Alarms & Timers" : "Notifications & Event Inbox";
+
+    const tabBar = document.createElement("div");
+    tabBar.id = "cc-activity-tab-bar";
+    tabBar.className = "cc-tab-bar";
+    tabBar.style.margin = "12px 24px 0 24px";
+    tabBar.innerHTML = `
+      <button class="cc-tab-btn ${activityTab === 'notifications' ? 'active' : ''}" id="btn-act-notifs">
+        <span class="material-icons-outlined">notifications</span> Notifications
+      </button>
+      <button class="cc-tab-btn ${activityTab === 'alarms' ? 'active' : ''}" id="btn-act-alarms">
+        <span class="material-icons-outlined">alarm</span> Alarms &amp; Timers
+      </button>`;
+
+    header.insertAdjacentElement("afterend", tabBar);
+
+    const btnNotifs = document.getElementById("btn-act-notifs");
+    if (btnNotifs) {
+      btnNotifs.onclick = () => {
+        activityTab = "notifications";
+        renderActivityPage();
+      };
+    }
+    const btnAlarms = document.getElementById("btn-act-alarms");
+    if (btnAlarms) {
+      btnAlarms.onclick = () => {
+        activityTab = "alarms";
+        renderActivityPage();
+      };
+    }
+    syncHeaderControls();
+  }
+
+  function renderSystemPage() {
+    if (systemTab === "appearance") {
+      renderDeclarativePage("appearance");
+    } else if (systemTab === "displays" || systemTab === "hardware") {
+      renderDisplaysPage();
+    } else if (systemTab === "integrations" || systemTab === "plugins" || systemTab === "connections") {
+      if (selectedPlugin) {
+        renderPluginSettings(selectedPlugin);
+      } else {
+        renderIntegrationsPage();
+      }
+    } else if (systemTab === "network") {
+      renderDeclarativePage("network");
+    } else {
+      renderDeclarativePage("settings");
+    }
+    injectSystemTabs();
+  }
+
+  function injectSystemTabs() {
+    const header = main.querySelector("header");
+    if (!header) return;
+    const existing = document.getElementById("cc-system-tab-bar");
+    if (existing) existing.remove();
+
+    const titleEl = header.querySelector("h1");
+    if (titleEl && !selectedPlugin && !selectedHardwarePlugin) titleEl.textContent = "System";
+
+    const tabBar = document.createElement("div");
+    tabBar.id = "cc-system-tab-bar";
+    tabBar.className = "cc-tab-bar";
+    tabBar.style.margin = "12px 24px 0 24px";
+    tabBar.innerHTML = `
+      <button class="cc-tab-btn ${systemTab === 'settings' || systemTab === 'general' ? 'active' : ''}" id="btn-sys-settings">
+        <span class="material-icons-outlined">settings</span> General
+      </button>
+      <button class="cc-tab-btn ${systemTab === 'appearance' ? 'active' : ''}" id="btn-sys-appearance">
+        <span class="material-icons-outlined">palette</span> Appearance
+      </button>
+      <button class="cc-tab-btn ${systemTab === 'displays' || systemTab === 'hardware' ? 'active' : ''}" id="btn-sys-displays">
+        <span class="material-icons-outlined">devices</span> Displays &amp; Outputs
+      </button>
+      <button class="cc-tab-btn ${systemTab === 'integrations' || systemTab === 'plugins' || systemTab === 'connections' ? 'active' : ''}" id="btn-sys-integrations">
+        <span class="material-icons-outlined">hub</span> Integrations
+      </button>
+      <button class="cc-tab-btn ${systemTab === 'network' ? 'active' : ''}" id="btn-sys-network">
+        <span class="material-icons-outlined">wifi_lock</span> Network &amp; Security
+      </button>`;
+
+    header.insertAdjacentElement("afterend", tabBar);
+
+    const btnSettings = document.getElementById("btn-sys-settings");
+    if (btnSettings) {
+      btnSettings.onclick = () => {
+        selectedPlugin = null;
+        selectedHardwarePlugin = null;
+        systemTab = "settings";
+        renderSystemPage();
+      };
+    }
+    const btnAppearance = document.getElementById("btn-sys-appearance");
+    if (btnAppearance) {
+      btnAppearance.onclick = () => {
+        selectedPlugin = null;
+        selectedHardwarePlugin = null;
+        systemTab = "appearance";
+        renderSystemPage();
+      };
+    }
+    const btnDisplays = document.getElementById("btn-sys-displays");
+    if (btnDisplays) {
+      btnDisplays.onclick = () => {
+        selectedPlugin = null;
+        selectedHardwarePlugin = null;
+        systemTab = "displays";
+        renderSystemPage();
+      };
+    }
+    const btnIntegrations = document.getElementById("btn-sys-integrations");
+    if (btnIntegrations) {
+      btnIntegrations.onclick = () => {
+        selectedPlugin = null;
+        selectedHardwarePlugin = null;
+        systemTab = "integrations";
+        renderSystemPage();
+      };
+    }
+    const btnNetwork = document.getElementById("btn-sys-network");
+    if (btnNetwork) {
+      btnNetwork.onclick = () => {
+        selectedPlugin = null;
+        selectedHardwarePlugin = null;
+        systemTab = "network";
+        renderSystemPage();
+      };
+    }
+    syncHeaderControls();
+  }
+
+  function renderDashboard() {
+    renderCommandCentre();
   }
 
   function renderPlaceholder() {

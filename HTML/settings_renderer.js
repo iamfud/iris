@@ -134,7 +134,7 @@ class SettingsRenderer {
 
       if (page.sections && page.sections.length > 0) {
         var isApp = _isApp();
-        var isCollapsiblePage = (pageId === "settings");
+        var isCollapsiblePage = false;
         var renderedIndex = 0;
         html += '<section class="settings-content">';
         

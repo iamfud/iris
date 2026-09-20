@@ -58,6 +58,7 @@ DEFAULT_CONFIG = {
     "user_name": "",
     "screensaver_timeout": 2,
     "run_at_startup": False,
+    "open_with_notes": True,
     "theme": {
         "mode": "iris",
         "accent": "#B23AF6",

@@ -1,14 +1,14 @@
 """RGB & LCD umbrella plugin for Iris.
 
 Unifies OpenRGB lighting management and AIO LCD hardware integrations (NZXT Kraken,
-Ajazz) under a single, decoupled plugin adapter.
+Ajazz AKP02) under a single, decoupled plugin adapter.
 """
 
 import logging
 from typing import Any, Dict, List, Optional
 
 from plugins.rgb.connector import RGBConnector
-from plugins.rgb.detect import probe_kraken_usb
+from plugins.rgb.detect import probe_kraken_usb, probe_ajz_usb
 
 log = logging.getLogger("iris.plugins.rgb")
 
@@ -33,11 +33,14 @@ class Plugin:
         self._connector.disconnect()
 
     def is_connected(self) -> bool:
-        """Return True if OpenRGB SDK or any hardware device (e.g. Kraken) is reachable."""
+        """Return True if OpenRGB SDK or any hardware display (Kraken, Ajazz AKP02) is reachable."""
         if self._connector and self._connector.available:
             return True
         kraken = self.get_kraken_status()
         if kraken and kraken.get("found"):
+            return True
+        ajz = self.get_ajz_status()
+        if ajz and ajz.get("found"):
             return True
         return False
 
@@ -48,6 +51,59 @@ class Plugin:
         if rgb_cfg.get("kraken_enabled", True) is False:
             return {"found": False}
         return probe_kraken_usb()
+
+    def get_ajz_status(self) -> Dict[str, Any]:
+        """Return cached Ajazz AKP02 USB probe results and connection state."""
+        plugins_cfg = self._cfg.get("plugins", {}) if isinstance(self._cfg, dict) else {}
+        rgb_cfg = plugins_cfg.get("rgb", {}) if isinstance(plugins_cfg, dict) else {}
+        if rgb_cfg.get("ajz_enabled", True) is False:
+            return {"found": False}
+        res = probe_ajz_usb()
+        if res.get("found"):
+            res["brightness"] = self.get_ajz_brightness()
+        return res
+
+    def get_ajz_brightness(self) -> int:
+        """Return currently configured or active Ajazz LCD brightness (0-100%)."""
+        try:
+            import plugin_manager
+            inst = plugin_manager.get("akp02_stats")
+            if inst and hasattr(inst, "_current_brightness") and inst._current_brightness is not None:
+                return int(inst._current_brightness)
+        except Exception:
+            pass
+        plugins_cfg = self._cfg.get("plugins", {}) if isinstance(self._cfg, dict) else {}
+        rgb_cfg = plugins_cfg.get("rgb", {}) if isinstance(plugins_cfg, dict) else {}
+        return int(rgb_cfg.get("ajz_brightness", 80))
+
+    def set_ajz_brightness(self, value: int) -> bool:
+        """Set Ajazz LCD hardware backlight brightness (0-100%)."""
+        val = max(0, min(100, int(value)))
+        plugins_cfg = self._cfg.setdefault("plugins", {}) if isinstance(self._cfg, dict) else {}
+        rgb_cfg = plugins_cfg.setdefault("rgb", {})
+        rgb_cfg["ajz_brightness"] = val
+
+        applied = False
+        # 1. Forward to displays driver if available (preferred single exclusive driver)
+        try:
+            from displays.registry import get_driver
+            driver = get_driver("akp02")
+            if driver:
+                applied = driver.set_brightness(val)
+        except Exception as ex:
+            log.debug("[rgb] dispatch set_brightness to akp02 driver error: %s", ex)
+
+        # 2. Forward to active akp02_stats plugin instance
+        if not applied:
+            try:
+                import plugin_manager
+                inst = plugin_manager.get("akp02_stats")
+                if inst and hasattr(inst, "set_brightness"):
+                    applied = inst.set_brightness(val)
+            except Exception as ex:
+                log.debug("[rgb] dispatch set_brightness to akp02_stats error: %s", ex)
+
+        return applied
 
     # ── Lighting Provider API ──────────────────────────────────────
 
@@ -121,6 +177,10 @@ class Plugin:
                 self._connector._set_color(str(value))
                 return True
             return False
+        elif action_id in ("set_ajz_brightness", "ajz_brightness", "brightness", "set_brightness"):
+            if value is not None:
+                return self.set_ajz_brightness(int(value))
+            return False
         elif action_id == "refresh_profiles":
             self._connector._list_profiles()
             return True
@@ -129,7 +189,16 @@ class Plugin:
             return self._connector.connect()
         return False
 
+    def on_config(self, cfg: Dict[str, Any]):
+        """Invoked when plugin configuration is updated from Web Portal."""
+        if isinstance(cfg, dict):
+            if "ajz_brightness" in cfg:
+                self.set_ajz_brightness(int(cfg["ajz_brightness"]))
+
     def on_tap(self, control_id: str, value: Any = None) -> bool:
+        if control_id in ("ajz_brightness", "set_ajz_brightness"):
+            if value is not None:
+                return self.set_ajz_brightness(int(value))
         self._connector.handle(control_id, value)
         return True
 
@@ -162,6 +231,7 @@ class Plugin:
         sdk_info = self._connector.get_sdk_info()
         profiles = self._connector.get_options("profiles")
         kraken = self.get_kraken_status()
+        ajz = self.get_ajz_status()
 
         raw_sdk_ver = sdk_info.get("sdk_version")
         sdk_ver = str(raw_sdk_ver) if raw_sdk_ver else "—"
@@ -180,17 +250,27 @@ class Plugin:
             "kraken_model": kraken.get("model", ""),
             "kraken_resolution": kraken.get("resolution", 0),
             "kraken_shape": kraken.get("shape", ""),
+            "ajz_found": ajz.get("found", False),
+            "ajz_connected": ajz.get("found", False),
+            "ajz_model": ajz.get("model", ""),
+            "ajz_resolution": ajz.get("resolution", ""),
+            "ajz_brightness": self.get_ajz_brightness(),
             "state": {
                 "sdk_version": sdk_ver,
                 "device_count": dev_count,
                 "active_profile": active_profile,
                 "kraken_found": kraken.get("found", False),
                 "kraken_model": kraken.get("model", ""),
+                "ajz_found": ajz.get("found", False),
+                "ajz_connected": ajz.get("found", False),
+                "ajz_model": ajz.get("model", ""),
+                "ajz_brightness": self.get_ajz_brightness(),
             },
             "status": {
                 "sdk_version": sdk_ver,
                 "device_count": dev_count,
                 "kraken_found": kraken.get("found", False),
+                "ajz_connected": ajz.get("found", False),
             },
             "layout": [
                 {
@@ -206,6 +286,13 @@ class Plugin:
                     "fields": [
                         {"key": "kraken_model", "label": "Detected AIO", "source": "state"},
                         {"key": "kraken_resolution", "label": "Resolution", "source": "state"},
+                    ],
+                },
+                {
+                    "title": "Ajazz LCD Display",
+                    "fields": [
+                        {"key": "ajz_model", "label": "Detected Screen", "source": "state"},
+                        {"key": "ajz_brightness", "label": "Brightness", "source": "state"},
                     ],
                 },
             ],

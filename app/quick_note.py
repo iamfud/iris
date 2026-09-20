@@ -14,6 +14,7 @@ Features:
 """
 
 import ctypes
+import hashlib
 import logging
 import math
 import os
@@ -49,6 +50,65 @@ dwm = ctypes.windll.dwmapi
 
 # Global singleton tracker for active note window
 _ACTIVE_NOTE_WINDOW = None
+
+# ── External-file mode (Windows "Open with → Iris Notes") ─────────────
+# Files above this size refuse to load rather than hammering the UI.
+_EXTERNAL_MAX_SIZE = 1_000_000  # 1 MB
+
+
+def _detect_encoding(data):
+    """Return (codec, has_bom, lossy) for the given bytes.
+
+    Detects a BOM (utf-8-sig / utf-16 / utf-32), else requires clean UTF-8,
+    else falls back to ANSI (cp1252). If nothing decodes cleanly the file is
+    marked lossy: the display uses replacement chars and savers must be aware
+    the original bytes cannot be reproduced.
+    """
+    if data.startswith(b"\xff\xfe\x00\x00"):
+        return "utf-32", True, False
+    if data.startswith(b"\x00\x00\xfe\xff"):
+        return "utf-32", True, False
+    if data.startswith(b"\xef\xbb\xbf"):
+        return "utf-8-sig", True, False
+    if data.startswith(b"\xff\xfe"):
+        return "utf-16", True, False
+    if data.startswith(b"\xfe\xff"):
+        return "utf-16", True, False
+    for enc in ("utf-8", "cp1252"):
+        try:
+            data.decode(enc)
+            return enc, False, False
+        except UnicodeDecodeError:
+            continue
+    return "utf-8", False, True
+
+
+def _detect_newline(data):
+    """Return the dominant newline style ('\\r\\n' or '\\n') used in the file."""
+    crlf = data.count(b"\r\n")
+    lf_only = data.count(b"\n") - crlf
+    return "\r\n" if crlf > lf_only else "\n"
+
+
+def _file_fingerprint(path):
+    """On-disk state of an external file: (mtime, size[, sha256]).
+
+    The hash is included only when the file fits the edit size limit, so large
+    files skip a full re-read in probes.
+    """
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    fp = (st.st_mtime, st.st_size)
+    if st.st_size <= _EXTERNAL_MAX_SIZE:
+        try:
+            with open(path, "rb") as f:
+                data = f.read()
+            fp = (st.st_mtime, st.st_size, hashlib.sha256(data).hexdigest())
+        except Exception:
+            pass
+    return fp
 
 
 def _get_last_note_for_app(app_tag):
@@ -362,7 +422,24 @@ class QuickNoteWindow:
         self._is_pinned = True
         self._is_persistent = False
         self._is_in_background = False
-        if not self._filename:
+
+        # External-file mode (opened via Windows "Open with → Iris Notes").
+        # Autosave is DISABLED here; the file is only written by an explicit
+        # Ctrl+S (via _save_external) or the close prompt.
+        self._external_path = None
+        self._external_fingerprint = None
+        self._external_encoding = "utf-8"
+        self._external_newline = "\n"
+        self._external_lossy = False
+        self._external_readonly = False
+        self._external_oversize = False
+        self._external_locked = False
+        self._external_recheck_timer = None
+        self._dirty = False
+        if filename and os.path.isabs(filename):
+            self._external_path = os.path.abspath(filename)
+            self._filename = None
+        if not self._filename and not self._external_path:
             persisted_file = _get_last_note_for_app(self._app_tag)
             if persisted_file:
                 # Verify file still exists on disk
@@ -383,6 +460,11 @@ class QuickNoteWindow:
         self._build_ui()
         self._apply_theme()
 
+        if self._external_path and not self._settle_external_config():
+            # Blocking error already shown (missing file, too large) — close quietly.
+            self._win.after(20, self.close_no_save)
+            return
+
         self._load_initial_content(initial_title, initial_body)
 
         self._win.bind("<Escape>", self._on_escape)
@@ -390,6 +472,8 @@ class QuickNoteWindow:
         self._win.bind("<Control-S>", lambda e: self._on_explicit_save())
         self._win.bind("<Control-n>", lambda e: self._on_new_note())
         self._win.bind("<Control-N>", lambda e: self._on_new_note())
+        self._win.bind("<Control-o>", lambda e: self._on_open_file())
+        self._win.bind("<Control-O>", lambda e: self._on_open_file())
         self._win.bind("<Control-b>", lambda e: self._toggle_format("bold"))
         self._win.bind("<Control-B>", lambda e: self._toggle_format("bold"))
         self._win.bind("<Control-i>", lambda e: self._toggle_format("italic"))
@@ -404,6 +488,354 @@ class QuickNoteWindow:
             return "general"
         cleaned = re.sub(r"[^a-z0-9]+", "_", str(tag).lower()).strip("_")
         return cleaned or "general"
+
+    # ── External-file mode (Windows "Open with → Iris Notes") ────────────
+
+    @staticmethod
+    def _human_size(n):
+        if n >= 1_048_576:
+            return f"{n / 1_048_576:.1f} MB"
+        if n >= 1024:
+            return f"{n / 1024:.1f} KB"
+        return f"{n} bytes"
+
+    def _show_external_error(self, title, message):
+        from tkinter import messagebox
+        try:
+            messagebox.showerror(title, message, parent=self._win)
+        except Exception:
+            log.warning("[quick_note] external error %s: %s", title, message)
+
+    def _settle_external_config(self):
+        """Inspect the external file and prepare read-only / encoding / newline /
+        fingerprint state. Returns True when usable, False after showing a plain
+        blocking error (missing file, oversized file) — the caller must then close.
+        """
+        path = self._external_path
+        if not path:
+            return True
+        try:
+            st = os.stat(path)
+        except OSError:
+            self._show_external_error(
+                "File not found",
+                f"The file could not be opened because it no longer exists:\n\n{path}",
+            )
+            return False
+
+        size = st.st_size
+        if size > _EXTERNAL_MAX_SIZE:
+            self._show_external_error(
+                "File too large",
+                f"{path}\n\nis {self._human_size(size)}. Iris Notes has a "
+                f"{self._human_size(_EXTERNAL_MAX_SIZE)} edit limit.\n\n"
+                "Open it in your regular editor instead.",
+            )
+            return False
+
+        try:
+            with open(path, "rb") as f:
+                data = f.read()
+        except OSError as e:
+            self._show_external_error("Cannot read file", str(e))
+            return False
+
+        self._external_encoding, _bom, self._external_lossy = _detect_encoding(data)
+        self._external_newline = _detect_newline(data)
+        try:
+            self._external_text = data.decode(self._external_encoding)
+        except Exception:
+            self._external_text = data.decode("utf-8", errors="replace")
+            self._external_lossy = True
+
+        try:
+            self._external_readonly = not os.access(path, os.W_OK)
+        except Exception:
+            self._external_readonly = True
+        self._external_oversize = False
+        self._external_locked = self._external_readonly
+        self._external_fingerprint = (st.st_mtime, size, hashlib.sha256(data).hexdigest())
+        self._external_locked = self._external_readonly
+        # Note: widgets stay enabled here — they are (re)locked by the caller
+        # after loading content, since Tk refuses edits on disabled widgets.
+        return True
+
+    def _load_external_content(self):
+        """Insert an external file's plain text into the editor (raw, no title header)."""
+        txt = getattr(self, "_external_text", "") or ""
+        # Normalize embedded CRLF to lone LF for the Tk editor; the captured
+        # dominant style is re-applied on save (see _save_external).
+        txt = txt.replace("\r\n", "\n")
+        # Tk refuses edits on disabled widgets — temporarily enable to load text,
+        # then re-lock for read-only files.
+        was_locked = self._external_locked
+        self._ent_title.config(state="normal")
+        self._txt_body.config(state="normal")
+        self._ent_title.delete(0, "end")
+        self._title_has_placeholder = False
+        self._txt_body.delete("1.0", "end")
+        self._body_has_placeholder = False
+        if txt:
+            self._txt_body.insert("1.0", txt)
+        pal = self._get_active_palette()
+        self._txt_body.configure(fg=pal["body_fg"])
+        if was_locked:
+            self._ent_title.config(state="disabled")
+            self._txt_body.config(state="disabled")
+        base = os.path.basename(self._external_path)
+        if self._external_readonly:
+            self._set_status(f"Opened {base} · read-only")
+        elif self._external_lossy:
+            self._set_status(f"Opened {base} · some characters can't be saved losslessly")
+        else:
+            self._set_status(f"Opened {base}")
+        if not was_locked:
+            self._txt_body.focus_set()
+
+    def _get_plain_body_text(self):
+        """Body text with any bold/italic markup stripped (lossless for raw txt)."""
+        if self._body_has_placeholder:
+            return ""
+        txt = self._txt_body.get("1.0", "end-1c")
+        if "<b" in txt or "<i" in txt or "<strong" in txt or "<em" in txt:
+            txt = re.sub(r"</?(?:b|strong|i|em)>", "", txt, flags=re.IGNORECASE)
+        return txt
+
+    def _atomic_write(self, path, data):
+        """Atomically replace ``path`` with ``data`` via a same-directory temp file.
+
+        Falls back to a plain write when atomic replace is not possible (e.g. some
+        network shares). Returns (ok, error).
+        """
+        import tempfile
+        tmp_path = None
+        try:
+            fd, tmp_path = tempfile.mkstemp(prefix=".iris-note-", suffix=".tmp", dir=os.path.dirname(path) or ".")
+            try:
+                with os.fdopen(fd, "wb") as f:
+                    f.write(data)
+                    f.flush()
+                    os.fsync(f.fileno())
+            except Exception:
+                os.close(fd)
+                raise
+            try:
+                os.chmod(tmp_path, os.stat(path).st_mode)
+            except Exception:
+                pass
+            os.replace(tmp_path, path)
+            tmp_path = None
+            return True, None
+        except Exception as e:
+            # Fallback: non-atomic direct write — surface its error if this fails too.
+            try:
+                with open(path, "wb") as f:
+                    f.write(data)
+                    f.flush()
+                    os.fsync(f.fileno())
+                return True, None
+            except Exception as e2:
+                return False, str(e2)
+        finally:
+            if tmp_path:
+                try:
+                    os.remove(tmp_path)
+                except Exception:
+                    pass
+
+    def _confirm_overwrite_changed(self):
+        from tkinter import messagebox
+        try:
+            return messagebox.askyesno(
+                "File changed",
+                "This file has been modified by another program since it was "
+                "opened in Iris Notes.\n\nOverwrite those changes anyway?",
+                parent=self._win,
+            )
+        except Exception:
+            return False
+
+    def _save_external(self):
+        """Explicit save for an external file: verify origin, encode, write atomically.
+
+        Only ever reports "Saved" after the write succeeded; otherwise keeps the
+        dirty mark and shows the failure.
+        """
+        path = self._external_path
+        if not path:
+            return False
+        if self._external_locked or self._external_readonly:
+            self._set_status("Save failed — file is read-only")
+            return False
+
+        # 1) File still exists? Never recreate a deleted/moved file implicitly.
+        if not os.path.exists(path):
+            self._set_status("Cannot save — file was deleted or moved")
+            if self._external_recheck_timer:
+                self._schedule_external_recheck()
+            return False
+
+        # 2) Still writable?
+        try:
+            if not os.access(path, os.W_OK):
+                self._set_status("Save failed — file is read-only")
+                return False
+        except Exception:
+            pass
+
+        # 3) External modification detection: refuse to clobber newer foreign edits.
+        cur = _file_fingerprint(path)
+        if cur and self._external_fingerprint and cur != self._external_fingerprint:
+            if not self._confirm_overwrite_changed():
+                self._set_status("Save cancelled — file changed elsewhere")
+                return False
+
+        # 4)–6) Plain text → newline style → captured encoding.
+        content = self._get_plain_body_text()
+        if self._external_newline == "\r\n":
+            content = content.replace("\n", "\r\n")
+        try:
+            data = content.encode(self._external_encoding)
+        except UnicodeEncodeError:
+            self._set_status("Save failed — text can't be represented in this file's encoding")
+            return False
+
+        # 7) Atomic write; only then clear dirty + refresh fingerprint.
+        ok, err = self._atomic_write(path, data)
+        if not ok:
+            self._set_status(f"Save failed — {err}")
+            return False
+        self._dirty = False
+        self._external_fingerprint = _file_fingerprint(path)
+        self._set_status(f"Saved ✓ {os.path.basename(path)}", is_saved=True)
+        return True
+
+    def _mark_dirty(self, status="Unsaved changes — Ctrl+S to save"):
+        if self._external_locked:
+            return
+        self._dirty = True
+        self._set_status(status)
+        self._schedule_external_recheck()
+
+    def _schedule_external_recheck(self):
+        """Lightweight idle probe that notices external edits; never blocks."""
+        if self._external_recheck_timer is not None:
+            return
+        self._external_recheck_timer = self._win.after(5000, self._external_recheck_once)
+
+    def _external_recheck_once(self):
+        self._external_recheck_timer = None
+        if self._closed or not self._external_path:
+            return
+        try:
+            if not os.path.exists(self._external_path):
+                self._set_status("The file was deleted or moved")
+                return
+            cur = _file_fingerprint(self._external_path)
+            if cur and self._external_fingerprint and cur != self._external_fingerprint:
+                self._set_status("File changed elsewhere — Ctrl+S will warn")
+        except Exception:
+            pass
+
+    def _prepare_reopen(self):
+        """Prompt to save/discard unsaved external edits before switching files.
+
+        Returns True when the window may be pointed at new content.
+        """
+        if not self._external_path or not self._dirty:
+            return True
+        from tkinter import messagebox
+        try:
+            choice = messagebox.askyesnocancel(
+                "Iris Notes",
+                "This file has unsaved changes.\n\nSave before opening a different file?",
+                parent=self._win,
+            )
+        except Exception:
+            return False
+        if choice is None:
+            return False
+        if choice:
+            return self._save_external()
+        return True
+
+    def _reset_external_state(self):
+        """Drop external-file mode back to a fresh scratch note."""
+        if self._external_recheck_timer is not None:
+            try:
+                self._win.after_cancel(self._external_recheck_timer)
+            except Exception:
+                pass
+            self._external_recheck_timer = None
+        self._external_path = None
+        self._external_fingerprint = None
+        self._external_encoding = "utf-8"
+        self._external_newline = "\n"
+        self._external_lossy = False
+        self._external_readonly = False
+        self._external_oversize = False
+        self._external_locked = False
+        self._dirty = False
+        try:
+            self._ent_title.config(state="normal")
+            self._txt_body.config(state="normal")
+        except Exception:
+            pass
+
+    def _adopt_request(self, filename, app_tag, initial_title, initial_body):
+        """Point this window at a new open request, prompting for unsaved edits.
+
+        Returns True when the window now shows the new content (or will keep showing
+        it); False when the user cancelled, in which case the caller must not refocus
+        new content.
+        """
+        new_ext = filename if (filename and os.path.isabs(filename)) else None
+        same = (
+            new_ext and self._external_path and
+            os.path.normcase(os.path.abspath(new_ext)) == os.path.normcase(os.path.abspath(self._external_path))
+        )
+        if same:
+            return True
+        if not self._prepare_reopen():
+            return False
+        if new_ext and not os.path.isfile(new_ext):
+            self._show_external_error("File not found", f"The file no longer exists:\n\n{new_ext}")
+            return False
+        self._reset_external_state()
+        self._filename = None
+        if app_tag:
+            self._app_tag = self._clean_app_tag(app_tag)
+            self._win.title(f"Iris Note · {self._app_tag.upper()}")
+            self._lbl_app_tag.config(text=self._app_tag.upper())
+        if new_ext:
+            self._external_path = os.path.abspath(new_ext)
+            if not self._settle_external_config():
+                return False
+            self._load_external_content()
+        else:
+            if filename:
+                self._filename = filename
+            self._load_initial_content(initial_title, initial_body)
+        return True
+
+    def close_no_save(self):
+        """Destroy the window without prompting or writing (used on fatal open errors)."""
+        global _ACTIVE_NOTE_WINDOW
+        if self._closed:
+            return
+        self._closed = True
+        if _ACTIVE_NOTE_WINDOW is self:
+            _ACTIVE_NOTE_WINDOW = None
+        if self._external_recheck_timer is not None:
+            try:
+                self._win.after_cancel(self._external_recheck_timer)
+            except Exception:
+                pass
+            self._external_recheck_timer = None
+        try:
+            self._win.destroy()
+        except Exception:
+            pass
 
     def _load_theme_mode(self):
         try:
@@ -833,6 +1265,7 @@ class QuickNoteWindow:
 
         items_def = [
             ("New Note", "Ctrl+N", self._on_new_note, False),
+            ("Open File…", "Ctrl+O", self._on_open_file, False),
             ("Save", "Ctrl+S", self._on_explicit_save, False),
             ("Restore Last Note", "", self._on_restore_last_note, False),
             (None, None, None, False),
@@ -1116,6 +1549,9 @@ class QuickNoteWindow:
 
     def _toggle_persistency(self):
         """Toggle note persistency between Persistent Scratchpad and Disposable Private Note."""
+        if self._external_path:
+            self._set_status("Persistency applies only to Iris notes, not external files")
+            return
         self._is_persistent = not self._is_persistent
         if self._is_persistent:
             # Ensure note has been saved to have a filename
@@ -1256,6 +1692,9 @@ class QuickNoteWindow:
             return paths.get_notes_dir()
 
     def _load_initial_content(self, initial_title=None, initial_body=None):
+        if self._external_path:
+            self._load_external_content()
+            return
         if self._filename:
             folder = self._library_folder()
             path = os.path.join(folder, self._filename)
@@ -1448,6 +1887,13 @@ class QuickNoteWindow:
         return "".join(out).strip()
 
     def _on_new_note(self):
+        if self._external_path:
+            self._reset_external_state()
+            self._set_title_placeholder()
+            self._set_body_placeholder()
+            self._set_status("New note (external file closed)")
+            self._ent_title.focus_set()
+            return
         self._on_explicit_save()
         self._filename = None
         self._set_title_placeholder()
@@ -1455,8 +1901,33 @@ class QuickNoteWindow:
         self._set_status("")
         self._ent_title.focus_set()
 
+    def _on_open_file(self):
+        """Open any file from disk via a native chooser (external-file mode).
+
+        The chosen file loads losslessly; edits are saved only by Ctrl+S or the
+        close prompt — never through autosave.
+        """
+        from tkinter import filedialog
+        try:
+            path = filedialog.askopenfilename(
+                parent=self._win,
+                title="Open file with Iris Notes",
+                filetypes=[
+                    ("Text files", "*.txt;*.md;*.log;*.ini;*.cfg;*.json;*.csv;*.xml;*.yaml;*.yml"),
+                    ("Code", "*.py;*.js;*.ts;*.html;*.css;*.c;*.cpp;*.h;*.java;*.sh;*.ps1"),
+                    ("All files", "*.*"),
+                ],
+            )
+        except Exception as e:
+            log.warning("[quick_note] file dialog failed: %s", e)
+            return
+        if not path:
+            return
+        self._adopt_request(path, self._app_tag, None, None)
+
     def _on_open_library(self):
-        self._on_explicit_save()
+        if not self._external_path:
+            self._on_explicit_save()
         try:
             import panel_window
             panel_window.open_panel(page="library", tab="notes")
@@ -1469,7 +1940,12 @@ class QuickNoteWindow:
 
     def _on_restore_last_note(self):
         """Restore the most recently edited note for this app tag."""
-        self._on_explicit_save()
+        if self._external_path:
+            if not self._prepare_reopen():
+                return
+            self._reset_external_state()
+        else:
+            self._on_explicit_save()
         last_file = _get_last_note_for_app(self._app_tag)
         if last_file:
             folder = self._library_folder()
@@ -1518,18 +1994,29 @@ class QuickNoteWindow:
             self._status_timer = self._win.after(2500, lambda: self._lbl_status.config(text="") if not self._closed else None)
 
     def _schedule_save(self, event=None):
+        if self._external_path:
+            # Autosave is disabled for external files — never write them implicitly.
+            self._mark_dirty("Unsaved changes — Ctrl+S to save")
+            return
         if self._save_timer is not None:
             self._win.after_cancel(self._save_timer)
         self._set_status("Saving…")
         self._save_timer = self._win.after(600, lambda: self._save_to_disk(explicit=False))
 
     def _on_explicit_save(self):
+        if self._external_path:
+            self._save_external()
+            return
         if self._save_timer is not None:
             self._win.after_cancel(self._save_timer)
             self._save_timer = None
         self._save_to_disk(explicit=True)
 
     def _save_to_disk(self, explicit=False):
+        if self._external_path:
+            if explicit:
+                self._save_external()
+            return
         if self._closed or self._is_saving:
             return
         self._is_saving = True
@@ -1629,6 +2116,21 @@ class QuickNoteWindow:
         global _ACTIVE_NOTE_WINDOW
         if self._closed:
             return
+        if self._external_path and self._dirty:
+            from tkinter import messagebox
+            try:
+                choice = messagebox.askyesnocancel(
+                    "Iris Notes",
+                    "This file has unsaved changes.\n\nSave them?",
+                    parent=self._win,
+                )
+            except Exception:
+                choice = True
+            if choice is None:
+                return
+            if choice and not self._save_external():
+                # Save failed — stay open so nothing is silently lost.
+                return
         self._closed = True
         if _ACTIVE_NOTE_WINDOW is self:
             _ACTIVE_NOTE_WINDOW = None
@@ -1637,6 +2139,19 @@ class QuickNoteWindow:
         if self._save_timer is not None:
             self._win.after_cancel(self._save_timer)
             self._save_timer = None
+        if self._external_recheck_timer is not None:
+            try:
+                self._win.after_cancel(self._external_recheck_timer)
+            except Exception:
+                pass
+            self._external_recheck_timer = None
+        if self._external_path:
+            # External files never touch Iris' own library/last-note bookkeeping.
+            try:
+                self._win.destroy()
+            except Exception:
+                pass
+            return
         self._save_to_disk(explicit=False)
 
         if self._is_persistent and self._filename:
@@ -1651,21 +2166,30 @@ class QuickNoteWindow:
             pass
 
 
-def open_quick_note(root=None, app=None, app_tag="general", filename=None, initial_title=None, initial_body=None):
-    """Open or foreground the standalone Iris Notepad window."""
+open_quick_note = lambda *a, **k: _open_quick_note(*a, **k)
+
+
+def _open_quick_note(root=None, app=None, app_tag="general", filename=None, initial_title=None, initial_body=None):
+    """Open or foreground the standalone Iris Notepad window.
+
+    If the window is already open, adopt the new request (prompting for unsaved
+    external edits) before bringing it to the foreground. Returns the window.
+    """
     global _ACTIVE_NOTE_WINDOW
 
-    # If an active note window is already running and valid, bring it to front
+    # If an active note window is already running and valid, adopt + foreground it
     if _ACTIVE_NOTE_WINDOW is not None and not _ACTIVE_NOTE_WINDOW._closed:
         try:
-            if filename or initial_title or initial_body or (app_tag and app_tag != _ACTIVE_NOTE_WINDOW._app_tag):
-                if filename:
-                    _ACTIVE_NOTE_WINDOW._filename = filename
-                if app_tag:
-                    _ACTIVE_NOTE_WINDOW._app_tag = _ACTIVE_NOTE_WINDOW._clean_app_tag(app_tag)
-                    _ACTIVE_NOTE_WINDOW._win.title(f"Iris Note · {_ACTIVE_NOTE_WINDOW._app_tag.upper()}")
-                    _ACTIVE_NOTE_WINDOW._lbl_app_tag.config(text=_ACTIVE_NOTE_WINDOW._app_tag.upper())
-                _ACTIVE_NOTE_WINDOW._load_initial_content(initial_title, initial_body)
+            if filename or initial_title or initial_body:
+                adopted = _ACTIVE_NOTE_WINDOW._adopt_request(
+                    filename, app_tag, initial_title, initial_body
+                )
+                if not adopted:
+                    return _ACTIVE_NOTE_WINDOW
+            elif app_tag and app_tag != _ACTIVE_NOTE_WINDOW._app_tag:
+                _ACTIVE_NOTE_WINDOW._app_tag = _ACTIVE_NOTE_WINDOW._clean_app_tag(app_tag)
+                _ACTIVE_NOTE_WINDOW._win.title(f"Iris Note · {_ACTIVE_NOTE_WINDOW._app_tag.upper()}")
+                _ACTIVE_NOTE_WINDOW._lbl_app_tag.config(text=_ACTIVE_NOTE_WINDOW._app_tag.upper())
             _ACTIVE_NOTE_WINDOW.bring_to_foreground()
             _ACTIVE_NOTE_WINDOW._win.after(30, _ACTIVE_NOTE_WINDOW.bring_to_foreground)
             return _ACTIVE_NOTE_WINDOW
@@ -1704,19 +2228,21 @@ def toggle_quick_note(root=None, app=None, app_tag="general", filename=None, ini
             _ACTIVE_NOTE_WINDOW.send_to_back()
             return _ACTIVE_NOTE_WINDOW
         else:
-            if filename or initial_title or initial_body or (app_tag and app_tag != _ACTIVE_NOTE_WINDOW._app_tag):
-                if filename:
-                    _ACTIVE_NOTE_WINDOW._filename = filename
-                if app_tag:
-                    _ACTIVE_NOTE_WINDOW._app_tag = _ACTIVE_NOTE_WINDOW._clean_app_tag(app_tag)
-                    _ACTIVE_NOTE_WINDOW._win.title(f"Iris Note · {_ACTIVE_NOTE_WINDOW._app_tag.upper()}")
-                    _ACTIVE_NOTE_WINDOW._lbl_app_tag.config(text=_ACTIVE_NOTE_WINDOW._app_tag.upper())
-                _ACTIVE_NOTE_WINDOW._load_initial_content(initial_title, initial_body)
+            if filename or initial_title or initial_body:
+                adopted = _ACTIVE_NOTE_WINDOW._adopt_request(
+                    filename, app_tag, initial_title, initial_body
+                )
+                if not adopted:
+                    return _ACTIVE_NOTE_WINDOW
+            elif app_tag and app_tag != _ACTIVE_NOTE_WINDOW._app_tag:
+                _ACTIVE_NOTE_WINDOW._app_tag = _ACTIVE_NOTE_WINDOW._clean_app_tag(app_tag)
+                _ACTIVE_NOTE_WINDOW._win.title(f"Iris Note · {_ACTIVE_NOTE_WINDOW._app_tag.upper()}")
+                _ACTIVE_NOTE_WINDOW._lbl_app_tag.config(text=_ACTIVE_NOTE_WINDOW._app_tag.upper())
             _ACTIVE_NOTE_WINDOW.bring_to_foreground()
             _ACTIVE_NOTE_WINDOW._win.after(30, _ACTIVE_NOTE_WINDOW.bring_to_foreground)
             return _ACTIVE_NOTE_WINDOW
 
-    return open_quick_note(root=root, app=app, app_tag=app_tag, filename=filename, initial_title=initial_title, initial_body=initial_body)
+    return _open_quick_note(root=root, app=app, app_tag=app_tag, filename=filename, initial_title=initial_title, initial_body=initial_body)
 
 
 def is_quick_note_open():

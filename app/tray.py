@@ -43,7 +43,7 @@ def make_icon_image(size=TRAY_ICON_SIZE, online=False):
 def build_tray_menu(app):
     return pystray.Menu(
         pystray.MenuItem(
-            "Show/Hide Panel",
+            "Show/Hide Command Centre",
             lambda *a: app._on_tray_click(),
             default=True,
         ),
@@ -52,8 +52,12 @@ def build_tray_menu(app):
             lambda *a: app._open_capture_toolbar(),
         ),
         pystray.MenuItem(
-            "Iris Settings",
-            lambda *a: app._open_settings(),
+            "Desktop Overlay HUD",
+            lambda *a: app._toggle_overlay(),
+        ),
+        pystray.MenuItem(
+            "Phone Panel (Legacy)",
+            lambda *a: app._toggle_window(),
         ),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem(

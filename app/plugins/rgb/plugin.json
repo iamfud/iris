@@ -1,8 +1,8 @@
 {
   "name": "rgb",
-  "version": "1.0",
+  "version": "1.1",
   "display_name": "RGB & LCD Hardware",
-  "description": "Unified RGB lighting control (OpenRGB) and AIO LCD screen integrations (NZXT Kraken, Ajazz).",
+  "description": "Unified RGB lighting control (OpenRGB) and AIO LCD screen integrations (NZXT Kraken, Ajazz AKP02).",
   "icon": "palette",
   "type": "service",
   "category": "hardware",
@@ -31,7 +31,8 @@
   "status": [
     { "key": "status_code", "label": "Status", "source": "lifecycle" },
     { "key": "sdk_version", "label": "SDK Version", "source": "plugin" },
-    { "key": "device_count", "label": "RGB Devices", "source": "plugin" }
+    { "key": "device_count", "label": "RGB Devices", "source": "plugin" },
+    { "key": "ajz_connected", "label": "Ajazz LCD", "source": "plugin" }
   ],
 
   "outputs": [
@@ -45,7 +46,10 @@
     "fields": [
       { "key": "device_count", "label": "RGB Devices", "type": "int" },
       { "key": "active_profile", "label": "Active Profile", "type": "string" },
-      { "key": "kraken_model", "label": "NZXT Kraken AIO", "type": "string" }
+      { "key": "kraken_model", "label": "NZXT Kraken AIO", "type": "string" },
+      { "key": "ajz_model", "label": "Ajazz LCD Display", "type": "string" },
+      { "key": "ajz_connected", "label": "Ajazz Connected", "type": "bool" },
+      { "key": "ajz_brightness", "label": "Ajazz Brightness", "type": "int" }
     ]
   },
 
@@ -75,6 +79,27 @@
           "key": "kraken_enabled",
           "label": "Enable NZXT Kraken LCD",
           "description": "Probe and stream telemetry to NZXT Kraken LCD displays"
+        }
+      ]
+    },
+    {
+      "title": "Ajazz AKP02 LCD Display",
+      "controls": [
+        {
+          "type": "toggle",
+          "key": "ajz_enabled",
+          "label": "Enable Ajazz LCD",
+          "description": "Probe and manage Ajazz AKP02 LCD screen"
+        },
+        {
+          "type": "slider",
+          "key": "ajz_brightness",
+          "label": "Screen Brightness",
+          "description": "Adjust hardware backlight brightness (0-100%)",
+          "min": 0,
+          "max": 100,
+          "default": 80,
+          "step": 5
         }
       ]
     }

@@ -70,7 +70,8 @@ class _RtssReader:
             self._k.CloseHandle(h)
 
     def _parse(self, base):
-        if ctypes.string_at(base, 4) != self._SIG.to_bytes(4, "little"):
+        sig = int.from_bytes(ctypes.string_at(base, 4), "little")
+        if sig not in (0x52545353, 0xDEAD):
             return None
         entry_sz = int.from_bytes(ctypes.string_at(base + self._H_ENTRY_SZ, 4), "little")
         arr_off = int.from_bytes(ctypes.string_at(base + self._H_ARR_OFF, 4), "little")
@@ -81,22 +82,29 @@ class _RtssReader:
         best_fps, best_name = 0.0, ""
         for i in range(min(arr_cnt, 128)):
             e = base + arr_off + i * entry_sz
+            pid = int.from_bytes(ctypes.string_at(e, 4), "little")
+            if pid == 0:
+                continue
             name = ctypes.string_at(e + self._E_NAME, 260).split(b"\x00")[0].decode("utf-8", errors="ignore")
             if not name:
                 continue
             time1 = int.from_bytes(ctypes.string_at(e + self._E_TIME1, 4), "little")
             age = (now_ms - time1) & 0xFFFFFFFF
-            if age > 3000:
+            if age > 3500:
                 continue
             fps = 0.0
             if entry_sz > self._E_FPS + 4:
                 fps_raw = int.from_bytes(ctypes.string_at(e + self._E_FPS, 4), "little")
                 if fps_raw:
                     fps = fps_raw / 1000.0
+            if not fps and entry_sz > 820 + 4:
+                fps_avg_raw = int.from_bytes(ctypes.string_at(e + 820, 4), "little")
+                if fps_avg_raw:
+                    fps = fps_avg_raw / 1000.0
             if not fps and entry_sz > self._E_FRAMES + 4:
                 frames = int.from_bytes(ctypes.string_at(e + self._E_FRAMES, 4), "little")
                 time0 = int.from_bytes(ctypes.string_at(e + self._E_TIME0, 4), "little")
-                dt = time1 - time0
+                dt = (time1 - time0) & 0xFFFFFFFF
                 if frames > 0 and dt > 0:
                     fps = frames * 1000.0 / dt
             if fps > best_fps:
@@ -104,7 +112,7 @@ class _RtssReader:
                 best_name = name
         if best_fps <= 0:
             return None
-        return best_fps, best_name
+        return round(best_fps, 1), best_name
 
 
 class _MahmReader:

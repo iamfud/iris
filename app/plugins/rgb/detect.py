@@ -26,8 +26,16 @@ KRAKEN_MODELS = {
     "3014": ("Kraken (2024)", 240, "square"),
 }
 
+# Ajazz LCD USB PIDs (VID 0300) -> (model family, width, height, shape).
+AJZ_MODELS = {
+    "3017": ("Ajazz AKP02 (9.2\" 1920x462)", 1920, 462, "bar"),
+}
+
 _KRAKEN_CACHE: Dict[str, Any] = {"at": 0.0, "res": None}
 _KRAKEN_LOCK = threading.Lock()
+
+_AJZ_CACHE: Dict[str, Any] = {"at": 0.0, "res": None}
+_AJZ_LOCK = threading.Lock()
 
 
 def probe_kraken_usb(ttl: float = 5.0) -> Dict[str, Any]:
@@ -81,4 +89,83 @@ def probe_kraken_usb(ttl: float = 5.0) -> Dict[str, Any]:
             record = {"found": False}
             _KRAKEN_CACHE["res"] = record
             _KRAKEN_CACHE["at"] = now
+            return record
+
+
+def probe_ajz_usb(ttl: float = 5.0) -> Dict[str, Any]:
+    """Detect an attached Ajazz LCD panel (AKP02) via active plugin or USB PnP enumeration.
+
+    Thread-safe and TTL cached to prevent query overhead.
+    """
+    now = time.time()
+    with _AJZ_LOCK:
+        if _AJZ_CACHE["res"] is not None and now - _AJZ_CACHE["at"] < ttl:
+            return _AJZ_CACHE["res"]
+
+        # 1. Fast-path: Check if akp02_stats plugin instance is active and connected
+        try:
+            import plugin_manager
+            inst = plugin_manager.get("akp02_stats")
+            if inst and getattr(inst, "_panel_connected", False):
+                record = {
+                    "found": True,
+                    "pid": "3017",
+                    "model": "Ajazz AKP02 (9.2\" 1920x462)",
+                    "resolution": "1920x462",
+                    "width": 1920,
+                    "height": 462,
+                    "shape": "bar",
+                    "brightness": getattr(inst, "_current_brightness", 80),
+                    "source": "plugin_active",
+                }
+                _AJZ_CACHE["res"] = record
+                _AJZ_CACHE["at"] = now
+                return record
+        except Exception:
+            pass
+
+        # 2. PnP query for VID_0300
+        try:
+            ps = (
+                "Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | "
+                "Where-Object { $_.InstanceId -match 'VID_0300' } | "
+                "ForEach-Object { $_.InstanceId }"
+            )
+            out = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+                capture_output=True,
+                text=True,
+                timeout=6,
+                creationflags=0x08000000,  # CREATE_NO_WINDOW
+            )
+            pids = set()
+            for line in (out.stdout or "").splitlines():
+                m = re.search(r"VID_0300&PID_([0-9A-Fa-f]{4})", line)
+                if m:
+                    pids.add(m.group(1).lower())
+
+            pick = next(iter(pids), None)
+            if not pick:
+                record = {"found": False}
+            else:
+                meta = AJZ_MODELS.get(pick, ("Ajazz AKP02 (9.2\" 1920x462)", 1920, 462, "bar"))
+                record = {
+                    "found": True,
+                    "pid": pick,
+                    "model": meta[0],
+                    "resolution": f"{meta[1]}x{meta[2]}",
+                    "width": meta[1],
+                    "height": meta[2],
+                    "shape": meta[3],
+                    "brightness": 80,
+                    "source": "pnp_enumeration",
+                }
+            _AJZ_CACHE["res"] = record
+            _AJZ_CACHE["at"] = now
+            return record
+        except Exception as e:
+            log.warning("[rgb.detect] Ajazz USB probe failed: %s", e)
+            record = {"found": False}
+            _AJZ_CACHE["res"] = record
+            _AJZ_CACHE["at"] = now
             return record

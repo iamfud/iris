@@ -17,6 +17,8 @@ import importlib.util
 import json
 import logging
 import os
+import threading
+import time
 import psutil
 import paths
 
@@ -308,10 +310,13 @@ def start_all(cfg, serial_sender=None, overlays=None):
     _overlays = overlays
     discover_plugins()
     check_plugins()
+    _ensure_theme_watcher()
 
 
 def stop_all():
     """Stop all running plugins."""
+    global _theme_watcher_running
+    _theme_watcher_running = False
     for name, inst in list(_instances.items()):
         try:
             inst.stop()
@@ -503,9 +508,144 @@ def _stop_plugin(name):
     sync_plugin_themes()
 
 
-# ── Dynamic Plugin Theme Engine ────────────────────────────────
+# ── Dynamic Plugin & App Theme Engine ──────────────────────────
 _saved_base_theme = None
 _active_themed_plugin = None
+_active_themed_exe = None
+_themed_exe_has_run = False
+_themed_exe_started_at = 0.0
+_themed_exe_grace_period = 8.0
+_themed_exe_miss_count = 0
+_themed_exe_revert_misses = 3
+
+_theme_watcher_thread = None
+_theme_watcher_running = False
+
+_theme_lock = threading.RLock()
+
+
+def _theme_locked(fn):
+    """Serialize theme-engine state transitions across watcher/poll/HTTP threads."""
+    def _wrapped(*args, **kwargs):
+        with _theme_lock:
+            return fn(*args, **kwargs)
+    _wrapped.__name__ = getattr(fn, "__name__", "wrapped")
+    return _wrapped
+
+_COLOR_PRESETS = {
+    "green": {"mode": "custom", "accent": "#04ff00", "neon": "#00dd00"},
+    "red": {"mode": "custom", "accent": "#ff0055", "neon": "#ff3333"},
+    "blue": {"mode": "custom", "accent": "#0088ff", "neon": "#00ddff"},
+    "purple": {"mode": "iris", "accent": "#b23af6", "neon": "#48b2e9"},
+    "orange": {"mode": "custom", "accent": "#ff7700", "neon": "#ffaa00"},
+    "cyan": {"mode": "custom", "accent": "#00ffff", "neon": "#00b2e9"},
+    "yellow": {"mode": "custom", "accent": "#ffff00", "neon": "#ffcc00"},
+    "white": {"mode": "monochrome", "accent": "#666666", "neon": "#ffffff"},
+}
+
+
+def get_user_default_theme() -> dict:
+    """Return the user's default theme from active running config or disk."""
+    cur_th = (_cfg.get("theme") if isinstance(_cfg, dict) else {}) or {}
+    if cur_th and isinstance(cur_th, dict) and (cur_th.get("mode") or cur_th.get("accent") or cur_th.get("neon")):
+        return {
+            "mode": cur_th.get("mode", "iris"),
+            "accent": cur_th.get("accent", "#B23AF6"),
+            "neon": cur_th.get("neon", "#48B2E9"),
+        }
+    try:
+        from config import load_config
+        cfg = load_config()
+        th = cfg.get("theme")
+        if th and isinstance(th, dict) and (th.get("mode") or th.get("accent") or th.get("neon")):
+            return {
+                "mode": th.get("mode", "iris"),
+                "accent": th.get("accent", "#B23AF6"),
+                "neon": th.get("neon", "#48B2E9"),
+            }
+    except Exception:
+        pass
+    return {
+        "mode": "iris",
+        "accent": "#B23AF6",
+        "neon": "#48B2E9",
+    }
+
+
+@_theme_locked
+def restore_default_theme(force: bool = False):
+    """Restore Iris global theme, hardware lighting, and addons back to default."""
+    global _saved_base_theme, _active_themed_plugin, _active_themed_exe, _themed_exe_has_run, _themed_exe_miss_count
+    if not force and _active_themed_plugin is None and _active_themed_exe is None and _saved_base_theme is None:
+        return
+    base_theme = _saved_base_theme or get_user_default_theme()
+    log.info("[pm] restoring default theme: %s", base_theme)
+    if isinstance(_cfg, dict):
+        _cfg["theme"] = dict(base_theme)
+    _saved_base_theme = None
+    _active_themed_plugin = None
+    _active_themed_exe = None
+    _themed_exe_has_run = False
+    _themed_exe_miss_count = 0
+    _broadcast_theme(base_theme)
+    try:
+        from lighting_service import get_lighting_service
+        get_lighting_service().evaluate_state(force=True)
+    except Exception as ex:
+        log.debug("[pm] lighting evaluate_state failed: %s", ex)
+
+
+@_theme_locked
+def track_active_app_lighting(exe_name: str, openrgb_profile: str = None, apply_inferred_theme: bool = True):
+    """Track an active app launched with custom lighting/theme so it reverts on exit."""
+    global _active_themed_exe, _themed_exe_has_run, _themed_exe_started_at, _saved_base_theme, _active_themed_plugin, _themed_exe_miss_count
+    if not exe_name:
+        return
+    clean_exe = os.path.basename(str(exe_name)).strip().lower()
+    _active_themed_exe = clean_exe
+    _themed_exe_has_run = False
+    _themed_exe_started_at = time.time()
+    _themed_exe_miss_count = 0
+
+    if _saved_base_theme is None:
+        _saved_base_theme = get_user_default_theme()
+
+    if apply_inferred_theme and openrgb_profile:
+        prof_name = str(openrgb_profile).strip().lower()
+        prof_token = prof_name.split()[0].replace("(", "").replace(")", "").replace("[", "").replace("]", "")
+        if prof_token in _COLOR_PRESETS:
+            apply_global_theme(_COLOR_PRESETS[prof_token], source_id=clean_exe)
+        else:
+            _active_themed_plugin = clean_exe
+
+    _ensure_theme_watcher()
+
+
+def _ensure_theme_watcher():
+    """Ensure the background theme watcher loop is running."""
+    global _theme_watcher_thread, _theme_watcher_running
+    if _theme_watcher_running and _theme_watcher_thread and _theme_watcher_thread.is_alive():
+        return
+    _theme_watcher_running = True
+    _theme_watcher_thread = threading.Thread(
+        target=_theme_watcher_loop, daemon=True, name="iris-theme-watcher"
+    )
+    _theme_watcher_thread.start()
+
+
+def _theme_watcher_loop():
+    """Periodic watcher ensuring themes and hardware lighting revert when apps terminate."""
+    global _theme_watcher_running
+    while _theme_watcher_running:
+        try:
+            sync_plugin_themes()
+        except Exception as ex:
+            log.debug("[pm] theme watcher loop error: %s", ex)
+
+        # Check every 1s while a themed app/profile is active for snappy reversion;
+        # idle check every 2.5s otherwise.
+        sleep_dur = 1.0 if (_active_themed_plugin or _active_themed_exe) else 2.5
+        time.sleep(sleep_dur)
 
 
 def is_exe_foreground(exe_name: str) -> bool:
@@ -536,19 +676,20 @@ def _is_plugin_focused(manifest, pcfg):
     return is_exe_foreground(exe_target)
 
 
+@_theme_locked
 def sync_plugin_themes():
-    """Latch-on-load theme engine: apply a profile theme when its game starts running.
+    """Latch-on-load theme engine: apply a profile or app theme when its game starts running.
 
     Rules:
-    - Theme is latched when a profile's exe starts running (regardless of window focus).
+    - Theme is latched when a profile's or macro's exe starts running (regardless of window focus).
     - Theme is NOT removed on alt-tab to desktop or unthemed apps.
     - If multiple running profiles have themes, the one whose window is currently focused
       wins. If the foreground window belongs to no themed profile (e.g. desktop, browser),
       the last active themed profile's theme stays latched.
-    - Theme is restored to the user's saved base only when NO themed profile is running.
+    - Theme is restored to user's default theme when NO themed profile or app is running.
     - Per-profile flags respected: `theme_override` (CC), `lighting_theme_enabled` (OpenRGB).
     """
-    global _saved_base_theme, _active_themed_plugin
+    global _saved_base_theme, _active_themed_plugin, _active_themed_exe, _themed_exe_has_run, _themed_exe_miss_count
     if not _cfg or not isinstance(_cfg, dict):
         return
 
@@ -587,8 +728,6 @@ def sync_plugin_themes():
         pexe = str(p.get("exe") or "").lower().replace(".exe", "").strip()
         if not pexe or pexe not in running_exes:
             continue
-        # A profile qualifies if it has a theme, OR if either feature toggle is on.
-        # Don't use the theme dict as a gate — the CC/lighting flags are independent.
         th = _profile_theme(p)
         wants_cc = p.get("theme_override", True)
         wants_lighting = p.get("lighting_theme_enabled", True)
@@ -597,7 +736,6 @@ def sync_plugin_themes():
             covered_exes.add(pexe)
 
     # ── Also check legacy plugin-level themes (plugins without a profile) ──
-    # (keeps backward compat for plugin manifests that declare theme directly)
     legacy_candidate = None
     for name, manifest in _manifests.items():
         theme_def = manifest.get("theme")
@@ -610,13 +748,11 @@ def sync_plugin_themes():
             continue
         exe_target = pcfg.get("exe_path") or manifest.get("exe_default") or ""
         exe_key = str(exe_target).lower().replace(".exe", "").strip()
-        # Only pick up legacy if NOT already covered by a real profile
         if exe_key not in covered_exes and exe_key in running_exes:
             legacy_candidate = (name, theme_def)
             break
 
     if not running_themed and legacy_candidate:
-        # Wrap legacy plugin as a synthetic profile for uniform handling
         name, theme_def = legacy_candidate
         synthetic = {
             "id": f"__plugin_{name}__",
@@ -626,19 +762,41 @@ def sync_plugin_themes():
         }
         running_themed.append((synthetic, theme_def))
 
-    if not running_themed:
-        # ── No themed profiles running → restore base user theme ──
-        if _active_themed_plugin is not None and _saved_base_theme is not None:
-            log.info("[pm] no themed profile running — restoring base theme: %s", _saved_base_theme)
-            _cfg["theme"] = dict(_saved_base_theme)
-            _broadcast_theme(_saved_base_theme)
-            _saved_base_theme = None
-            _active_themed_plugin = None
+    # ── Check if macro-launched themed exe is running ──
+    macro_exe_running = False
+    if _active_themed_exe:
+        try:
+            from win_platform import is_process_running
+            is_running = is_process_running(_active_themed_exe, ttl=1.0)
+            if is_running:
+                _themed_exe_has_run = True
+                _themed_exe_miss_count = 0
+                macro_exe_running = True
+            elif not _themed_exe_has_run and (time.time() - _themed_exe_started_at < _themed_exe_grace_period):
+                # Game is still launching — keep latch active during grace period
+                macro_exe_running = True
+            else:
+                # Hysteresis: absorb transient misses (launch lag, launcher handoff,
+                # scan gaps) by requiring several consecutive 'not running' probes
+                # before the latch is dropped.
+                _themed_exe_miss_count += 1
+                macro_exe_running = _themed_exe_miss_count < _themed_exe_revert_misses
+        except Exception:
+            # Treat probe failures as transient misses too — never revert on one error.
+            _themed_exe_miss_count += 1
+            macro_exe_running = _themed_exe_miss_count < _themed_exe_revert_misses
+
+    if not running_themed and not macro_exe_running:
+        # ── No themed profiles or apps running → restore default theme ──
+        if _active_themed_plugin is not None or _saved_base_theme is not None or _active_themed_exe is not None:
+            restore_default_theme()
+        return
+
+    if not running_themed and macro_exe_running:
+        # Macro app is running and active — keep current theme latched
         return
 
     # ── One or more themed profiles running ──
-    # Pick which one to show: if any running themed profile is currently focused, use it.
-    # Otherwise keep the currently active one (sticky latch — do NOT unload).
     selected_profile = None
     selected_theme = None
 
@@ -660,31 +818,24 @@ def sync_plugin_themes():
                 break
 
         if selected_profile is None:
-            # Foreground is not a themed profile (e.g. desktop, browser) → keep current latch
             if _active_themed_plugin is not None:
-                # Already latched — do nothing (sticky)
                 return
-            # First time: default to the first running themed profile
             selected_profile, selected_theme = running_themed[0]
 
-    # ── Apply theme if it changed ──
     candidate_id = selected_profile.get("id") or selected_profile.get("exe") or ""
     if _active_themed_plugin == candidate_id:
-        return  # Already active — nothing to do
+        return
 
     # Snapshot user's base theme before first takeover
     if _saved_base_theme is None:
-        cur_th = _cfg.get("theme") or {}
-        _saved_base_theme = {
-            "mode": cur_th.get("mode", "iris"),
-            "accent": cur_th.get("accent", "#B23AF6"),
-            "neon": cur_th.get("neon", "#48B2E9"),
-        }
+        _saved_base_theme = get_user_default_theme()
 
     _active_themed_plugin = candidate_id
+    if selected_profile.get("exe"):
+        _active_themed_exe = os.path.basename(str(selected_profile.get("exe"))).strip().lower()
+        _themed_exe_has_run = True
+        _themed_exe_miss_count = 0
 
-    # Control-Centre theme — re-resolve at apply time so manifest fallback works
-    # even when selected_theme was stored as {} (no custom colours on the profile).
     if selected_profile.get("theme_override", True):
         resolved_theme = selected_theme if (selected_theme.get("accent") or selected_theme.get("neon")) \
             else _profile_theme(selected_profile)
@@ -698,7 +849,6 @@ def sync_plugin_themes():
             log.info("[pm] latched game theme for '%s': %s", candidate_id, theme_payload)
             _broadcast_theme(theme_payload)
 
-    # Hardware Lighting theme
     if selected_profile.get("lighting_theme_enabled", True):
         try:
             from lighting_service import get_lighting_service
@@ -706,35 +856,58 @@ def sync_plugin_themes():
         except Exception as ex:
             log.debug("[pm] lighting evaluate_state failed: %s", ex)
 
+    _ensure_theme_watcher()
+
 
 def _broadcast_theme(theme_dict):
+    # 1. WebSocket broadcast to web surfaces (phone PWA, kraken, theme preview)
     try:
         import ws_bridge
         ws_bridge.broadcast({"type": "theme", "theme": theme_dict})
     except Exception:
         pass
 
+    # 2. Notify all active plugin instances
+    for pname, inst in list(_instances.items()):
+        if hasattr(inst, "on_theme"):
+            try:
+                inst.on_theme(theme_dict)
+            except Exception as ex:
+                log.debug("[pm] plugin %s on_theme error: %s", pname, ex)
 
+    # 3. Notify physical display drivers
+    try:
+        from displays.registry import dispatch_theme
+        dispatch_theme(theme_dict)
+    except Exception:
+        pass
+
+    # 4. Notify main desktop window if running
+    try:
+        import ws_bridge
+        _app = getattr(ws_bridge, "_app", None)
+        if _app and getattr(_app, "_main_win", None):
+            _app._root.after_idle(_app._main_win.reload_theme)
+    except Exception:
+        pass
+
+
+@_theme_locked
 def apply_global_theme(theme_dict: dict, source_id: str = None):
     """Explicitly apply a global theme across all Iris surfaces.
 
     Broadcasts over WebSocket to phone panel, theme.html, and kraken.html,
     and triggers Hardware Lighting (OpenRGB / connected LEDs).
     """
-    global _saved_base_theme, _active_themed_plugin
+    global _saved_base_theme, _active_themed_plugin, _active_themed_exe, _themed_exe_has_run, _themed_exe_started_at, _themed_exe_miss_count
     if not _cfg or not isinstance(_cfg, dict):
         return
     if not isinstance(theme_dict, dict):
         return
 
     # Snapshot user's base theme before first takeover if not already saved
-    if _saved_base_theme is None and source_id:
-        cur_th = _cfg.get("theme") or {}
-        _saved_base_theme = {
-            "mode": cur_th.get("mode", "iris"),
-            "accent": cur_th.get("accent", "#B23AF6"),
-            "neon": cur_th.get("neon", "#48B2E9"),
-        }
+    if _saved_base_theme is None:
+        _saved_base_theme = get_user_default_theme()
 
     theme_payload = {
         "mode": theme_dict.get("mode", "custom"),
@@ -743,8 +916,17 @@ def apply_global_theme(theme_dict: dict, source_id: str = None):
     }
     _cfg["theme"] = theme_payload
     if source_id is not None:
-        _active_themed_plugin = source_id
-    log.info("[pm] applied global theme (source=%s): %s", source_id, theme_payload)
+        _active_themed_plugin = str(source_id)
+        base = os.path.basename(str(source_id)).strip().lower()
+        if base.endswith(".exe") or "." in base:
+            _active_themed_exe = base
+        else:
+            _active_themed_exe = base + ".exe"
+        _themed_exe_has_run = False
+        _themed_exe_started_at = time.time()
+        _themed_exe_miss_count = 0
+
+    log.info("[pm] applied global theme (source=%s, tracked_exe=%s): %s", source_id, _active_themed_exe, theme_payload)
     _broadcast_theme(theme_payload)
 
     # Hardware Lighting
@@ -754,7 +936,10 @@ def apply_global_theme(theme_dict: dict, source_id: str = None):
     except Exception as ex:
         log.debug("[pm] lighting evaluate_state failed: %s", ex)
 
+    _ensure_theme_watcher()
 
+
+@_theme_locked
 def latch_profile_by_id(profile_id: str) -> bool:
     """Latch a profile and apply its theme and lighting immediately."""
     global _cfg
@@ -777,7 +962,8 @@ def latch_profile_by_id(profile_id: str) -> bool:
                             th = mtheme
                             break
             if th and (th.get("accent") or th.get("neon")):
-                apply_global_theme(th, source_id=p.get("id"))
+                source = p.get("exe") or p.get("id")
+                apply_global_theme(th, source_id=source)
                 return True
             break
     return False

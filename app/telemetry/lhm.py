@@ -34,8 +34,8 @@ class LhmManager:
             c = Computer()
             c.IsCpuEnabled = True
             c.IsGpuEnabled = True
-            c.IsMemoryEnabled = True
-            c.IsMotherboardEnabled = True
+            c.IsMemoryEnabled = False
+            c.IsMotherboardEnabled = False
             c.Open()
             self.computer = c
             self.enabled = True
@@ -58,6 +58,9 @@ class LhmManager:
             "gpu_voltage": None,
             "gpu_pcie_rx": None,
             "gpu_pcie_tx": None,
+            "vram_used": None,
+            "vram_total": None,
+            "vram_pct": None,
         }
         if not self.enabled or self.computer is None:
             return data
@@ -97,10 +100,17 @@ class LhmManager:
                             data["gpu_clocks"][sname] = int(val)
                         elif stype == "Load":
                             data["gpu_loads"][sname] = round(val, 1)
+                            if "Memory" in sname or "VRAM" in sname:
+                                data["vram_pct"] = round(val, 1)
                         elif stype == "Power" and ("Package" in sname or "GPU" in sname):
                             data["gpu_power"] = round(val, 1)
                         elif stype == "Voltage" and "Core" in sname:
                             data["gpu_voltage"] = round(val, 2)
+                        elif stype == "SmallData":
+                            if "Used" in sname and ("Memory" in sname or "VRAM" in sname):
+                                data["vram_used"] = round(val / 1024.0, 2)
+                            elif "Total" in sname and ("Memory" in sname or "VRAM" in sname):
+                                data["vram_total"] = round(val / 1024.0, 2)
                         elif stype == "Throughput":
                             if "Rx" in sname:
                                 data["gpu_pcie_rx"] = val

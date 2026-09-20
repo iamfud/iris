@@ -59,8 +59,8 @@ class TelemetryEngine:
         self._last_snapshot: Dict[str, Any] = {}
         self._running = False
         self._thread: Optional[threading.Thread] = None
-
-        psutil.cpu_percent(interval=None)  # warm-up
+        self._last_cpu_times = psutil.cpu_times()
+        self._last_cpu_pct = 0.0
 
     def start(self, interval_sec: float = 1.0):
         if self._running:
@@ -81,6 +81,11 @@ class TelemetryEngine:
                 snap = self.collect()
                 with self._snapshot_lock:
                     self._last_snapshot = snap
+                try:
+                    from displays.registry import dispatch_stats
+                    dispatch_stats(snap)
+                except Exception as dex:
+                    log.debug("[telemetry] dispatch_stats error: %s", dex)
             except Exception as ex:
                 log.debug("[telemetry] Collect cycle error: %s", ex)
             time.sleep(self._interval)
@@ -93,8 +98,22 @@ class TelemetryEngine:
 
     def collect(self) -> Dict[str, Any]:
         """Collect a complete snapshot of hardware telemetry."""
-        # 1. CPU (psutil load & cores)
-        cpu_pct = psutil.cpu_percent(interval=None)
+        # 1. CPU (psutil load & cores via independent cpu_times delta)
+        cpu_pct = self._last_cpu_pct
+        try:
+            now_times = psutil.cpu_times()
+            if self._last_cpu_times:
+                delta_user = now_times.user - self._last_cpu_times.user
+                delta_sys = now_times.system - self._last_cpu_times.system
+                delta_idle = now_times.idle - self._last_cpu_times.idle
+                total = delta_user + delta_sys + delta_idle
+                if total > 0:
+                    busy = total - delta_idle
+                    cpu_pct = round(max(0.0, min(100.0, (busy / total) * 100.0)), 1)
+                    self._last_cpu_pct = cpu_pct
+            self._last_cpu_times = now_times
+        except Exception:
+            pass
         cores_str = f"{psutil.cpu_count(logical=False)}C / {psutil.cpu_count(logical=True)}T"
 
         # 2. System Memory & Storage (psutil)
@@ -135,10 +154,16 @@ class TelemetryEngine:
         nvml_data = self._nvml.read()
         if gpu_core_temp is None:
             gpu_core_temp = nvml_data.get("gpu_temp")
+        if gpu_core_mhz is None:
+            gpu_core_mhz = nvml_data.get("gpu_core_mhz")
+        if gpu_mem_mhz is None:
+            gpu_mem_mhz = nvml_data.get("gpu_mem_mhz")
+        if gpu_load is None:
+            gpu_load = nvml_data.get("gpu_load")
 
-        vram_used = nvml_data.get("vram_used")
-        vram_total = nvml_data.get("vram_total")
-        vram_pct = nvml_data.get("vram_pct")
+        vram_used = nvml_data.get("vram_used") or lhm_data.get("vram_used")
+        vram_total = nvml_data.get("vram_total") or lhm_data.get("vram_total")
+        vram_pct = nvml_data.get("vram_pct") if nvml_data.get("vram_pct") is not None else lhm_data.get("vram_pct")
         gpu_power = nvml_data.get("power_w") or lhm_data.get("gpu_power")
         gpu_power_lim = nvml_data.get("power_lim_w")
         gpu_fan = nvml_data.get("fan_pct")
@@ -171,11 +196,14 @@ class TelemetryEngine:
 
         # CPU package temperature
         cpu_temp = lhm_data.get("cpu_temp")
+        if (cpu_pct == 0.0 or cpu_pct is None) and lhm_data.get("cpu_load"):
+            cpu_pct = lhm_data["cpu_load"]
 
         snapshot = {
             # CPU
             "cpu": cpu_pct,
             "cpu_usage": cpu_pct,
+            "cpu_pct": cpu_pct,
             "cpu_freq": freq_str,
             "cpu_boost_peak": freq_str,
             "cpu_freq_avg": f"{avg_ghz:.2f} GHz" if avg_ghz else "",

@@ -1,0 +1,78 @@
+{
+  "name": "akp02_stats",
+  "version": "1.0.0",
+  "display_name": "AKP02 PC Stats Display",
+  "description": "Renders high-fidelity PC hardware telemetry dashboard to the AKP02 hardware panel via headless Edge CDP.",
+  "icon": "monitor",
+  "type": "service",
+  "author": "Rob Scard",
+  "message_not_running": "AKP02 panel not detected or headless renderer disabled.",
+  "min_api_version": "2.0",
+  "capabilities": {
+    "status": true,
+    "configuration": true,
+    "outputs": false,
+    "live_data": true,
+    "actions": false,
+    "diagnostics": false
+  },
+  "labels": {
+    "status": "HARDWARE & RENDERER STATUS",
+    "configuration": "DISPLAY SETTINGS",
+    "live_data": "RUNTIME METRICS"
+  },
+  "status": [
+    { "key": "status_code", "label": "Status", "source": "lifecycle" },
+    { "key": "panel_connected", "label": "AKP02 Panel", "source": "plugin" },
+    { "key": "browser_connected", "label": "Headless Renderer", "source": "plugin" },
+    { "key": "render_fps", "label": "Render FPS", "source": "plugin" }
+  ],
+  "live_data": {
+    "title": "Panel Telemetry",
+    "fields": [
+      { "key": "panel_connected", "label": "AKP02 Connected", "type": "boolean" },
+      { "key": "browser_connected", "label": "Browser Active", "type": "boolean" },
+      { "key": "render_fps", "label": "Current FPS", "type": "float" }
+    ]
+  },
+  "settings": [
+    {
+      "title": "AKP02 Panel Settings",
+      "controls": [
+        {
+          "type": "toggle",
+          "key": "enabled",
+          "label": "Enabled",
+          "description": "Stream PC stats dashboard to AKP02 panel",
+          "default": true
+        },
+        {
+          "type": "slider",
+          "key": "target_fps",
+          "label": "Target Render FPS",
+          "min": 1,
+          "max": 10,
+          "step": 1,
+          "unit": "fps",
+          "default": 4
+        },
+        {
+          "type": "slider",
+          "key": "brightness",
+          "label": "Display Brightness",
+          "min": 10,
+          "max": 100,
+          "step": 5,
+          "unit": "%",
+          "default": 85
+        },
+        {
+          "type": "text",
+          "key": "accent_color",
+          "label": "Gauge Accent Color",
+          "description": "Custom hex color (e.g. #00d26a or #48B2E9). Leave blank for default."
+        }
+      ]
+    }
+  ]
+}

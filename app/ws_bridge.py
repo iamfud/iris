@@ -213,10 +213,16 @@ def _ws_process_request(connection, request):
 
 async def _serve_ws(port):
     host = _bind_host()
-    async with websockets.serve(
-            handler, host, port, process_request=_ws_process_request):
-        log.info("WS bridge listening on %s:%d", host, port)
-        await asyncio.Future()
+    try:
+        async with websockets.serve(
+                handler, host, port, process_request=_ws_process_request):
+            log.info("WS bridge listening on %s:%d", host, port)
+            await asyncio.Future()
+    except OSError as e:
+        if getattr(e, "winerror", None) == 10048 or getattr(e, "errno", None) == 10048:
+            log.warning("WS bridge port %d is already in use (another instance may be running).", port)
+            return
+        raise
 
 
 # ── HTTP server (HTML + API) ───────────────────────────────────
@@ -480,6 +486,10 @@ class _RequestHandler(
             self._send_json(_get_panel_live(client_cv))
         elif self.path == "/api/kraken/detect":
             self._handle_kraken_detect()
+        elif self.path in ("/api/ajz/detect", "/api/akp02/detect"):
+            self._handle_ajz_detect()
+        elif self.path == "/api/lcd/detect":
+            self._handle_lcd_detect()
         elif self.path == "/api/panel/password/status":
             self._handle_password_status()
         elif self.path == "/api/panel/entities":
@@ -1098,6 +1108,12 @@ class _RequestHandler(
                     set_startup(bool(body["run_at_startup"]))
                 except Exception as e:
                     log.warning("[http] failed to apply run_at_startup: %s", e)
+            if "open_with_notes" in body:
+                try:
+                    from shell_open import set_open_with
+                    set_open_with(bool(body["open_with_notes"]))
+                except Exception as e:
+                    log.warning("[http] failed to apply open_with_notes: %s", e)
             if "hotkey_overlay" in body or "hotkey_toolbar" in body or "hotkey_borderless" in body:
                 if hasattr(_app, "_reregister_hotkey"):
                     try:
@@ -1113,6 +1129,12 @@ class _RequestHandler(
             broadcast({"type": "config", "config": body})
             if "theme" in body:
                 broadcast({"type": "theme", "theme": body["theme"], "reload": True})
+                try:
+                    import plugin_manager
+                    if plugin_manager._active_themed_plugin or plugin_manager._active_themed_exe:
+                        plugin_manager._saved_base_theme = dict(body["theme"])
+                except Exception:
+                    pass
                 if getattr(_app, "_main_win", None):
                     try:
                         _app._root.after_idle(_app._main_win.reload_theme)
@@ -1209,10 +1231,6 @@ class _RequestHandler(
 
 def _get_plugin_state():
     import plugin_manager
-    try:
-        plugin_manager.sync_plugin_themes()
-    except Exception:
-        pass
     result = {}
     for name, inst in list(plugin_manager._instances.items()):
         try:
@@ -1692,9 +1710,15 @@ def start_http(port=15502):
     os.makedirs(_HTML_DIR, exist_ok=True)
     host = _bind_host()
     handler = partial(_RequestHandler, directory=_HTML_DIR)
-    server = _QuietThreadingHTTPServer((host, port), handler)
-    log.info("HTTP server listening on %s:%d (serving %s)", host, port, _HTML_DIR)
-    server.serve_forever()
+    try:
+        server = _QuietThreadingHTTPServer((host, port), handler)
+        log.info("HTTP server listening on %s:%d (serving %s)", host, port, _HTML_DIR)
+        server.serve_forever()
+    except OSError as e:
+        if getattr(e, "winerror", None) == 10048 or getattr(e, "errno", None) == 10048:
+            log.warning("HTTP server port %d is already in use (another instance may be running).", port)
+            return
+        raise
 
 
 # ── Public API ─────────────────────────────────────────────────

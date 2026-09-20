@@ -19,6 +19,12 @@ import time
 
 log = logging.getLogger("iris.panel_runtime")
 
+try:
+    import psutil
+    psutil.cpu_percent(interval=None)
+except Exception:
+    pass
+
 
 def _app():
     import ws_bridge
@@ -53,28 +59,95 @@ def _port():
 
 
 def _gauges():
+    ram_pct = None
+    try:
+        import psutil
+        ram_pct = round(psutil.virtual_memory().percent, 1)
+    except Exception:
+        pass
+
+    stats = {
+        "available": True if ram_pct is not None else False,
+        "cpu_pct": None,
+        "ram_pct": ram_pct,
+        "cpu_temp": None,
+        "gpu_temp": None,
+        "fps": None,
+        "fps_max": 60,
+        "refresh_rate": 60,
+        "cpu_temp_unit": "°C",
+        "gpu_temp_unit": "°C",
+        "cpu_temp_max": 100,
+        "gpu_temp_max": 100,
+    }
+
+    # 1. Primary hardware telemetry from central TelemetryEngine
+    try:
+        from telemetry import get_telemetry_engine
+        te = get_telemetry_engine()
+        if te:
+            snap = te.get_snapshot()
+            if snap:
+                stats["available"] = True
+                snap_cpu = snap.get("cpu_pct") if snap.get("cpu_pct") is not None else (snap.get("cpu_usage") if snap.get("cpu_usage") is not None else snap.get("cpu"))
+                if snap_cpu is not None:
+                    stats["cpu_pct"] = snap_cpu
+
+                if snap.get("ram_pct") is not None:
+                    stats["ram_pct"] = snap.get("ram_pct")
+
+                if snap.get("gpu_temp") is not None:
+                    stats["gpu_temp"] = snap.get("gpu_temp")
+                if snap.get("cpu_temp") is not None:
+                    stats["cpu_temp"] = snap.get("cpu_temp")
+                if snap.get("fps") is not None:
+                    stats["fps"] = snap.get("fps")
+    except Exception:
+        pass
+
+    if stats["cpu_pct"] is None:
+        try:
+            import psutil
+            stats["cpu_pct"] = round(psutil.cpu_percent(interval=None), 1)
+        except Exception:
+            pass
+
+    # 2. Plugin override if pc_stats is active (MSI Afterburner / RTSS)
     try:
         import plugin_manager
         inst = plugin_manager.get("pc_stats")
         if inst is not None and hasattr(inst, "poll"):
             p = inst.poll()
-            return {
-                "available": bool(p.get("available")),
-                "cpu_temp": p.get("cpu_temp"),
-                "gpu_temp": p.get("gpu_temp"),
-                "fps": p.get("fps"),
-                "fps_max": p.get("fps_max") or p.get("refresh_rate") or 60,
-                "refresh_rate": p.get("refresh_rate") or p.get("fps_max") or 60,
-                "cpu_pct": p.get("cpu_pct"),
-                "cpu_temp_unit": p.get("cpu_temp_unit"),
-                "cpu_temp_max": p.get("cpu_temp_max"),
-                "gpu_temp_unit": p.get("gpu_temp_unit"),
-                "gpu_temp_max": p.get("gpu_temp_max"),
-            }
+            if p.get("available"):
+                if p.get("cpu_pct") is not None:
+                    stats["cpu_pct"] = p.get("cpu_pct")
+                if p.get("cpu_temp") is not None:
+                    stats["cpu_temp"] = p.get("cpu_temp")
+                if p.get("gpu_temp") is not None:
+                    stats["gpu_temp"] = p.get("gpu_temp")
+                if p.get("fps") is not None:
+                    stats["fps"] = p.get("fps")
+                if p.get("fps_max"):
+                    stats["fps_max"] = p.get("fps_max")
+                if p.get("refresh_rate"):
+                    stats["refresh_rate"] = p.get("refresh_rate")
+                if p.get("cpu_temp_unit"):
+                    stats["cpu_temp_unit"] = p.get("cpu_temp_unit")
+                if p.get("cpu_temp_max"):
+                    stats["cpu_temp_max"] = p.get("cpu_temp_max")
+                if p.get("gpu_temp_unit"):
+                    stats["gpu_temp_unit"] = p.get("gpu_temp_unit")
+                if p.get("gpu_temp_max"):
+                    stats["gpu_temp_max"] = p.get("gpu_temp_max")
     except Exception:
         pass
-    return {"available": False, "cpu_temp": None, "gpu_temp": None,
-            "fps": None, "fps_max": 60, "refresh_rate": 60, "cpu_pct": None}
+
+    # 3. Fallback: if cpu_temp is unavailable (e.g. non-admin LHM), provide cpu_pct so phone gauge doesn't show 0
+    if stats["cpu_temp"] is None and stats["cpu_pct"] is not None:
+        stats["cpu_temp"] = stats["cpu_pct"]
+        stats["cpu_temp_unit"] = "%"
+
+    return stats
 
 
 def _volume():
@@ -169,11 +242,9 @@ def _default_audio_output():
 
 def live_payload(cfg, client_cv=None):
     """Snapshot for GET /api/panel/live (cheap; called every ~500ms)."""
-    try:
-        import plugin_manager
-        plugin_manager.sync_plugin_themes()
-    except Exception:
-        pass
+    # NOTE: theme latching/reverting is intentionally NOT run here — it is driven
+    # by the theme watcher thread (plugin_manager._theme_watcher_loop) to avoid
+    # racing app launches with a half-second poll cadence.
     from panel_actions import ensure_panel_defaults, resolve_panel_board
     ensure_panel_defaults(cfg)
     board, active_ids, fg = resolve_panel_board(cfg)
@@ -248,6 +319,24 @@ def execute_slot(slot):
                 return {"ok": True}
 
             def _run_macro():
+                # Detect any executable launched by this macro or slot
+                launched_exe = None
+                if slot.get("shortcut_path"):
+                    sp = str(slot.get("shortcut_path")).strip()
+                    if sp.lower().endswith(".exe"):
+                        launched_exe = os.path.basename(sp)
+                for st in actions:
+                    if isinstance(st, dict) and st.get("type") in ("shortcut", "app", "exe"):
+                        sp = str(st.get("path") or st.get("shortcut_path") or "").strip()
+                        if sp.lower().endswith(".exe"):
+                            launched_exe = os.path.basename(sp)
+                            break
+
+                has_explicit_theme = any(
+                    isinstance(st, dict) and st.get("type") in ("global_theme", "theme")
+                    for st in actions
+                )
+
                 for step in actions:
                     if not isinstance(step, dict):
                         continue
@@ -260,18 +349,13 @@ def execute_slot(slot):
                                 import plugin_manager
                                 tgt = step.get("theme") or step.get("profile") or step.get("value") or "__base__"
                                 if tgt == "__base__":
-                                    if plugin_manager._saved_base_theme:
-                                        plugin_manager.apply_global_theme(plugin_manager._saved_base_theme)
-                                        plugin_manager._saved_base_theme = None
-                                        plugin_manager._active_themed_plugin = None
-                                    else:
-                                        plugin_manager.apply_global_theme({"mode": "iris", "accent": "#B23AF6", "neon": "#48B2E9"})
+                                    plugin_manager.restore_default_theme(force=True)
                                 elif tgt == "preset:iris":
-                                    plugin_manager.apply_global_theme({"mode": "iris", "accent": "#B23AF6", "neon": "#48B2E9"})
+                                    plugin_manager.apply_global_theme({"mode": "iris", "accent": "#B23AF6", "neon": "#48B2E9"}, source_id=launched_exe)
                                 elif tgt == "preset:monochrome":
-                                    plugin_manager.apply_global_theme({"mode": "monochrome", "accent": "#666666", "neon": "#FFFFFF"})
+                                    plugin_manager.apply_global_theme({"mode": "monochrome", "accent": "#666666", "neon": "#FFFFFF"}, source_id=launched_exe)
                                 elif isinstance(tgt, dict):
-                                    plugin_manager.apply_global_theme(tgt)
+                                    plugin_manager.apply_global_theme(tgt, source_id=launched_exe)
                                 elif str(tgt).startswith("profile:"):
                                     pid = str(tgt).split(":", 1)[1]
                                     plugin_manager.latch_profile_by_id(pid)
@@ -280,7 +364,7 @@ def execute_slot(slot):
                                         "mode": "custom",
                                         "accent": step.get("accent") or "#B23AF6",
                                         "neon": step.get("neon") or "#48B2E9"
-                                    })
+                                    }, source_id=launched_exe)
                                 else:
                                     plugin_manager.latch_profile_by_id(str(tgt))
                             except Exception as th_ex:
@@ -297,6 +381,13 @@ def execute_slot(slot):
                             prof = step.get("profile") or step.get("openrgb_profile")
                             if prof:
                                 _openrgb_action({"openrgb_profile": prof})
+                                if launched_exe:
+                                    try:
+                                        import plugin_manager
+                                        infer_theme = not has_explicit_theme
+                                        plugin_manager.track_active_app_lighting(launched_exe, prof, apply_inferred_theme=infer_theme)
+                                    except Exception as trk_ex:
+                                        log.debug("[panel_runtime] track_active_app_lighting error: %s", trk_ex)
                         elif stype in ("home_assistant", "ha"):
                             script = step.get("entity") or step.get("script") or step.get("entity_id")
                             if script:

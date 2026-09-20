@@ -3,6 +3,7 @@
 - Never write code unless I explicitly ask you to.
 - Only answer questions, explain things, or make suggestions — no implementation without a direct order.
 - Always consult `HTML/style.css` and use existing design tokens, components, buttons, and layout classes. NEVER invent ad-hoc styling or custom creative styles. All pages must use `.content` / `.settings-content` for standard page scrolling and `.panel-modal-backdrop` / `.panel-modal` for modals.
+- NEVER put subheadings or subtitles in the app heading bar (e.g. no #header-subtitle under #header-title). The header must only contain the clean main title without secondary subtitle lines.
 
 # Orientation Cheatsheet (READ THIS FIRST — web panel landscape)
 

@@ -240,6 +240,25 @@ begin
   DelTree(ExpandConstant('{localappdata}\Iris\WebView2_Companion\EBWebView\Crashpad\reports'), True, True, True);
 end;
 
+procedure ConfigurePerformanceLogUsers;
+var
+  ResultCode: Integer;
+  PSCmd: String;
+begin
+  { Add the logged-in user to the Performance Log Users group (SID S-1-5-32-559).
+    This allows non-elevated PresentMon ETW traces for FPS tracking without requiring
+    the user to accept a UAC prompt on every boot. Uses PowerShell to resolve the group
+    via SID, ensuring compatibility with all localized Windows language editions. }
+  PSCmd := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "' +
+           '$sid = New-Object System.Security.Principal.SecurityIdentifier(''S-1-5-32-559''); ' +
+           '$grp = $sid.Translate([System.Security.Principal.NTAccount]).Value.Split(''\'')[-1]; ' +
+           '$u = (Get-ItemProperty ''HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\LogonUI'').LastLoggedOnUser; ' +
+           'if (-not $u) { $u = [Environment]::UserName }; ' +
+           'if ($u) { net.exe localgroup \"\"$grp\"\" \"\"$u\"\" /add 2>&1 | Out-Null }"';
+
+  Exec('powershell.exe', PSCmd, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   ResultCode: Integer;
@@ -251,6 +270,11 @@ begin
 
     { Configure RTSS exclusion profiles to prevent fatal RTSSHooks64.dll crashes }
     ConfigureRTSSExclusions;
+
+    { Grant logged-in user membership to Performance Log Users for seamless FPS ETW tracing }
+    WizardForm.StatusLabel.Caption := 'Configuring telemetry permissions...';
+    WizardForm.Update;
+    ConfigurePerformanceLogUsers;
 
     WizardForm.StatusLabel.Caption := 'Configuring dependencies...';
     WizardForm.Update;

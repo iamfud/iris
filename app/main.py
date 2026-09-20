@@ -31,6 +31,69 @@ if __name__ == "__main__":
     import ctypes
     import ctypes.wintypes
 
+    # Optional "open this file in Iris Notes" request from the Windows shell
+    # ("Open with → Iris Notes"). Passed through to the booting/forwarding logic.
+    _note_file = None
+    try:
+        _idx = sys.argv.index("--open-note")
+        if _idx + 1 < len(sys.argv):
+            _note_file = os.path.abspath(sys.argv[_idx + 1])
+    except (ValueError, IndexError):
+        pass
+
+    def _show_note_error(message):
+        try:
+            import tkinter as tk
+            from tkinter import messagebox
+            r = tk.Tk()
+            r.withdraw()
+            messagebox.showerror("Iris Notes", message, parent=r)
+            try:
+                r.destroy()
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _forward_note_to_running(path):
+        """Ask an already-running Iris instance to open the note, or fail loudly."""
+        import json
+        import urllib.request
+        url = "http://127.0.0.1:15502/api/notepad/open"
+        body = json.dumps({"file": path, "app": "general"}).encode("utf-8")
+        deadline = _time.time() + 45.0
+        last_err = None
+        while _time.time() < deadline:
+            try:
+                req = urllib.request.Request(
+                    url, data=body, method="POST",
+                    headers={"Content-Type": "application/json"},
+                )
+                with urllib.request.urlopen(req, timeout=3) as resp:
+                    if resp.status == 200:
+                        log.info("Forwarded open-note request to running Iris: %s", path)
+                        return True
+                    last_err = f"HTTP {resp.status}"
+            except Exception as e:
+                last_err = str(e)
+            _time.sleep(0.5)
+        # Explicit failure — never silently lose the requested file.
+        log.warning("Could not forward note to running Iris: %s", last_err)
+        _show_note_error(
+            "Could not open this note in Iris.\n\n%s\n\n(%s)" % (path, last_err or "Iris did not respond")
+        )
+        return False
+
+    # Single-instance enforcement: prevent multiple Iris instances from fighting over sockets
+    ERROR_ALREADY_EXISTS = 183
+    _iris_mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "Iris_AJZ_SingleInstance_Mutex")
+    if ctypes.windll.kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
+        if _note_file:
+            _forward_note_to_running(_note_file)
+            sys.exit(0)
+        log.warning("Another instance of Iris is already running. Exiting duplicate instance.")
+        sys.exit(0)
+
     import tkinter as tk
 
     import pystray
@@ -54,8 +117,9 @@ if __name__ == "__main__":
 
 
     class IrisApp:
-        def __init__(self):
+        def __init__(self, note_file=None):
             self.cfg = load_config()
+            self._note_file = note_file
             try:
                 import automations
                 automations.get_engine().load_config(self.cfg)
@@ -97,6 +161,16 @@ if __name__ == "__main__":
                     p.start()
                 except Exception as e:
                     log.warning(f"[provider] {p.__class__.__name__} failed: {e}")
+            try:
+                from telemetry import get_telemetry_engine
+                get_telemetry_engine().start(interval_sec=1.0)
+            except Exception as ex:
+                log.warning("[telemetry] startup failed: %s", ex)
+            try:
+                from displays import initialize_displays
+                initialize_displays(serial_sender, self.cfg)
+            except Exception as ex:
+                log.warning("[displays] Failed to initialize displays: %s", ex)
             start_plugins(self.cfg, serial_sender, overlays)
             try:
                 from lighting_service import get_lighting_service
@@ -243,6 +317,16 @@ if __name__ == "__main__":
             except Exception:
                 log.exception("stop_plugins failed during shutdown")
             try:
+                from telemetry import get_telemetry_engine
+                get_telemetry_engine().stop()
+            except Exception:
+                pass
+            try:
+                from displays import stop_displays
+                stop_displays()
+            except Exception:
+                pass
+            try:
                 import desktop_panel
                 desktop_panel.close_desktop_panel()
             except Exception:
@@ -279,9 +363,11 @@ if __name__ == "__main__":
             return self._main_win
 
         def _on_tray_click(self):
-            user32 = ctypes.windll.user32
-            fg = user32.GetForegroundWindow()
-            self._root.after(0, lambda: self._toggle_window(fg))
+            try:
+                import panel_window
+                self._root.after(0, panel_window.toggle_panel)
+            except Exception as ex:
+                log.warning("[main] Failed to toggle Command Centre: %s", ex)
 
         def _toggle_window(self, fg=None):
             mw = self._ensure_main_win()
@@ -527,6 +613,12 @@ if __name__ == "__main__":
             except Exception as exc:
                 log.warning("[startup] failed to apply run_at_startup at boot: %s", exc)
 
+            try:
+                from shell_open import set_open_with
+                set_open_with(bool(self.cfg.get("open_with_notes", True)))
+            except Exception as exc:
+                log.warning("[shell-open] failed to apply open-with registration at boot: %s", exc)
+
             serial_sender.set_port(self.cfg.get("serial_port", "auto"))
             serial_sender.add_line_callback(self._on_serial_line)
             saved_name = self.cfg.get("user_name", "").strip()
@@ -555,7 +647,19 @@ if __name__ == "__main__":
 
             threading.Thread(target=self._poll_serial, daemon=True, name="serial-poll").start()
             threading.Thread(target=self._plugin_check_loop, daemon=True, name="plugin-check").start()
+            if self._note_file:
+                # Defer until the Tk root is pumping and surfaces are up.
+                self._root.after(800, self._open_note_file)
             self._root.mainloop()
 
+        def _open_note_file(self):
+            try:
+                import notepad_window
+                notepad_window.open_notepad(
+                    filename=self._note_file, root=self._root, app=self
+                )
+            except Exception as ex:
+                log.warning("[main] failed to open note file %s: %s", self._note_file, ex)
 
-    IrisApp().run()
+
+    IrisApp(_note_file).run()

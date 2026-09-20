@@ -12,7 +12,7 @@
   <link rel="shortcut icon" href="icon.png?v=4">
   <link rel="apple-touch-icon" sizes="180x180" href="icon-180.png?v=4">
   <link rel="manifest" href="manifest.json?v=4">
-  <link rel="stylesheet" href="style.css?v=342">
+  <link rel="stylesheet" href="style.css?v=345">
   <script>
     window.onerror = function (msg, url, line, col, error) {
       console.error("[Iris Fatal UI Error]", msg, url, line, col, error);
@@ -27,43 +27,31 @@
         <img class="logo-circle" src="Iris_full.png" alt="Iris">
         <div class="logo-text">
           <h2>Iris</h2>
-          <span>System Interface</span>
+          <span>Command Centre</span>
         </div>
       </div>
       <nav>
-        <button type="button" class="nav-item active" data-page="dashboard" aria-current="page">
+        <button type="button" class="nav-item active" data-page="command" aria-current="page">
           <span class="material-icons-outlined">dashboard</span>
-          <span class="label">Dashboard</span>
-        </button>
-        <button type="button" class="nav-item" data-page="profiles">
-          <span class="material-icons-outlined">layers</span>
-          <span class="label" id="profiles-nav-label">Profiles</span>
+          <span class="label">Command Centre</span>
         </button>
         <button type="button" class="nav-item" data-page="library">
           <span class="material-icons-outlined">photo_library</span>
           <span class="label">Library</span>
         </button>
-        <button type="button" class="nav-item" data-page="notifications">
-          <span class="material-icons-outlined">notifications</span>
-          <span class="label">Notifications</span>
+        <button type="button" class="nav-item" data-page="profiles">
+          <span class="material-icons-outlined">layers</span>
+          <span class="label" id="profiles-nav-label">Profiles</span>
         </button>
-        <button type="button" class="nav-item" data-page="alarms">
-          <span class="material-icons-outlined">alarm</span>
-          <span class="label">Alarms</span>
-        </button>
-        <button type="button" class="nav-item" data-page="vision">
-          <span class="material-icons-outlined">visibility</span>
-          <span class="label">Vision</span>
-        </button>
-        <button type="button" class="nav-item" data-page="hardware">
-          <span class="material-icons-outlined">hub</span>
-          <span class="label">Hardware Plugins</span>
+        <button type="button" class="nav-item" data-page="activity">
+          <span class="material-icons-outlined">notifications_active</span>
+          <span class="label">Activity</span>
         </button>
       </nav>
       <div class="bottom">
-        <button type="button" class="nav-item" data-page="settings">
-          <span class="material-icons-outlined">settings</span>
-          <span class="label">Settings</span>
+        <button type="button" class="nav-item" data-page="system">
+          <span class="material-icons-outlined">tune</span>
+          <span class="label">System</span>
         </button>
       </div>
     </aside>
@@ -74,12 +62,20 @@
           <button class="hamburger" id="hamburger" aria-label="Menu">
             <span class="material-icons-outlined">menu</span>
           </button>
-          <div>
-            <h1>Iris</h1>
-            <p>Loading...</p>
-          </div>
+          <h1 id="header-title">Iris</h1>
         </div>
-        <button class="done-btn" id="done-btn">Close</button>
+        <div class="header-actions" id="header-actions">
+          <div class="header-profile-selector" id="header-profile-selector">
+            <select class="header-profile-select" id="header-profile-select" aria-label="Select workspace profile">
+              <option value="__default__">Desktop</option>
+            </select>
+          </div>
+          <button type="button" class="header-mode-btn" id="header-mode-btn" title="Toggle Edit Workspace Mode">
+            <span class="material-icons-outlined">edit</span>
+            <span class="header-mode-btn-text">Edit workspace</span>
+          </button>
+          <button class="done-btn" id="done-btn">Close</button>
+        </div>
       </header>
       <section class="content" id="content">
       </section>

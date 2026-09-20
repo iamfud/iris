@@ -50,3 +50,13 @@ def dispatch_notification(title: str, message: str, theme: str = "purple"):
                 d.render_notification(title, message, theme)
             except Exception as ex:
                 log.debug("[displays] Driver %s render_notification error: %s", d.name, ex)
+
+
+def dispatch_theme(theme: dict):
+    """Broadcast a theme change to all registered display drivers."""
+    for d in _DRIVERS.values():
+        if d.is_connected and hasattr(d, "on_theme"):
+            try:
+                d.on_theme(theme)
+            except Exception as ex:
+                log.debug("[displays] Driver %s on_theme error: %s", d.name, ex)

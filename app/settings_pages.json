@@ -173,6 +173,12 @@
               "description": "Automatically start Iris when you sign in to Windows."
             },
             {
+              "type": "toggle",
+              "key": "open_with_notes",
+              "label": "Open with Iris Notes",
+              "description": "Add Iris Notes to the Explorer right-click 'Open with' list so any file can be opened and saved back losslessly."
+            },
+            {
               "type": "buttons",
               "buttons": [
                 {
@@ -189,7 +195,16 @@
               ]
             }
           ]
-        },
+        }
+      ]
+    },
+    {
+      "id": "appearance",
+      "title": "Appearance",
+      "subtitle": "Theme & visual styling",
+      "icon": "palette",
+      "nav_group": "bottom",
+      "sections": [
         {
           "title": "Appearance",
           "full_width": true,
@@ -201,7 +216,16 @@
               "description": "Colours used across Iris — pick a preset or set your own accent and neon colours."
             }
           ]
-        },
+        }
+      ]
+    },
+    {
+      "id": "network",
+      "title": "Network & Security",
+      "subtitle": "Companion device pairing & access",
+      "icon": "wifi_lock",
+      "nav_group": "bottom",
+      "sections": [
         {
           "title": "Network & Security",
           "app_only": true,

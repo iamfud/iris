@@ -214,3 +214,22 @@ class SystemHandlerMixin:
         else:
             data = {"found": False}
         self._send_json(data)
+
+    def _handle_ajz_detect(self):
+        """Return Ajazz AKP02 LCD probe status from the rgb plugin or entity bus."""
+        import plugin_manager
+        inst = plugin_manager.get("rgb")
+        if inst and hasattr(inst, "get_ajz_status"):
+            data = inst.get_ajz_status()
+        else:
+            data = {"found": False}
+        self._send_json(data)
+
+    def _handle_lcd_detect(self):
+        """Return unified LCD probe status for all supported displays."""
+        import plugin_manager
+        inst = plugin_manager.get("rgb")
+        kraken = inst.get_kraken_status() if (inst and hasattr(inst, "get_kraken_status")) else {"found": False}
+        ajz = inst.get_ajz_status() if (inst and hasattr(inst, "get_ajz_status")) else {"found": False}
+        self._send_json({"ok": True, "kraken": kraken, "ajz": ajz})
+

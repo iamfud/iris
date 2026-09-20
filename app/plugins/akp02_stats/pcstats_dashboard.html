@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  width: 1920px;
+  height: 462px;
+  overflow: hidden;
+  background: #05070a;
+  font-family: "Bahnschrift", "Segoe UI", system-ui, sans-serif;
+  color: #e0e4ec;
+  user-select: none;
+}
+
+:root {
+  --accent: #00d26a;
+  --glow:   #00d26a44;
+  --warn:   #ff9040;
+  --alert:  #e05252;
+}
+
+/* ── Layout (5 columns = 384px each) ─────────────────────────── */
+
+.layout {
+  display: flex;
+  width: 1920px;
+  height: 462px;
+}
+
+.card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 16px 16px 16px;
+  border-right: 1px solid rgba(255,255,255,0.05);
+  position: relative;
+  overflow: hidden;
+}
+.card:last-child { border-right: none; }
+
+.card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at 50% 100%, var(--glow) 0%, transparent 65%);
+  opacity: 0.15;
+  pointer-events: none;
+}
+
+.c-header {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.55);
+  margin-bottom: 4px;
+  text-align: center;
+  width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Arc Gauge ───────────────────────────────────────────────── */
+
+.gauge-wrap {
+  position: relative;
+  width: 215px;
+  height: 215px;
+  flex-shrink: 0;
+  margin: 0 auto;
+}
+
+.gauge-wrap svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+/* 270° horseshoe: r=85, circumference=534.07, arc=400.55, gap=133.52 */
+.g-track {
+  fill: none;
+  stroke: rgba(255,255,255,0.07);
+  stroke-width: 15;
+  stroke-linecap: round;
+}
+.g-fill {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 15;
+  stroke-linecap: round;
+  stroke-dasharray: 0 534.07;
+  filter: drop-shadow(0 0 10px var(--glow));
+  transition:
+    stroke-dasharray 0.5s cubic-bezier(0.4, 0, 0.2, 1),
+    stroke           0.3s ease,
+    filter           0.3s ease;
+}
+
+.gauge-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding-bottom: 8px;
+}
+
+.g-val-row {
+  display: flex;
+  align-items: baseline;
+  line-height: 1;
+}
+
+.g-val {
+  font-size: 66px;
+  font-weight: 800;
+  color: var(--accent);
+  letter-spacing: -2px;
+  text-shadow: 0 0 24px var(--glow);
+  transition: color 0.3s ease, text-shadow 0.3s ease;
+}
+
+.g-unit {
+  font-size: 26px;
+  font-weight: 700;
+  color: rgba(255,255,255,0.45);
+  margin-left: 3px;
+}
+
+.g-sub {
+  font-size: 19.5px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.72);
+  margin-top: 5px;
+}
+
+/* ── Key-Value Sub-rows ──────────────────────────────────────── */
+
+.meta-box {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  background: rgba(255,255,255,0.025);
+  border-radius: 9px;
+  padding: 10px 14px;
+  border: 1px solid rgba(255,255,255,0.05);
+}
+
+.meta-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 19px;
+}
+
+.meta-k {
+  color: rgba(255,255,255,0.55);
+  font-weight: 500;
+  font-size: 19px;
+}
+
+.meta-v {
+  color: #f0f4fa;
+  font-weight: 700;
+  font-size: 19px;
+  font-variant-numeric: tabular-nums;
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 5px;
+  font-size: 17.5px;
+  font-weight: 700;
+  background: rgba(255,255,255,0.08);
+  color: #fff;
+}
+.badge-accent {
+  background: var(--glow);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+/* ── Bar Components (VRAM, RAM, Disk) ────────────────────────── */
+
+.bar-section {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bar-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.bar-lbl {
+  color: rgba(255,255,255,0.75);
+  font-weight: 700;
+  font-size: 19px;
+}
+
+.bar-nums {
+  color: #fff;
+  font-weight: 700;
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+.bar-track {
+  width: 100%;
+  height: 16px;
+  background: rgba(255,255,255,0.07);
+  border-radius: 8px;
+  overflow: hidden;
+  position: relative;
+}
+
+.bar-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  border-radius: 8px;
+  box-shadow: 0 0 12px var(--glow);
+  transition: width 0.5s ease, background 0.3s ease;
+}
+
+/* ── Hero Game FPS Card ──────────────────────────────────────── */
+
+.fps-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  margin: auto 0;
+  text-align: center;
+  width: 100%;
+}
+
+.fps-number {
+  font-size: 92px;
+  font-weight: 800;
+  color: var(--accent);
+  letter-spacing: -3px;
+  line-height: 1;
+  text-shadow: 0 0 28px var(--glow);
+  transition: color 0.3s ease, text-shadow 0.3s ease;
+}
+
+.fps-sub-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 6px;
+}
+
+.fps-tag {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.45);
+}
+
+.fps-low-badge {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: 5px;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.12);
+  font-size: 15px;
+  font-weight: 700;
+  color: #c4cdd8;
+}
+
+.fps-low-badge b {
+  color: var(--accent);
+  font-size: 18px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.game-title-badge {
+  margin-top: 12px;
+  max-width: 92%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 6px 14px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.07);
+  font-size: 18px;
+  font-weight: 700;
+  color: #e0e4ec;
+  border: 1px solid rgba(255,255,255,0.1);
+}
+
+
+.divider {
+  width: 100%;
+  height: 1px;
+  background: rgba(255,255,255,0.06);
+  margin: 10px 0;
+}
+</style>
+</head>
+<body>
+
+<div class="layout">
+
+  <!-- 1. CPU Card ─────────────────────────────────────────────── -->
+  <div class="card" id="cpu-card">
+    <div class="c-header">Processor</div>
+    <div class="gauge-wrap">
+      <svg viewBox="0 0 200 200">
+        <!-- Rotate 135deg so the 90deg gap is positioned symmetrically at bottom -->
+        <circle class="g-track" cx="100" cy="100" r="85"
+                transform="rotate(135 100 100)"/>
+        <circle class="g-fill" id="cpu-arc" cx="100" cy="100" r="85"
+                transform="rotate(135 100 100)"/>
+      </svg>
+      <div class="gauge-center">
+        <div class="g-val-row">
+          <span class="g-val" id="cpu-pct">0</span>
+          <span class="g-unit">%</span>
+        </div>
+        <div class="g-sub" id="cpu-freq">— GHz</div>
+      </div>
+    </div>
+    <div class="meta-box">
+      <div class="meta-row">
+        <span class="meta-k">Cores / Threads</span>
+        <span class="meta-v" id="cpu-cores">—</span>
+      </div>
+      <div class="meta-row" id="cpu-boost-row">
+        <span class="meta-k">Base / Boost</span>
+        <span class="meta-v" id="cpu-boost-val">—</span>
+      </div>
+      <div class="meta-row" id="cpu-temp-row" style="display:none;">
+        <span class="meta-k">Package Temp</span>
+        <span class="meta-v badge badge-accent" id="cpu-temp-val">— °C</span>
+      </div>
+      <div class="meta-row">
+        <span class="meta-k">Core Voltage</span>
+        <span class="meta-v" id="cpu-vid">— V</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. GPU Card ─────────────────────────────────────────────── -->
+  <div class="card" id="gpu-card">
+    <div class="c-header" id="gpu-name-header">Graphics</div>
+    <div class="gauge-wrap">
+      <svg viewBox="0 0 200 200">
+        <circle class="g-track" cx="100" cy="100" r="85"
+                transform="rotate(135 100 100)"/>
+        <circle class="g-fill" id="gpu-arc" cx="100" cy="100" r="85"
+                transform="rotate(135 100 100)"/>
+      </svg>
+      <div class="gauge-center">
+        <div class="g-val-row">
+          <span class="g-val" id="gpu-pct">0</span>
+          <span class="g-unit">%</span>
+        </div>
+        <div class="g-sub" id="gpu-core-temp">— °C</div>
+      </div>
+    </div>
+    <div class="meta-box">
+      <div class="meta-row">
+        <span class="meta-k">Hot Spot Temp</span>
+        <span class="meta-v" id="gpu-hotspot">—</span>
+      </div>
+      <div class="meta-row">
+        <span class="meta-k">Memory Junction</span>
+        <span class="meta-v" id="gpu-mem-temp">—</span>
+      </div>
+      <div class="meta-row">
+        <span class="meta-k">Fan / State</span>
+        <span class="meta-v" id="gpu-fan-state">—</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. VRAM & Power Card ────────────────────────────────────── -->
+  <div class="card" id="vram-card">
+    <div class="c-header">VRAM & Power</div>
+    <div style="width:100%; display:flex; flex-direction:column; gap:24px; margin:auto 0; padding:0 2px;">
+      <!-- VRAM Bar -->
+      <div class="bar-section">
+        <div class="bar-top">
+          <span class="bar-lbl">VRAM</span>
+          <span class="bar-nums" id="vram-nums">0.0 / 0.0 GB</span>
+        </div>
+        <div class="bar-track">
+          <div class="bar-fill" id="vram-bar"></div>
+        </div>
+      </div>
+      <!-- Power Bar -->
+      <div class="bar-section">
+        <div class="bar-top">
+          <span class="bar-lbl">GPU Power</span>
+          <span class="bar-nums" id="power-nums">0 W / 0 W</span>
+        </div>
+        <div class="bar-track">
+          <div class="bar-fill" id="power-bar"></div>
+        </div>
+      </div>
+    </div>
+    <div class="meta-box">
+      <div class="meta-row">
+        <span class="meta-k">Core Clock</span>
+        <span class="meta-v" id="gpu-core-clk">— MHz</span>
+      </div>
+      <div class="meta-row">
+        <span class="meta-k">Memory Clock</span>
+        <span class="meta-v" id="gpu-mem-clk">— MHz</span>
+      </div>
+      <div class="meta-row">
+        <span class="meta-k">Core Voltage</span>
+        <span class="meta-v" id="gpu-volt">— V</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. Memory & Storage Card ────────────────────────────────── -->
+  <div class="card" id="ram-card">
+    <div class="c-header">Memory & Disk</div>
+    <div style="width:100%; display:flex; flex-direction:column; gap:24px; margin:auto 0; padding:0 2px;">
+      <!-- System RAM Bar -->
+      <div class="bar-section">
+        <div class="bar-top">
+          <span class="bar-lbl">RAM</span>
+          <span class="bar-nums" id="ram-nums">0.0 / 0.0 GB</span>
+        </div>
+        <div class="bar-track">
+          <div class="bar-fill" id="ram-bar"></div>
+        </div>
+      </div>
+      <!-- Disk C Bar -->
+      <div class="bar-section">
+        <div class="bar-top">
+          <span class="bar-lbl">Disk C:</span>
+          <span class="bar-nums" id="disk-nums">0 / 0 GB</span>
+        </div>
+        <div class="bar-track">
+          <div class="bar-fill" id="disk-bar"></div>
+        </div>
+      </div>
+    </div>
+    <div class="meta-box">
+      <div class="meta-row">
+        <span class="meta-k">Virtual / Swap</span>
+        <span class="meta-v" id="swap-val">— %</span>
+      </div>
+      <div class="meta-row">
+        <span class="meta-k">Disk Capacity</span>
+        <span class="meta-v" id="disk-pct-lbl">— % Used</span>
+      </div>
+      <div class="meta-row">
+        <span class="meta-k">Active Tasks</span>
+        <span class="meta-v" id="procs-val">—</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5. Game FPS & System Card ───────────────────────────────── -->
+  <div class="card" id="fps-card">
+    <div class="c-header">Performance & System</div>
+    <div class="fps-hero">
+      <div class="fps-number" id="fps-val">IDLE</div>
+      <div class="fps-sub-row">
+        <span class="fps-tag" id="fps-tag">GAME FPS</span>
+        <span class="fps-low-badge" id="fps-low-badge" style="display:none;">1% LOW <b id="fps-low-val">—</b> FPS</span>
+      </div>
+      <div class="game-title-badge" id="game-badge">Desktop / 2D</div>
+    </div>
+    <div class="meta-box">
+      <div class="meta-row">
+        <span class="meta-k">System Uptime</span>
+        <span class="meta-v" id="uptime-val">—</span>
+      </div>
+      <div class="meta-row">
+        <span class="meta-k">Network Upload</span>
+        <span class="meta-v" id="net-up-val">↑ 0.00 MB/s</span>
+      </div>
+      <div class="meta-row">
+        <span class="meta-k">Network Download</span>
+        <span class="meta-v" id="net-dn-val">↓ 0.00 MB/s</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  // 270° arc: r=85, circumference=534.07, arc_length=400.55
+  const R    = 85;
+  const CIRC = 2 * Math.PI * R;      // 534.07
+  const ARC  = CIRC * (270 / 360);   // 400.55
+
+  function setArc(id, pct) {
+    pct = Math.max(0, Math.min(100, pct || 0));
+    const fill = ARC * (pct / 100);
+    const el = document.getElementById(id);
+    if (el) {
+      el.style.strokeDasharray = fill + ' ' + (CIRC - fill);
+    }
+  }
+
+  function heatColor(val, isTemp) {
+    const hi  = isTemp ? 85 : 90;
+    const mid = isTemp ? 72 : 75;
+    if (val >= hi)  return 'var(--alert)';
+    if (val >= mid) return 'var(--warn)';
+    return null;
+  }
+
+  function applyHeat(valId, arcId, barId, val, isTemp) {
+    const color = heatColor(val, isTemp);
+    const useColor = color || 'var(--accent)';
+    const glow = color
+      ? (color === 'var(--alert)' ? '#e0525244' : '#ff904044')
+      : 'var(--glow)';
+
+    if (valId) {
+      const e = document.getElementById(valId);
+      if (e) {
+        e.style.color = useColor;
+        e.style.textShadow = `0 0 20px ${glow}`;
+      }
+    }
+    if (arcId) {
+      const a = document.getElementById(arcId);
+      if (a) {
+        a.style.stroke = useColor;
+        a.style.filter = `drop-shadow(0 0 8px ${glow})`;
+      }
+    }
+    if (barId) {
+      const b = document.getElementById(barId);
+      if (b) {
+        b.style.background = useColor;
+        b.style.boxShadow = `0 0 10px ${glow}`;
+      }
+    }
+  }
+
+  window.__update = function(d) {
+    // 1. Accent & Glow
+    if (d.accent) {
+      document.documentElement.style.setProperty('--accent', d.accent);
+      const h = d.accent.replace('#', '');
+      if (h.length === 6) {
+        document.documentElement.style.setProperty('--glow', '#' + h + '44');
+      }
+    }
+
+    // 2. CPU
+    const cpu = d.cpu ?? 0;
+    document.getElementById('cpu-pct').textContent = Math.round(cpu);
+    document.getElementById('cpu-freq').textContent = d.cpu_freq || '— GHz';
+    document.getElementById('cpu-cores').textContent = d.cpu_cores || '—';
+    document.getElementById('cpu-boost-val').textContent = d.cpu_clock_ratio || (d.cpu_base_freq ? `${d.cpu_base_freq} / ${d.cpu_freq}` : '—');
+    document.getElementById('cpu-vid').textContent = d.cpu_vid != null ? d.cpu_vid + ' V' : '—';
+    setArc('cpu-arc', cpu);
+    applyHeat('cpu-pct', 'cpu-arc', null, cpu, false);
+
+    const tempRow = document.getElementById('cpu-temp-row');
+    if (d.cpu_temp != null) {
+      tempRow.style.display = 'flex';
+      document.getElementById('cpu-temp-val').textContent = d.cpu_temp + ' °C';
+    } else {
+      tempRow.style.display = 'none';
+    }
+
+    // 3. GPU
+    if (d.gpu_name) {
+      document.getElementById('gpu-name-header').textContent = d.gpu_name;
+    }
+    const gpuPct = d.gpu_pct ?? 0;
+    document.getElementById('gpu-pct').textContent = Math.round(gpuPct);
+    document.getElementById('gpu-core-temp').textContent = d.gpu_temp != null ? d.gpu_temp + ' °C Core' : '— °C';
+    document.getElementById('gpu-hotspot').textContent = d.gpu_hotspot != null ? d.gpu_hotspot + ' °C' : '—';
+    document.getElementById('gpu-mem-temp').textContent = d.gpu_mem_temp != null ? d.gpu_mem_temp + ' °C' : '—';
+    const fanStr = d.gpu_fan != null ? d.gpu_fan + '%' : '0%';
+    const pstateStr = d.gpu_pstate || 'P0';
+    document.getElementById('gpu-fan-state').textContent = `${fanStr} · ${pstateStr}`;
+    setArc('gpu-arc', gpuPct);
+    const gpuHeatVal = d.gpu_temp != null ? d.gpu_temp : gpuPct;
+    applyHeat('gpu-pct', 'gpu-arc', null, gpuHeatVal, d.gpu_temp != null);
+
+    // 4. VRAM & Power
+    const vUsed = d.vram_used ?? 0;
+    const vTot = d.vram_total ?? 0;
+    const vPct = d.vram_pct ?? 0;
+    document.getElementById('vram-nums').textContent = `${vUsed.toFixed(1)} / ${vTot.toFixed(1)} GB`;
+    document.getElementById('vram-bar').style.width = Math.min(100, vPct) + '%';
+    applyHeat(null, null, 'vram-bar', vPct, false);
+
+    const pUsed = d.gpu_power ?? 0;
+    const pLim = d.gpu_power_lim ?? 0;
+    const pPct = pLim > 0 ? (pUsed / pLim) * 100 : 0;
+    document.getElementById('power-nums').textContent = `${pUsed.toFixed(1)} W / ${Math.round(pLim)} W`;
+    document.getElementById('power-bar').style.width = Math.min(100, pPct) + '%';
+    applyHeat(null, null, 'power-bar', pPct, false);
+
+    document.getElementById('gpu-core-clk').textContent = d.gpu_core_mhz != null ? d.gpu_core_mhz + ' MHz' : '— MHz';
+    document.getElementById('gpu-mem-clk').textContent = d.gpu_mem_mhz != null ? d.gpu_mem_mhz + ' MHz' : '— MHz';
+    document.getElementById('gpu-volt').textContent = d.gpu_voltage != null ? d.gpu_voltage + ' V' : '— V';
+
+    // 5. RAM & Storage
+    const ramPct = d.ram_pct ?? 0;
+    const ramUsed = d.ram_used ?? 0;
+    const ramTot = d.ram_total ?? 0;
+    document.getElementById('ram-nums').textContent = `${ramUsed.toFixed(1)} / ${ramTot.toFixed(1)} GB`;
+    document.getElementById('ram-bar').style.width = Math.min(100, ramPct) + '%';
+    applyHeat(null, null, 'ram-bar', ramPct, false);
+
+    const diskPct = d.disk_c_pct ?? 0;
+    const diskUsed = d.disk_c_used ?? 0;
+    const diskTot = d.disk_c_total ?? 0;
+    document.getElementById('disk-nums').textContent = `${diskUsed} / ${diskTot} GB`;
+    document.getElementById('disk-bar').style.width = Math.min(100, diskPct) + '%';
+    document.getElementById('disk-pct-lbl').textContent = Math.round(diskPct) + '% Used';
+    document.getElementById('swap-val').textContent = (d.swap_pct ?? 0).toFixed(1) + '%';
+    document.getElementById('procs-val').textContent = (d.procs ?? 0) + ' Tasks';
+
+    // 6. Game FPS & System
+    const fpsEl = document.getElementById('fps-val');
+    const badgeEl = document.getElementById('game-badge');
+    const lowBadge = document.getElementById('fps-low-badge');
+    const lowVal = document.getElementById('fps-low-val');
+
+    if (d.fps != null && d.fps > 0) {
+      fpsEl.textContent = Math.round(d.fps);
+      fpsEl.style.fontSize = '84px';
+      document.getElementById('fps-tag').textContent = d.frametime_ms ? `${d.frametime_ms} MS` : 'AVG FPS';
+
+      if (d.fps_1pct_low != null && d.fps_1pct_low > 0) {
+        lowBadge.style.display = 'inline-flex';
+        lowVal.textContent = Math.round(d.fps_1pct_low);
+      } else {
+        lowBadge.style.display = 'none';
+      }
+
+      badgeEl.textContent = d.game_name || 'Active 3D Game';
+      badgeEl.style.borderColor = 'var(--accent)';
+      badgeEl.style.color = '#fff';
+    } else {
+      fpsEl.textContent = 'IDLE';
+      fpsEl.style.fontSize = '50px';
+      document.getElementById('fps-tag').textContent = 'GAME FPS';
+      lowBadge.style.display = 'none';
+      badgeEl.textContent = 'Desktop / 2D';
+      badgeEl.style.borderColor = 'rgba(255,255,255,0.08)';
+      badgeEl.style.color = 'rgba(255,255,255,0.5)';
+    }
+
+    document.getElementById('uptime-val').textContent = d.uptime || '—';
+    document.getElementById('net-up-val').textContent = `↑ ${(d.net_up ?? 0).toFixed(2)} MB/s`;
+    document.getElementById('net-dn-val').textContent = `↓ ${(d.net_dn ?? 0).toFixed(2)} MB/s`;
+  };
+</script>
+</body>
+</html>

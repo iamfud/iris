@@ -82,6 +82,7 @@ class PanelHandlerMixin:
                     "panel_gauges": app.cfg.get("panel_gauges", {}),
                     "panel_profiles": app.cfg.get("panel_profiles", []),
                     "media_player_path": app.cfg.get("media_player_path", ""),
+                    "default_profile_name": app.cfg.get("default_profile_name", ""),
                 }
             })
             try:

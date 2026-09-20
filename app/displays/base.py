@@ -38,3 +38,7 @@ class BaseDisplayDriver(ABC):
     def clear(self):
         """Clear display contents or return to idle."""
         pass
+
+    def on_theme(self, theme: Dict[str, Any]):
+        """Handle theme change on display driver."""
+        pass

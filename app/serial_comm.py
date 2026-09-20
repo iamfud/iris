@@ -95,6 +95,11 @@ class SerialSender:
                 return self._ser.port
         return None
 
+    @property
+    def is_connected(self) -> bool:
+        return self.connected_port() is not None
+
+
     def set_live(self, key, value):
         return self._write(f"SET:{key}={value}\n")
 
@@ -485,7 +490,7 @@ class SerialSender:
                         self._ser = None
             if time.time() < _min_reconnect:
                 continue
-            port = self._forced_port or self._find_derek_port()
+            port = self._forced_port or self._find_matrix_port()
             if not port:
                 continue
             try:
@@ -531,7 +536,7 @@ class SerialSender:
                 self._last_time_sync = time.time()
 
     @staticmethod
-    def _find_derek_port():
+    def _find_matrix_port():
         if not SERIAL_AVAILABLE:
             return None
         for p in serial.tools.list_ports.comports():

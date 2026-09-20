@@ -26,8 +26,12 @@ IGNORED_BACKGROUND = {
     "discord.exe", "spotify.exe", "slack.exe", "teams.exe", "steam.exe",
     "steamwebhelper.exe", "devenv.exe", "code.exe", "epicgameslauncher.exe",
     "obs64.exe", "obs32.exe", "overwolf.exe", "overwolfbrowser.exe", "medal.exe",
-    "geforcenow.exe", "furmark_gui.exe"
+    "geforcenow.exe", "furmark_gui.exe", "windowsterminal.exe", "applicationframehost.exe",
+    "shellexperiencehost.exe", "searchhost.exe", "startmenuexperiencehost.exe",
+    "textinputhost.exe", "systemsettings.exe", "powershell.exe", "pwsh.exe",
+    "cmd.exe", "conhost.exe", "msedgewebview2.exe", "nvidia share.exe", "nvcontainer.exe",
 }
+
 
 
 def _calc_fps_and_low(intervals: List[float]) -> Tuple[Optional[float], Optional[float], Optional[float]]:
@@ -176,7 +180,7 @@ class FpsTracker:
                 ftime_ms = ftime / 1000.0 if ftime > 0 else (1000.0 / fps if fps > 0 else 0.0)
 
                 is_utility = exe_lower in IGNORED_BACKGROUND
-                if is_utility and pid != fg_pid:
+                if is_utility:
                     continue
 
                 if fps > 1.0:
@@ -249,7 +253,20 @@ class FpsTracker:
                 "--exclude", "Discord.exe",
                 "--exclude", "Spotify.exe",
                 "--exclude", "steamwebhelper.exe",
+                "--exclude", "WindowsTerminal.exe",
+                "--exclude", "ApplicationFrameHost.exe",
+                "--exclude", "ShellExperienceHost.exe",
+                "--exclude", "SearchHost.exe",
+                "--exclude", "StartMenuExperienceHost.exe",
+                "--exclude", "TextInputHost.exe",
+                "--exclude", "SystemSettings.exe",
+                "--exclude", "powershell.exe",
+                "--exclude", "pwsh.exe",
+                "--exclude", "cmd.exe",
+                "--exclude", "conhost.exe",
+                "--exclude", "msedgewebview2.exe",
             ]
+
             creationflags = 0x08000000  # CREATE_NO_WINDOW
             self._proc = subprocess.Popen(
                 cmd,
@@ -371,15 +388,31 @@ class FpsTracker:
             except Exception:
                 pass
 
+            fg_name = ""
+            if fg_pid:
+                fg_name = (_resolve_name_from_pid(fg_pid) or "").lower()
+
+            if fg_name and fg_name in IGNORED_BACKGROUND:
+                # Foreground is explicitly a desktop tool, shell, or terminal — user is not gaming
+                return _null
+
             target_app = None
             if fg_pid and fg_pid in self._apps:
-                target_app = self._apps[fg_pid]
+                app_candidate = self._apps[fg_pid]
+                if app_candidate.get("name", "").lower() not in IGNORED_BACKGROUND:
+                    target_app = app_candidate
             else:
-                # Foreground is desktop/Iris overlay — pick the most recently active tracked app
-                target_app = max(self._apps.values(), key=lambda a: a["last_ts"])
+                # Foreground is desktop/Iris overlay — pick the most recently active tracked game
+                candidates = [
+                    a for a in self._apps.values()
+                    if a.get("name", "").lower() not in IGNORED_BACKGROUND
+                ]
+                if candidates:
+                    target_app = max(candidates, key=lambda a: a["last_ts"])
 
-            if not target_app or not target_app["intervals"]:
+            if not target_app or not target_app.get("intervals"):
                 return _null
+
 
             # No frame in the last 2 s → game is paused or idle
             if now - target_app["last_ts"] > 2.0:

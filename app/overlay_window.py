@@ -1,4 +1,4 @@
-"""Iris — Floating stats overlay window (imported from Derek Version1)."""
+"""Iris — Floating stats overlay window."""
 
 import ctypes
 import tkinter as tk

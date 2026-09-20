@@ -38,7 +38,8 @@ class NvmlManager:
                 nvmlDeviceGetMemoryInfo, nvmlDeviceGetPowerUsage,
                 nvmlDeviceGetEnforcedPowerLimit, nvmlDeviceGetFanSpeed,
                 nvmlDeviceGetPerformanceState, nvmlDeviceGetTemperature,
-                NVML_TEMPERATURE_GPU
+                nvmlDeviceGetClockInfo, nvmlDeviceGetUtilizationRates,
+                NVML_TEMPERATURE_GPU, NVML_CLOCK_GRAPHICS, NVML_CLOCK_MEM
             )
             h = self.handle
             mem = nvmlDeviceGetMemoryInfo(h)
@@ -50,6 +51,22 @@ class NvmlManager:
                 temp_c = float(nvmlDeviceGetTemperature(h, NVML_TEMPERATURE_GPU))
             except Exception:
                 temp_c = None
+
+            try:
+                gpu_clk = int(nvmlDeviceGetClockInfo(h, NVML_CLOCK_GRAPHICS))
+            except Exception:
+                gpu_clk = None
+
+            try:
+                mem_clk = int(nvmlDeviceGetClockInfo(h, NVML_CLOCK_MEM))
+            except Exception:
+                mem_clk = None
+
+            try:
+                util = nvmlDeviceGetUtilizationRates(h)
+                gpu_util = int(util.gpu)
+            except Exception:
+                gpu_util = None
 
             try:
                 power_w = round(nvmlDeviceGetPowerUsage(h) / 1000.0, 1)
@@ -73,6 +90,9 @@ class NvmlManager:
 
             return {
                 "gpu_temp": temp_c,
+                "gpu_load": gpu_util,
+                "gpu_core_mhz": gpu_clk,
+                "gpu_mem_mhz": mem_clk,
                 "vram_used": used_gb,
                 "vram_total": total_gb,
                 "vram_pct": pct,

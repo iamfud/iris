@@ -126,3 +126,12 @@ class BasePlugin:
             List of string options or dict items (e.g. `[{"id": "opt1", "name": "Option 1"}]`).
         """
         return []
+
+    def on_theme(self, theme_data: Dict[str, Any]) -> None:
+        """Invoked when the active global theme changes via macros, game latching, or settings.
+
+        Args:
+            theme_data: Dictionary containing `mode` ('iris', 'monochrome', 'custom'),
+                        `accent` (hex), and `neon` (hex).
+        """
+        pass
