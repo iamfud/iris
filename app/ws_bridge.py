@@ -522,6 +522,10 @@ class _RequestHandler(
             self._handle_pair()
         elif self.path.split("?")[0] in ("/", "/index.html", "/login"):
             self._serve_index()
+        elif self.path.split("?")[0] == "/kraken.html":
+            self.send_response(301)
+            self.send_header("Location", "/dial.html")
+            self.end_headers()
         elif self.path.split("?")[0] in ("/Iris.apk", "/download"):
             self._serve_apk()
         else:

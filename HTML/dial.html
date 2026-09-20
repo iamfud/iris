@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <meta name="color-scheme" content="dark">
-<title>Iris Kraken</title>
+<title>Iris Dial Display</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { height: 100%; overflow: hidden; }
@@ -15,9 +15,7 @@
     align-items: center;
     justify-content: center;
   }
-  /* The physical Kraken LCD is edge-to-edge circular (Elite/Z) or square (2023).
-     We replicate both by drawing the full square buffer, then clipping it to the
-     inscribed circle for circular models (`.shape-circle`). */
+  /* Edge-to-edge circular or rounded dial screen buffer. */
   #screen {
     width: min(94vmin, 94vh);
     height: min(94vmin, 94vh);
@@ -40,6 +38,6 @@
 </head>
 <body>
   <div id="screen" class="shape-circle"></div>
-  <script src="kraken.js"></script>
+  <script src="dial.js"></script>
 </body>
 </html>

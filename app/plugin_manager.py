@@ -896,7 +896,7 @@ def _broadcast_theme(theme_dict):
 def apply_global_theme(theme_dict: dict, source_id: str = None):
     """Explicitly apply a global theme across all Iris surfaces.
 
-    Broadcasts over WebSocket to phone panel, theme.html, and kraken.html,
+    Broadcasts over WebSocket to phone panel, theme.html, and dial.html,
     and triggers Hardware Lighting (OpenRGB / connected LEDs).
     """
     global _saved_base_theme, _active_themed_plugin, _active_themed_exe, _themed_exe_has_run, _themed_exe_started_at, _themed_exe_miss_count

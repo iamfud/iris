@@ -1599,18 +1599,18 @@
         </h2>
 
         <div class="surfaces-grid">
-          <!-- Circular Gauge Surface -->
+          <!-- Circular Dial Surface -->
           <div class="surface-card">
             <div class="surface-card-icon">
               <span class="material-icons-outlined">album</span>
             </div>
             <div class="surface-card-body">
               <div class="surface-card-title">
-                Circular Telemetry Gauge
+                Circular Dial Display
                 <span class="profile-card-badge profile-badge-default">Web Surface</span>
               </div>
               <div class="surface-card-desc">
-                Edge-to-edge circular SVG gauge for AIO LCD liquid coolers (NZXT Kraken, Turing), round secondary screens, or OBS stream overlays.
+                Edge-to-edge dual-arc SVG dial for circular AIO coolers, secondary round screens, and OBS stream overlays.
               </div>
             </div>
             <div class="surface-card-actions">
@@ -1757,7 +1757,7 @@
     const copyGaugeBtn = document.getElementById("btn-copy-gauge-url");
     if (copyGaugeBtn) {
       copyGaugeBtn.addEventListener("click", () => {
-        const fullUrl = `${window.location.origin}/kraken.html`;
+        const fullUrl = `${window.location.origin}/dial.html`;
         navigator.clipboard.writeText(fullUrl).then(() => {
           copyGaugeBtn.innerHTML = '<span class="material-icons-outlined" style="font-size:15px;color:var(--neon-grn);">check</span> Copied!';
           setTimeout(() => {
@@ -1770,7 +1770,7 @@
     const openGaugeBtn = document.getElementById("btn-open-gauge-win");
     if (openGaugeBtn) {
       openGaugeBtn.addEventListener("click", () => {
-        window.open("/kraken.html", "IrisGauge", "width=640,height=640,menubar=no,toolbar=no,location=no,status=no");
+        window.open("/dial.html", "IrisDial", "width=640,height=640,menubar=no,toolbar=no,location=no,status=no");
       });
     }
 
