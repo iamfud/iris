@@ -541,8 +541,10 @@ def get_plugin_entities() -> List[Dict[str, Any]]:
                         pass
                 if not profiles:
                     try:
-                        from plugins.rgb.connector import RGBConnector
-                        conn = RGBConnector()
+                        mod = plugin_manager.load_connector("rgb")
+                        conn = mod.RGBConnector() if mod and hasattr(mod, "RGBConnector") else None
+                        if conn is None:
+                            raise RuntimeError("RGB connector is not approved")
                         profiles = conn.get_options("profiles") or conn.get_options("openrgb_profiles")
                     except Exception:
                         pass
@@ -577,8 +579,10 @@ def get_plugin_entities() -> List[Dict[str, Any]]:
                         pass
                 if not ha_entities:
                     try:
-                        from plugins.ha.connector import HASSConnector
-                        conn = HASSConnector(plugin_manager._cfg)
+                        mod = plugin_manager.load_connector("ha")
+                        if mod is None or not hasattr(mod, "HASSConnector"):
+                            raise RuntimeError("HA connector is not approved")
+                        conn = mod.HASSConnector(plugin_manager._cfg)
                         ha_entities = conn.get_entities()
                     except Exception:
                         pass

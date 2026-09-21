@@ -592,7 +592,45 @@ class MainWindow:
     # ── Context menu ────────────────────────────────────────────────
 
     def _show_ctx_menu(self, e):
-        self._ctx_menu.tk_popup(e.x_root, e.y_root)
+        self._ctx_menu.update_idletasks()
+        menu_w = self._ctx_menu.winfo_reqwidth()
+        menu_h = self._ctx_menu.winfo_reqheight()
+        x = e.x_root
+        y = e.y_root
+
+        class _Point(ctypes.Structure):
+            _fields_ = [("x", ctypes.wintypes.LONG), ("y", ctypes.wintypes.LONG)]
+
+        class _Rect(ctypes.Structure):
+            _fields_ = [
+                ("left", ctypes.wintypes.LONG),
+                ("top", ctypes.wintypes.LONG),
+                ("right", ctypes.wintypes.LONG),
+                ("bottom", ctypes.wintypes.LONG),
+            ]
+
+        class _MonitorInfo(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", ctypes.wintypes.DWORD),
+                ("rcMonitor", _Rect),
+                ("rcWork", _Rect),
+                ("dwFlags", ctypes.wintypes.DWORD),
+            ]
+
+        point = _Point(x, y)
+        monitor = user32.MonitorFromPoint(point, 2)
+        info = _MonitorInfo()
+        info.cbSize = ctypes.sizeof(_MonitorInfo)
+        if monitor and user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+            work = info.rcWork
+            if x + menu_w > work.right:
+                x = max(work.left, work.right - menu_w)
+            if y + menu_h > work.bottom:
+                y = max(work.top, y - menu_h)
+            if y < work.top:
+                y = work.top
+
+        self._ctx_menu.tk_popup(x, y)
 
     # ── Custom button panel (with sub-panel navigation) ─────────────
 

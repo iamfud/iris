@@ -55,7 +55,125 @@
     return p ? p.replace(/\.exe$/i, "") : "Media Player";
   }
   function getMediaPlayerBrandIcon() { return null; }
-  function applyKeepAlive() {}
+  let keepAliveEnabled = true;
+  let wakeLockSentinel = null;
+  let videoWakeLock = null;
+  let canvasInterval = null;
+
+  function enableMediaWakeLock() {
+    if (!keepAliveEnabled) return;
+    if (videoWakeLock) {
+      if (videoWakeLock.paused) {
+        const p = videoWakeLock.play();
+        if (p && p.catch) p.catch(function () {});
+      }
+      return;
+    }
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = 1;
+      canvas.height = 1;
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.fillStyle = "#000000";
+        ctx.fillRect(0, 0, 1, 1);
+      }
+
+      let stream = null;
+      if (canvas.captureStream) stream = canvas.captureStream(1);
+      else if (canvas.mozCaptureStream) stream = canvas.mozCaptureStream(1);
+
+      videoWakeLock = document.createElement("video");
+      videoWakeLock.setAttribute("playsinline", "");
+      videoWakeLock.setAttribute("webkit-playsinline", "");
+      videoWakeLock.muted = true;
+      videoWakeLock.setAttribute("muted", "");
+      videoWakeLock.loop = true;
+      videoWakeLock.setAttribute("loop", "");
+      videoWakeLock.style.position = "fixed";
+      videoWakeLock.style.top = "0";
+      videoWakeLock.style.left = "0";
+      videoWakeLock.style.width = "1px";
+      videoWakeLock.style.height = "1px";
+      videoWakeLock.style.opacity = "0.001";
+      videoWakeLock.style.pointerEvents = "none";
+      videoWakeLock.style.zIndex = "-1";
+      if (stream) videoWakeLock.srcObject = stream;
+      document.body.appendChild(videoWakeLock);
+
+      if (canvasInterval) clearInterval(canvasInterval);
+      canvasInterval = setInterval(function () {
+        if (!ctx) return;
+        ctx.fillStyle = ctx.fillStyle === "#000000" ? "#010101" : "#000000";
+        ctx.fillRect(0, 0, 1, 1);
+      }, 1000);
+
+      const p = videoWakeLock.play();
+      if (p && p.catch) p.catch(function () {});
+    } catch (_) {}
+  }
+
+  function disableMediaWakeLock() {
+    if (canvasInterval) {
+      clearInterval(canvasInterval);
+      canvasInterval = null;
+    }
+    if (!videoWakeLock) return;
+    try {
+      videoWakeLock.pause();
+      if (videoWakeLock.parentNode) videoWakeLock.parentNode.removeChild(videoWakeLock);
+    } catch (_) {}
+    videoWakeLock = null;
+  }
+
+  function releaseWakeLock() {
+    disableMediaWakeLock();
+    const s = wakeLockSentinel;
+    wakeLockSentinel = null;
+    if (s && !s.released) {
+      const p = s.release();
+      if (p && p.catch) p.catch(function () {});
+    }
+  }
+
+  function requestWakeLock() {
+    if (!keepAliveEnabled) return;
+    if (navigator.wakeLock && navigator.wakeLock.request) {
+      if (wakeLockSentinel && !wakeLockSentinel.released) return;
+      let p;
+      try {
+        p = navigator.wakeLock.request("screen");
+      } catch (_) {
+        enableMediaWakeLock();
+        return;
+      }
+      if (p && p.then) {
+        p.then(function (sentinel) {
+          wakeLockSentinel = sentinel;
+          sentinel.addEventListener("release", function () {
+            wakeLockSentinel = null;
+            if (keepAliveEnabled && document.visibilityState === "visible") {
+              requestWakeLock();
+            }
+          });
+        }).catch(function () {
+          enableMediaWakeLock();
+        });
+      }
+    } else {
+      enableMediaWakeLock();
+    }
+  }
+
+  function applyKeepAlive(enabled) {
+    keepAliveEnabled = enabled !== false;
+    if (keepAliveEnabled) {
+      requestWakeLock();
+      enableMediaWakeLock();
+    } else {
+      releaseWakeLock();
+    }
+  }
   function isDesktopEnvironment() { return false; }
   function triggerImmersiveMode() {}
   function panelActionPayload(slot) { return { action_id: slot && slot.action_id ? slot.action_id : "" }; }
@@ -77,10 +195,24 @@
   function autoFitCompanionWindow() {}
   window.pywebview = window.pywebview || undefined;
 
-  function requestWakeLock() {}
-  function enableMediaWakeLock() {}
-  function disableMediaWakeLock() {}
-  function releaseWakeLock() {}
+  (function setupKeepScreenAwake() {
+    function onGesture() {
+      requestWakeLock();
+      enableMediaWakeLock();
+      if (videoWakeLock && videoWakeLock.paused) {
+        const p = videoWakeLock.play();
+        if (p && p.catch) p.catch(function () {});
+      }
+    }
+    document.addEventListener("touchstart", onGesture, { passive: true, capture: true });
+    document.addEventListener("pointerdown", onGesture, { passive: true, capture: true });
+    document.addEventListener("click", onGesture, { capture: true });
+    document.addEventListener("visibilitychange", function () {
+      if (document.visibilityState === "visible") onGesture();
+    });
+    requestWakeLock();
+    enableMediaWakeLock();
+  })();
 
   function exitPanelView() {}
   function renderPanel() {}

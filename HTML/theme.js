@@ -55,6 +55,48 @@ function renderStep(i) {
   if (stage) stage.style.backgroundColor = rgbToHex(r, g, b);
 }
 
+function applyCssTheme(pair) {
+  const c1 = pair[0];
+  const c2 = pair[1];
+  const [r1, g1, b1] = hexToRgb(c1);
+  const [r2, g2, b2] = hexToRgb(c2);
+  const lum1 = (0.299 * r1 + 0.587 * g1 + 0.114 * b1) / 255;
+  const lum2 = (0.299 * r2 + 0.587 * g2 + 0.114 * b2) / 255;
+  const bright = (lum1 < 0.42 && lum2 > lum1) ? c2 : c1;
+  const badgeFg = ((bright === c2 ? lum2 : lum1) > 0.52) ? "#000000" : "#ffffff";
+  const bgR = Math.min(255, Math.max(0, Math.round(8 + r1 * 0.05)));
+  const bgG = Math.min(255, Math.max(0, Math.round(8 + g1 * 0.05)));
+  const bgB = Math.min(255, Math.max(0, Math.round(10 + b1 * 0.05)));
+  const bgDarkR = Math.max(0, bgR - 4);
+  const bgDarkG = Math.max(0, bgG - 4);
+  const bgDarkB = Math.max(0, bgB - 4);
+  const root = document.documentElement;
+  const glow = `rgba(${r1}, ${g1}, ${b1}, 0.35)`;
+  const themeBg = `rgb(${bgR}, ${bgG}, ${bgB})`;
+  const themeBgDark = `rgb(${bgDarkR}, ${bgDarkG}, ${bgDarkB})`;
+  const themeBgGlow = `rgba(${r1}, ${g1}, ${b1}, 0.08)`;
+  const bgCard = `linear-gradient(135deg, rgba(${Math.round(14 + r1 * 0.05)}, ${Math.round(16 + g1 * 0.05)}, ${Math.round(20 + b1 * 0.05)}, 0.9) 0%, rgba(${Math.round(10 + r1 * 0.03)}, ${Math.round(12 + g1 * 0.03)}, ${Math.round(16 + b1 * 0.03)}, 0.95) 100%)`;
+
+  root.style.setProperty("--theme-color-1", c1);
+  root.style.setProperty("--theme-color-2", c2);
+  root.style.setProperty("--neon", c1);
+  root.style.setProperty("--neon-text", bright);
+  root.style.setProperty("--neon-bright", bright);
+  root.style.setProperty("--neon-accent", c2);
+  root.style.setProperty("--neon-purple", c2);
+  root.style.setProperty("--theme-badge-fg", badgeFg);
+  root.style.setProperty("--theme-gradient-h", `linear-gradient(90deg, ${c1} 0%, ${c2} 100%)`);
+  root.style.setProperty("--theme-gradient-v", `linear-gradient(180deg, ${c1} 0%, ${c2} 100%)`);
+  root.style.setProperty("--theme-gradient-conic", `conic-gradient(${c1} 0deg, ${c2} 360deg)`);
+  root.style.setProperty("--scrollbar-thumb", `linear-gradient(180deg, ${c1} 0%, ${c2} 100%)`);
+  root.style.setProperty("--scrollbar-thumb-hover", `linear-gradient(180deg, ${c1} 0%, ${c2} 100%)`);
+  root.style.setProperty("--theme-glow", glow);
+  root.style.setProperty("--theme-bg", themeBg);
+  root.style.setProperty("--theme-bg-dark", themeBgDark);
+  root.style.setProperty("--theme-bg-glow", themeBgGlow);
+  root.style.setProperty("--bg-card", bgCard);
+}
+
 function advance(now) {
   const dt = now - lastTickTime;
   lastTickTime = now;
@@ -89,6 +131,7 @@ function applyTheme(theme) {
   c2 = pair[1];
   c1rgb = hexToRgb(c1);
   c2rgb = hexToRgb(c2);
+  applyCssTheme(pair);
   renderStep(0);
 }
 

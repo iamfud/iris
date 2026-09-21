@@ -33,6 +33,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 log = logging.getLogger("iris.lighting")
+ON_FOOT_COLOR = "#0088FF"
 
 _SERVICE: Optional["LightingService"] = None
 _LOCK = threading.Lock()
@@ -58,6 +59,7 @@ class LightingService:
 
         # Per-app watcher state
         self._active_app: Optional[tuple] = None   # (exe, plugin, profile)
+        self._on_foot_active = False
 
         # Alert pulse stack (always on top)
         self._active_alert: Optional[Dict[str, Any]] = None
@@ -96,6 +98,15 @@ class LightingService:
         if self._alert_timer:
             self._alert_timer.cancel()
             self._alert_timer = None
+
+    def set_on_foot(self, active: bool):
+        """Temporarily override active lighting while Elite is on foot."""
+        active = bool(active)
+        with self._lock:
+            if self._on_foot_active == active:
+                return
+            self._on_foot_active = active
+        self.evaluate_state(force=True)
 
     # ── Helpers ─────────────────────────────────────────────────
 
@@ -245,12 +256,15 @@ class LightingService:
         # 2. OpenRGB baseline (startup) unless a per-app override is active
         with self._lock:
             active_app = self._active_app
+            on_foot_active = self._on_foot_active
 
         if active_app:
             openrgb_actions = {active_app[1]: active_app[2]}
         else:
             baseline = self._openrgb_baseline() or {}
             openrgb_actions = dict(baseline)
+        if on_foot_active:
+            openrgb_actions = {plugin: ON_FOOT_COLOR for plugin in openrgb_actions}
 
         # 3. HA day/night (global schedule, focus-decoupled)
         ha_actions = self._ha_daylight()

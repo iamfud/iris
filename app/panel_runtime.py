@@ -791,9 +791,12 @@ def _rest_action(app, slot):
             if inst and hasattr(inst, "_connector"):
                 inst._connector.call_service(domain, service, entity_id=entity)
             else:
-                from plugins.ha.connector import HASSConnector
+                import plugin_manager
                 from config import load_config
-                conn = HASSConnector(load_config())
+                mod = plugin_manager.load_connector("ha")
+                if mod is None or not hasattr(mod, "HASSConnector"):
+                    raise RuntimeError("HA connector is not approved")
+                conn = mod.HASSConnector(load_config())
                 conn.call_service(domain, service, entity_id=entity)
         except Exception as ex:
             log.warning("[panel_runtime] HA REST action failed: %s", ex)

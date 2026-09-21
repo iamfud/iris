@@ -751,7 +751,7 @@ def _running_profile_exes(profiles):
     running = set()
     try:
         from win_platform import get_running_process_names
-        procs = {n.replace(".exe", "") for n in get_running_process_names(ttl=1.0)}
+        procs = {str(n).replace(".exe", "").lower() for n in get_running_process_names(ttl=1.0)}
     except Exception:
         procs = set()
     for p in (profiles or []):
@@ -976,6 +976,17 @@ def mobile_panel_payload(cfg):
     from server.auth import annotate_action_slots
     ensure_panel_defaults(cfg)
     board, active_ids, _ = resolve_panel_board(cfg)
+    profile_meta = []
+    for profile in cfg.get("panel_profiles") or []:
+        if not isinstance(profile, dict) or not profile.get("id"):
+            continue
+        profile_meta.append({
+            "id": profile.get("id"),
+            "exe": profile.get("exe") or "",
+            "enabled": profile.get("enabled", True),
+            "auto_switch": profile.get("auto_switch", True),
+            "theme": profile.get("theme") or {},
+        })
     return {
         "panel_board": annotate_action_slots(board),
         "panel_utility": annotate_action_slots(cfg.get("panel_utility") or default_utility()),
@@ -985,7 +996,10 @@ def mobile_panel_payload(cfg):
         "panel_gauges": cfg.get("panel_gauges") or default_gauges(),
         "hardware_connected": False,
         "active_profiles": active_ids,
+        "panel_profiles": profile_meta,
         "theme": cfg.get("theme") or {"mode": "iris", "accent": "#B23AF6", "neon": "#48B2E9"},
+        "screensaver_timeout": int(cfg.get("screensaver_timeout", 2) if cfg.get("screensaver_timeout") is not None else 2),
+        "keep_alive": bool(cfg.get("keep_alive", True)),
     }
 
 

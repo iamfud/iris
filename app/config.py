@@ -53,6 +53,13 @@ def save_config(cfg):
         except Exception:
             pass
         merged = {**DEFAULT_CONFIG, **preserved, **cfg}
+        try:
+            import plugin_manager
+            persisted_theme = plugin_manager.get_persisted_theme(cfg)
+            if persisted_theme is not None:
+                merged["theme"] = persisted_theme
+        except Exception:
+            pass
         merged.pop("ha_board", None)  # remove stale old key
         if "panel_default_automations" in merged or "panel_profiles" in merged:
             merged.pop("automations", None)

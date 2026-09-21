@@ -14,9 +14,11 @@ A global check runs every 60 seconds (called from main.py).
 
 import importlib
 import importlib.util
+import hashlib
 import json
 import logging
 import os
+import re
 import threading
 import time
 import psutil
@@ -57,11 +59,198 @@ def _plugin_path(name):
 
 
 _DISCOVERED_CACHE = None
+_PROVENANCE = {}
+_BUILTIN_PLUGIN_NAMES = frozenset({
+    "akp02_stats",
+    "elite_dangerous",
+    "ha",
+    "pc_stats",
+    "rgb",
+    "vision",
+})
+_MANIFEST_TOP_LEVEL_TYPES = {
+    "name": str,
+    "version": str,
+    "display_name": str,
+    "description": str,
+    "icon": str,
+    "type": str,
+    "category": str,
+    "author": str,
+    "message_not_running": str,
+    "min_api_version": str,
+    "exe_default": str,
+    "supports_day_off": bool,
+    "hardware_plugin": bool,
+    "hardware": bool,
+}
+_MANIFEST_TOP_LEVEL_LISTS = {
+    "requirements",
+    "settings",
+    "buttons",
+    "preset_layout",
+    "actions",
+    "outputs",
+    "status",
+}
+_MANIFEST_TOP_LEVEL_DICTS = {
+    "capabilities",
+    "labels",
+    "live_data",
+    "theme",
+}
+_MANIFEST_ALLOWED_KEYS = set(_MANIFEST_TOP_LEVEL_TYPES) | _MANIFEST_TOP_LEVEL_LISTS | _MANIFEST_TOP_LEVEL_DICTS
+_MANIFEST_REQUIRED_KEYS = frozenset({"name", "version", "type"})
+_VALID_PLUGIN_TYPES = frozenset({"app", "service", "multi", "hardware"})
 
 
 def invalidate_plugin_discovery():
     global _DISCOVERED_CACHE
     _DISCOVERED_CACHE = None
+
+
+def _manifest_error(manifest, entry):
+    if not isinstance(manifest, dict):
+        return "manifest root must be an object"
+    missing = sorted(_MANIFEST_REQUIRED_KEYS - set(manifest))
+    if missing:
+        return f"missing required fields: {', '.join(missing)}"
+    unknown = sorted(set(manifest) - _MANIFEST_ALLOWED_KEYS)
+    if unknown:
+        return f"unknown fields: {', '.join(unknown)}"
+    name = manifest.get("name", entry)
+    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_]+", name):
+        return "name must contain only letters, numbers, and underscores"
+    if name != entry:
+        return f"name {name!r} does not match directory {entry!r}"
+    if "version" in manifest and not isinstance(manifest["version"], str):
+        return "version must be a string"
+    if "type" in manifest and manifest["type"] not in _VALID_PLUGIN_TYPES:
+        return f"type must be one of {sorted(_VALID_PLUGIN_TYPES)}"
+    for key, expected in _MANIFEST_TOP_LEVEL_TYPES.items():
+        if key in manifest and not isinstance(manifest[key], expected):
+            return f"{key} must be {expected.__name__}"
+    for key in _MANIFEST_TOP_LEVEL_LISTS:
+        if key in manifest and not isinstance(manifest[key], list):
+            return f"{key} must be a list"
+    for key in _MANIFEST_TOP_LEVEL_DICTS:
+        if key in manifest and not isinstance(manifest[key], dict):
+            return f"{key} must be an object"
+    caps = manifest.get("capabilities") or {}
+    if any(not isinstance(value, bool) for value in caps.values()):
+        return "capabilities values must be booleans"
+    for key in ("settings", "buttons", "actions", "outputs", "status", "requirements"):
+        for item in manifest.get(key) or []:
+            if not isinstance(item, dict):
+                return f"{key} entries must be objects"
+    for item in manifest.get("settings") or []:
+        if not isinstance(item.get("title"), str) or not isinstance(item.get("controls"), list):
+            return "settings entries require a title and controls list"
+        if any(not isinstance(control, dict) for control in item["controls"]):
+            return "settings controls must be objects"
+    for key in ("buttons", "actions", "outputs", "status"):
+        for item in manifest.get(key) or []:
+            if "id" in item and not isinstance(item["id"], str):
+                return f"{key} ids must be strings"
+    for item in manifest.get("requirements") or []:
+        if not isinstance(item.get("name"), str) or not isinstance(item.get("exe"), str):
+            return "requirements entries require name and exe strings"
+    live_data = manifest.get("live_data")
+    if live_data is not None and not isinstance(live_data.get("fields", []), list):
+        return "live_data.fields must be a list"
+    return None
+
+
+def validate_manifest(manifest, entry):
+    """Return (valid, reason) without importing any plugin code."""
+    reason = _manifest_error(manifest, entry)
+    return reason is None, reason or ""
+
+
+def _manifest_hash(manifest):
+    return hashlib.sha256(
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _trust_state(name):
+    state = (_cfg.get("plugin_trust") or {}).get(name, {}) if isinstance(_cfg, dict) else {}
+    return state if isinstance(state, dict) else {}
+
+
+def get_plugin_provenance(name):
+    """Return discovery provenance and approval state for a plugin."""
+    return dict(_PROVENANCE.get(name) or {})
+
+
+def is_plugin_approved(name):
+    """Return whether executable code may be imported for this plugin."""
+    provenance = _PROVENANCE.get(name) or {}
+    if not provenance.get("valid"):
+        return False
+    if provenance.get("source") == "builtin":
+        return True
+    if provenance.get("collision"):
+        return False
+    state = _trust_state(name)
+    return bool(
+        state.get("approved")
+        and state.get("manifest_hash") == provenance.get("manifest_hash")
+        and state.get("path") == provenance.get("path")
+    )
+
+
+def set_plugin_approval(name, approved=True):
+    """Persist explicit local approval for a validated, non-colliding plugin."""
+    provenance = _PROVENANCE.get(name) or {}
+    if not provenance or provenance.get("source") == "builtin":
+        return False
+    if not provenance.get("valid") or provenance.get("collision"):
+        return False
+    trust = _cfg.setdefault("plugin_trust", {})
+    trust[name] = {
+        "approved": bool(approved),
+        "manifest_hash": provenance["manifest_hash"],
+        "path": provenance["path"],
+        "source": provenance["source"],
+    }
+    from config import save_config
+    save_config(_cfg)
+    invalidate_plugin_discovery()
+    return True
+
+
+def _prepare_plugin_import(name):
+    """Make the selected plugin source root win package resolution for `name`."""
+    provenance = _PROVENANCE.get(name) or {}
+    plugin_dir = provenance.get("path")
+    if not plugin_dir:
+        return
+    root = os.path.dirname(plugin_dir)
+    import sys
+    if root in sys.path:
+        sys.path.remove(root)
+    sys.path.insert(0, root)
+    package = importlib.import_module("plugins")
+    package_path = list(getattr(package, "__path__", []))
+    package.__path__ = [root] + [item for item in package_path if item != root]
+    prefix = f"plugins.{name}"
+    for module_name in list(sys.modules):
+        if module_name == prefix or module_name.startswith(prefix + "."):
+            sys.modules.pop(module_name, None)
+
+
+def load_connector(name):
+    """Load a connector only after discovery and trust checks have passed."""
+    if not is_plugin_approved(name):
+        log.warning("[pm] blocked connector import for unapproved plugin %s", name)
+        return None
+    try:
+        _prepare_plugin_import(name)
+        return importlib.import_module(f"plugins.{name}.connector")
+    except Exception as e:
+        log.warning("[pm] failed to load connector for %s: %s", name, e)
+        return None
 
 
 def discover_plugins(force=False):
@@ -70,12 +259,12 @@ def discover_plugins(force=False):
     Scans the single plugins folder (built-in + user add-ons share it).
     Location: portable -> <root>/plugins, installed -> Documents/Iris/plugins.
     """
-    global _DISCOVERED_CACHE
+    global _DISCOVERED_CACHE, _PROVENANCE
     if not force and _DISCOVERED_CACHE is not None:
         return list(_DISCOVERED_CACHE)
 
-    # Collect entries from both dirs; user plugins take precedence by name
-    seen = {}  # name -> (plugin_dir, is_user)
+    # Collect candidates without importing executable plugin modules.
+    candidates = {}
     b_dir = builtin_plugins_dir()
     u_dir = user_plugins_dir()
     for base, is_user in [(b_dir, False), (u_dir, True)]:
@@ -84,7 +273,7 @@ def discover_plugins(force=False):
         for entry in sorted(os.listdir(base)):
             mpath = os.path.join(base, entry, "plugin.json")
             if os.path.isfile(mpath):
-                seen[entry] = (base, is_user)
+                candidates.setdefault(entry, []).append((base, is_user))
 
     # Put the parent of the 'plugins' package and the app directory (for iris_plugin)
     # on sys.path so that imports resolve cleanly in both source and frozen builds.
@@ -97,37 +286,62 @@ def discover_plugins(force=False):
         sys.path.insert(0, app_dir)
 
     result = []
-    for entry in sorted(seen):
-        base, is_user = seen[entry]
+    _manifests.clear()
+    same_plugin_root = os.path.abspath(b_dir) == os.path.abspath(u_dir)
+    _PROVENANCE = {}
+    for entry in sorted(candidates):
+        options = candidates[entry]
+        builtin_options = [item for item in options if not item[1]]
+        user_options = [item for item in options if item[1]]
+        collision = bool(builtin_options and user_options and
+                         os.path.abspath(builtin_options[0][0]) != os.path.abspath(user_options[0][0]))
+        base, is_user = (builtin_options or user_options)[0]
         plugin_dir = os.path.join(base, entry)
         mpath = os.path.join(plugin_dir, "plugin.json")
+        candidate_paths = [
+            {
+                "source": "user" if candidate_is_user else "builtin",
+                "path": os.path.join(candidate_base, entry),
+            }
+            for candidate_base, candidate_is_user in options
+        ]
         try:
             with open(mpath, encoding="utf-8") as f:
                 manifest = json.load(f)
+            valid, reason = validate_manifest(manifest, entry)
+            if not valid:
+                log.warning("[pm] invalid manifest %s: %s", mpath, reason)
+                _PROVENANCE[entry] = {
+                    "source": "user" if is_user else "builtin",
+                    "path": plugin_dir,
+                    "manifest_hash": "",
+                    "valid": False,
+                    "error": reason,
+                    "collision": collision,
+                    "candidates": candidate_paths,
+                }
+                continue
             manifest.setdefault("name", entry)
             manifest.setdefault("type", "service")
             manifest.setdefault("message_not_running", "")
             manifest.setdefault("settings", [])
             manifest.setdefault("buttons", [])
             manifest.setdefault("preset_layout", [])
-            manifest["user_plugin"] = is_user
-            try:
-                mod = importlib.import_module(f"plugins.{entry}.connector")
-                for name_in_mod in dir(mod):
-                    obj = getattr(mod, name_in_mod)
-                    if isinstance(obj, type) and (hasattr(obj, "controls") or hasattr(obj, "get_settings")):
-                        if hasattr(obj, "controls"):
-                            ctrl_list = obj.controls()
-                            if ctrl_list:
-                                manifest["controls"] = ctrl_list
-                        conn_settings = None
-                        if hasattr(obj, "get_settings"):
-                            conn_settings = obj.get_settings()
-                        if conn_settings:
-                            _merge_settings(manifest, conn_settings)
-                        break
-            except Exception:
-                pass
+            manifest["user_plugin"] = bool(is_user)
+            manifest_hash = _manifest_hash(manifest)
+            source = "builtin" if (
+                not is_user or (same_plugin_root and entry in _BUILTIN_PLUGIN_NAMES)
+            ) else "user"
+            _PROVENANCE[entry] = {
+                "source": source,
+                "path": plugin_dir,
+                "manifest_hash": manifest_hash,
+                "valid": True,
+                "error": "",
+                "collision": collision,
+                "approved": source == "builtin",
+                "candidates": candidate_paths,
+            }
             _manifests[entry] = manifest
             result.append((entry, manifest))
         except Exception as e:
@@ -199,7 +413,9 @@ def refresh_settings(name):
     if not manifest:
         return
     try:
-        mod = importlib.import_module(f"plugins.{name}.connector")
+        mod = load_connector(name)
+        if mod is None:
+            return
         for obj in vars(mod).values():
             if isinstance(obj, type) and hasattr(obj, "get_settings"):
                 conn_settings = obj.get_settings()
@@ -275,12 +491,16 @@ class OverlaysOutputProxy:
 
 def load_plugin(name, cfg, serial_sender=None, overlays=None):
     """Import and instantiate a plugin by name. Returns None on failure."""
+    if not is_plugin_approved(name):
+        log.warning("[pm] blocked load for unapproved plugin %s", name)
+        return None
     try:
+        _prepare_plugin_import(name)
         mod = None
         try:
             mod = importlib.import_module(f"plugins.{name}.plugin")
         except ModuleNotFoundError:
-            p_dir = _plugin_path(name)
+            p_dir = (_PROVENANCE.get(name) or {}).get("path") or _plugin_path(name)
             p_file = os.path.join(p_dir, "plugin.py")
             if os.path.isfile(p_file):
                 spec = importlib.util.spec_from_file_location(f"plugins.{name}.plugin", p_file)
@@ -323,6 +543,7 @@ def stop_all():
         except Exception as e:
             log.warning("[pm] %s stop failed: %s", name, e)
     _instances.clear()
+    restore_default_theme(force=True)
 
 
 def get(name):
@@ -510,6 +731,7 @@ def _stop_plugin(name):
 
 # ── Dynamic Plugin & App Theme Engine ──────────────────────────
 _saved_base_theme = None
+_runtime_theme_payload = None
 _active_themed_plugin = None
 _active_themed_exe = None
 _themed_exe_has_run = False
@@ -575,7 +797,7 @@ def get_user_default_theme() -> dict:
 @_theme_locked
 def restore_default_theme(force: bool = False):
     """Restore Iris global theme, hardware lighting, and addons back to default."""
-    global _saved_base_theme, _active_themed_plugin, _active_themed_exe, _themed_exe_has_run, _themed_exe_miss_count
+    global _saved_base_theme, _runtime_theme_payload, _active_themed_plugin, _active_themed_exe, _themed_exe_has_run, _themed_exe_miss_count
     if not force and _active_themed_plugin is None and _active_themed_exe is None and _saved_base_theme is None:
         return
     base_theme = _saved_base_theme or get_user_default_theme()
@@ -583,6 +805,7 @@ def restore_default_theme(force: bool = False):
     if isinstance(_cfg, dict):
         _cfg["theme"] = dict(base_theme)
     _saved_base_theme = None
+    _runtime_theme_payload = None
     _active_themed_plugin = None
     _active_themed_exe = None
     _themed_exe_has_run = False
@@ -689,7 +912,7 @@ def sync_plugin_themes():
     - Theme is restored to user's default theme when NO themed profile or app is running.
     - Per-profile flags respected: `theme_override` (CC), `lighting_theme_enabled` (OpenRGB).
     """
-    global _saved_base_theme, _active_themed_plugin, _active_themed_exe, _themed_exe_has_run, _themed_exe_miss_count
+    global _saved_base_theme, _runtime_theme_payload, _active_themed_plugin, _active_themed_exe, _themed_exe_has_run, _themed_exe_miss_count
     if not _cfg or not isinstance(_cfg, dict):
         return
 
@@ -762,9 +985,19 @@ def sync_plugin_themes():
         }
         running_themed.append((synthetic, theme_def))
 
+    profile_ids = {
+        str(p.get("id"))
+        for p in profiles
+        if isinstance(p, dict) and p.get("id")
+    }
+    active_profile_theme = (
+        _active_themed_plugin is not None
+        and str(_active_themed_plugin) in profile_ids
+    )
+
     # ── Check if macro-launched themed exe is running ──
     macro_exe_running = False
-    if _active_themed_exe:
+    if _active_themed_exe and not active_profile_theme:
         try:
             from win_platform import is_process_running
             is_running = is_process_running(_active_themed_exe, ttl=1.0)
@@ -846,6 +1079,7 @@ def sync_plugin_themes():
                 "neon": resolved_theme.get("neon", "#ffaa00"),
             }
             _cfg["theme"] = theme_payload
+            _runtime_theme_payload = dict(theme_payload)
             log.info("[pm] latched game theme for '%s': %s", candidate_id, theme_payload)
             _broadcast_theme(theme_payload)
 
@@ -857,6 +1091,15 @@ def sync_plugin_themes():
             log.debug("[pm] lighting evaluate_state failed: %s", ex)
 
     _ensure_theme_watcher()
+
+
+def get_persisted_theme(cfg):
+    """Return the saved user theme when cfg holds a transient runtime theme."""
+    if cfg is not _cfg or _saved_base_theme is None or _runtime_theme_payload is None:
+        return None
+    if cfg.get("theme") == _runtime_theme_payload:
+        return dict(_saved_base_theme)
+    return None
 
 
 def _broadcast_theme(theme_dict):
@@ -899,7 +1142,7 @@ def apply_global_theme(theme_dict: dict, source_id: str = None):
     Broadcasts over WebSocket to phone panel, theme.html, and dial.html,
     and triggers Hardware Lighting (OpenRGB / connected LEDs).
     """
-    global _saved_base_theme, _active_themed_plugin, _active_themed_exe, _themed_exe_has_run, _themed_exe_started_at, _themed_exe_miss_count
+    global _saved_base_theme, _runtime_theme_payload, _active_themed_plugin, _active_themed_exe, _themed_exe_has_run, _themed_exe_started_at, _themed_exe_miss_count
     if not _cfg or not isinstance(_cfg, dict):
         return
     if not isinstance(theme_dict, dict):
@@ -915,6 +1158,7 @@ def apply_global_theme(theme_dict: dict, source_id: str = None):
         "neon": theme_dict.get("neon", "#48B2E9"),
     }
     _cfg["theme"] = theme_payload
+    _runtime_theme_payload = dict(theme_payload)
     if source_id is not None:
         _active_themed_plugin = str(source_id)
         base = os.path.basename(str(source_id)).strip().lower()
@@ -1001,6 +1245,9 @@ def check_plugins():
 
     for name, manifest in _manifests.items():
         pcfg = plugins_cfg.get(name, {})
+        if not is_plugin_approved(name):
+            _stop_plugin(name)
+            continue
         enabled = pcfg.get("enabled", True)
         ptype = manifest.get("type", "service")
 

@@ -94,6 +94,23 @@ class SecurityBoundaryTests(unittest.TestCase):
         self.assertEqual(resolve_mobile_action(action_id_for_slot(media), cfg), media)
         self.assertEqual(resolve_mobile_action(action_id_for_slot(core), cfg), core)
 
+    def test_mobile_action_allows_only_declared_elite_hotkeys(self):
+        elite = {
+            "type": "TOGGLE",
+            "plugin": "elite_dangerous",
+            "button_id": "landing_gear",
+            "hotkey": "l",
+        }
+        undeclared = {
+            "type": "TOGGLE",
+            "plugin": "elite_dangerous",
+            "button_id": "import_binds",
+            "hotkey": "i",
+        }
+        cfg = {"panel_board": [elite, undeclared], "panel_utility": [], "panel_core": [], "panel_profiles": []}
+        self.assertEqual(resolve_mobile_action(action_id_for_slot(elite), cfg), elite)
+        self.assertIsNone(resolve_mobile_action(action_id_for_slot(undeclared), cfg))
+
 
 if __name__ == "__main__":
     unittest.main()

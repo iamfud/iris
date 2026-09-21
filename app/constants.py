@@ -65,6 +65,7 @@ DEFAULT_CONFIG = {
         "neon": "#48B2E9"
     },
     "plugins": {},
+    "plugin_trust": {},
 }
 
 # Device-side defaults (pushed to ESP8266 on connect / factory reset)

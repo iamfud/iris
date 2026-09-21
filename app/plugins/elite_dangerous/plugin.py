@@ -129,6 +129,7 @@ class Plugin:
         self._thread = None
         self._last_system = None
         self._binds_watcher = BindsWatcher()
+        self._last_on_foot = None
 
     def start(self):
         self._connector.connect()
@@ -148,6 +149,24 @@ class Plugin:
         self._ship_thread.start()
         self._ensure_default_profile()
         log.info("elite_dangerous plugin started")
+
+    def _set_on_foot_lighting(self, active):
+        active = bool(active)
+        if self._last_on_foot == active:
+            return
+        self._last_on_foot = active
+        try:
+            from lighting_service import get_lighting_service
+            get_lighting_service().set_on_foot(active)
+        except Exception as ex:
+            log.warning("[ed] on-foot lighting update failed: %s", ex)
+        try:
+            import plugin_manager
+            akp02 = plugin_manager.get("akp02_stats")
+            if akp02 and hasattr(akp02, "set_on_foot"):
+                akp02.set_on_foot(active)
+        except Exception as ex:
+            log.debug("[ed] AKP02 on-foot theme update failed: %s", ex)
 
     def get_options(self, key):
         """Dynamic options provider for settings dropdowns."""
@@ -318,6 +337,7 @@ class Plugin:
 
     def stop(self):
         self._running = False
+        self._set_on_foot_lighting(False)
         self._clear_shields_warning()
         self._connector.disconnect()
         if self._serial:
@@ -409,6 +429,7 @@ class Plugin:
         tick_count = 0
         while self._running:
             if not self._connector.game_running():
+                self._set_on_foot_lighting(False)
                 if shield_alert_active:
                     shield_alert_active = False
                     self._clear_shields_warning()
@@ -423,6 +444,7 @@ class Plugin:
                 time.sleep(1.0)
                 continue
 
+            self._set_on_foot_lighting(st.get("on_foot", False))
             tick_count += 1
             if tick_count % 4 == 0:  # Every 2s (4 * 0.5s)
                 try:

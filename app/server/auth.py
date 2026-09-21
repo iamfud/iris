@@ -133,6 +133,18 @@ def is_authorized_slot(slot, cfg):
 
 _LAN_SAFE_CORE_ACTIONS = frozenset({"display", "overlay", "mic", "mic_mute", "lighting", "lighting_sync"})
 _LAN_SAFE_TYPES = frozenset({"MEDIA_PREV", "MEDIA_PLAY", "MEDIA_NEXT", "AUDIO OUTPUT", "CORE"})
+_LAN_SAFE_PLUGIN_BUTTONS = {
+    "elite_dangerous": frozenset({
+        "landing_gear",
+        "cargo_scoop",
+        "flight_assist",
+        "lights",
+        "hardpoints",
+        "night_vision",
+        "silent_running",
+        "supercruise",
+    }),
+}
 
 
 def resolve_mobile_action(action_id, cfg):
@@ -152,7 +164,14 @@ def resolve_mobile_action(action_id, cfg):
         if not isinstance(slot, dict) or action_id_for_slot(slot) != action_id:
             continue
         slot_type = str(slot.get("type") or "").upper()
-        if slot_type not in _LAN_SAFE_TYPES:
+        plugin_name = str(slot.get("plugin") or "").lower()
+        button_id = str(slot.get("button_id") or "")
+        is_safe_plugin_button = (
+            plugin_name in _LAN_SAFE_PLUGIN_BUTTONS
+            and button_id in _LAN_SAFE_PLUGIN_BUTTONS[plugin_name]
+            and slot_type in {"TOGGLE", "ACTION"}
+        )
+        if slot_type not in _LAN_SAFE_TYPES and not is_safe_plugin_button:
             return None
         if slot_type == "CORE" and str(slot.get("core_action") or "").lower() not in _LAN_SAFE_CORE_ACTIONS:
             return None

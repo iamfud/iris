@@ -55,7 +55,125 @@
     return p ? p.replace(/\.exe$/i, "") : "Media Player";
   }
   function getMediaPlayerBrandIcon() { return null; }
-  function applyKeepAlive() {}
+  let keepAliveEnabled = true;
+  let wakeLockSentinel = null;
+  let videoWakeLock = null;
+  let canvasInterval = null;
+
+  function enableMediaWakeLock() {
+    if (!keepAliveEnabled) return;
+    if (videoWakeLock) {
+      if (videoWakeLock.paused) {
+        const p = videoWakeLock.play();
+        if (p && p.catch) p.catch(function () {});
+      }
+      return;
+    }
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = 1;
+      canvas.height = 1;
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.fillStyle = "#000000";
+        ctx.fillRect(0, 0, 1, 1);
+      }
+
+      let stream = null;
+      if (canvas.captureStream) stream = canvas.captureStream(1);
+      else if (canvas.mozCaptureStream) stream = canvas.mozCaptureStream(1);
+
+      videoWakeLock = document.createElement("video");
+      videoWakeLock.setAttribute("playsinline", "");
+      videoWakeLock.setAttribute("webkit-playsinline", "");
+      videoWakeLock.muted = true;
+      videoWakeLock.setAttribute("muted", "");
+      videoWakeLock.loop = true;
+      videoWakeLock.setAttribute("loop", "");
+      videoWakeLock.style.position = "fixed";
+      videoWakeLock.style.top = "0";
+      videoWakeLock.style.left = "0";
+      videoWakeLock.style.width = "1px";
+      videoWakeLock.style.height = "1px";
+      videoWakeLock.style.opacity = "0.001";
+      videoWakeLock.style.pointerEvents = "none";
+      videoWakeLock.style.zIndex = "-1";
+      if (stream) videoWakeLock.srcObject = stream;
+      document.body.appendChild(videoWakeLock);
+
+      if (canvasInterval) clearInterval(canvasInterval);
+      canvasInterval = setInterval(function () {
+        if (!ctx) return;
+        ctx.fillStyle = ctx.fillStyle === "#000000" ? "#010101" : "#000000";
+        ctx.fillRect(0, 0, 1, 1);
+      }, 1000);
+
+      const p = videoWakeLock.play();
+      if (p && p.catch) p.catch(function () {});
+    } catch (_) {}
+  }
+
+  function disableMediaWakeLock() {
+    if (canvasInterval) {
+      clearInterval(canvasInterval);
+      canvasInterval = null;
+    }
+    if (!videoWakeLock) return;
+    try {
+      videoWakeLock.pause();
+      if (videoWakeLock.parentNode) videoWakeLock.parentNode.removeChild(videoWakeLock);
+    } catch (_) {}
+    videoWakeLock = null;
+  }
+
+  function releaseWakeLock() {
+    disableMediaWakeLock();
+    const s = wakeLockSentinel;
+    wakeLockSentinel = null;
+    if (s && !s.released) {
+      const p = s.release();
+      if (p && p.catch) p.catch(function () {});
+    }
+  }
+
+  function requestWakeLock() {
+    if (!keepAliveEnabled) return;
+    if (navigator.wakeLock && navigator.wakeLock.request) {
+      if (wakeLockSentinel && !wakeLockSentinel.released) return;
+      let p;
+      try {
+        p = navigator.wakeLock.request("screen");
+      } catch (_) {
+        enableMediaWakeLock();
+        return;
+      }
+      if (p && p.then) {
+        p.then(function (sentinel) {
+          wakeLockSentinel = sentinel;
+          sentinel.addEventListener("release", function () {
+            wakeLockSentinel = null;
+            if (keepAliveEnabled && document.visibilityState === "visible") {
+              requestWakeLock();
+            }
+          });
+        }).catch(function () {
+          enableMediaWakeLock();
+        });
+      }
+    } else {
+      enableMediaWakeLock();
+    }
+  }
+
+  function applyKeepAlive(enabled) {
+    keepAliveEnabled = enabled !== false;
+    if (keepAliveEnabled) {
+      requestWakeLock();
+      enableMediaWakeLock();
+    } else {
+      releaseWakeLock();
+    }
+  }
   function isDesktopEnvironment() { return false; }
   function triggerImmersiveMode() {}
   function panelActionPayload(slot) { return { action_id: slot && slot.action_id ? slot.action_id : "" }; }
@@ -77,10 +195,24 @@
   function autoFitCompanionWindow() {}
   window.pywebview = window.pywebview || undefined;
 
-  function requestWakeLock() {}
-  function enableMediaWakeLock() {}
-  function disableMediaWakeLock() {}
-  function releaseWakeLock() {}
+  (function setupKeepScreenAwake() {
+    function onGesture() {
+      requestWakeLock();
+      enableMediaWakeLock();
+      if (videoWakeLock && videoWakeLock.paused) {
+        const p = videoWakeLock.play();
+        if (p && p.catch) p.catch(function () {});
+      }
+    }
+    document.addEventListener("touchstart", onGesture, { passive: true, capture: true });
+    document.addEventListener("pointerdown", onGesture, { passive: true, capture: true });
+    document.addEventListener("click", onGesture, { capture: true });
+    document.addEventListener("visibilitychange", function () {
+      if (document.visibilityState === "visible") onGesture();
+    });
+    requestWakeLock();
+    enableMediaWakeLock();
+  })();
 
   function exitPanelView() {}
   function renderPanel() {}
@@ -132,9 +264,10 @@ const _MDI_BUILTIN = {
     "close": "\u{F0156}", "cog": "\u{F0493}", "cog-outline": "\u{F08BB}", "coffee": "\u{F0176}", "compass": "\u{F018B}",
     "controller-classic": "\u{F0B82}", "cpu-64-bit": "\u{F0EE0}", "crosshairs": "\u{F01A3}", "desktop-mac": "\u{F01C4}",
     "desktop-tower-monitor": "\u{F0AAB}", "door": "\u{F081A}", "eject": "\u{F01EA}", "expansion-card": "\u{F08AE}",
-    "fan": "\u{F0210}", "file": "\u{F0214}", "flash": "\u{F0241}", "folder": "\u{F024B}", "folder-open": "\u{F0770}",
-    "gamepad": "\u{F0296}", "gamepad-variant": "\u{F0297}", "harddisk": "\u{F02CA}", "headphones": "\u{F02CB}",
-    "headset": "\u{F02CE}", "heart": "\u{F02D1}", "help-circle": "\u{F02D7}", "home": "\u{F02DC}", "keyboard": "\u{F030C}",
+    "fan": "\u{F0210}", "file": "\u{F0214}", "flash": "\u{F0241}", "flare": "\u{F0D72}", "folder": "\u{F024B}", "folder-open": "\u{F0770}",
+    "flag-checkered": "\u{F023C}", "gamepad": "\u{F0296}", "gamepad-variant": "\u{F0297}", "gas-station": "\u{F0298}", "ghost": "\u{F02A0}",
+    "harddisk": "\u{F02CA}", "headphones": "\u{F02CB}", "headset": "\u{F02CE}", "heart": "\u{F02D1}", "help-circle": "\u{F02D7}",
+    "home": "\u{F02DC}", "keyboard": "\u{F030C}", "eye": "\u{F0208}",
     "lamp": "\u{F06B5}", "layers": "\u{F0328}", "led-strip": "\u{F07D6}", "lightbulb": "\u{F0335}",
     "lightning-bolt": "\u{F140B}", "lock": "\u{F033E}", "memory": "\u{F035B}", "microphone": "\u{F036C}",
     "microphone-off": "\u{F036D}", "microsoft-xbox": "\u{F05B9}", "microsoft-xbox-controller": "\u{F05BA}",
@@ -145,7 +278,8 @@ const _MDI_BUILTIN = {
     "sony-playstation": "\u{F0414}", "speaker": "\u{F04C3}", "speedometer": "\u{F04C5}", "spotify": "\u{F04C7}",
     "star": "\u{F04CE}", "stop": "\u{F04DB}", "sword": "\u{F04E5}", "sync": "\u{F04E6}", "target": "\u{F04FE}",
     "timer": "\u{F13AB}", "tune": "\u{F062E}", "volume-high": "\u{F057E}", "volume-medium": "\u{F0580}",
-    "volume-off": "\u{F0581}", "wifi": "\u{F05A9}"
+    "volume-off": "\u{F0581}", "wifi": "\u{F05A9}", "bag-personal": "\u{F0E10}",
+    "map-marker-path": "\u{F0D20}", "steering": "\u{F04D4}", "weight": "\u{F05A1}"
   };
 
 let mdiCache = Object.assign({}, _MDI_BUILTIN);
@@ -1867,7 +2001,7 @@ function updatePanelView() {
         const profiles = (cfgP.panel_profiles || []).filter((p) => p && p.enabled !== false);
         const activeIds = data.active_profiles || [];
 
-        let targetPage = 1;
+        let targetPage = null;
         let matchedProf = null;
 
         if (fg) {
@@ -1883,8 +2017,21 @@ function updatePanelView() {
           if (profIdx !== -1) {
             targetPage = 1 + profIdx + 1;
             panelNav = [];
+            if (matchedProf.theme && typeof window.applyTheme === "function") {
+              window.applyTheme(matchedProf.theme);
+            }
           }
-        } else if (prevFg && !matchedProf) {
+        } else if (activeIds.length === 1) {
+          const activeProf = profiles.find((p) => p.id === activeIds[0] && p.auto_switch !== false);
+          if (activeProf) {
+            const profIdx = activeIds.indexOf(activeProf.id);
+            targetPage = 1 + profIdx + 1;
+            panelNav = [];
+            if (activeProf.theme && typeof window.applyTheme === "function") {
+              window.applyTheme(activeProf.theme);
+            }
+          }
+        } else if (prevFg && !matchedProf && activeIds.length === 0) {
           targetPage = 1;
           panelNav = [];
         }

@@ -37,6 +37,7 @@ except ImportError:
     get_driver = None
 
 DASH_HTML = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pcstats_dashboard.html")
+ON_FOOT_ACCENT_COLOR = "#0088FF"
 
 
 class Plugin(BasePlugin):
@@ -52,6 +53,7 @@ class Plugin(BasePlugin):
         self._panel_connected = False
         self._browser_connected = False
         self._current_fps = 0.0
+        self._on_foot_active = False
 
     def start(self) -> None:
         """Start the background AKP02 render thread."""
@@ -157,8 +159,15 @@ class Plugin(BasePlugin):
         if isinstance(theme_data, dict):
             self._macro_theme = dict(theme_data)
 
+    def set_on_foot(self, active: bool) -> None:
+        """Use the on-foot accent while Elite Dangerous is on foot."""
+        self._on_foot_active = bool(active)
+
     def _resolve_accent_color(self) -> str:
         """Resolve current accent color based on active Iris theme mode and macros."""
+        if self._on_foot_active:
+            return ON_FOOT_ACCENT_COLOR
+
         # 1. Plugin-specific user override in plugin settings (if set)
         pcfg = self.config
         plugin_accent = (pcfg.get("accent_color") or "").strip()

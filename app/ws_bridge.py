@@ -1428,7 +1428,10 @@ def _get_plugin_snapshot(name):
             pass
     import importlib
     try:
-        mod = importlib.import_module(f"plugins.{name}.connector")
+        import plugin_manager
+        mod = plugin_manager.load_connector(name)
+        if mod is None:
+            return {"available": False, "state": {}, "status": {}}
         if hasattr(mod, "read_journal_snapshot"):
             return mod.read_journal_snapshot()
     except Exception:
@@ -1440,8 +1443,11 @@ def _get_plugins_config():
     import plugin_manager
     result = {}
     for name, manifest in plugin_manager.discover_plugins():
+        plugin_manager.refresh_settings(name)
+        manifest = plugin_manager.get_manifest(name) or manifest
         pcfg = plugin_manager.get_plugin_config(name)
         status = plugin_manager.get_plugin_status(name)
+        provenance = plugin_manager.get_plugin_provenance(name)
         capabilities = manifest.get("capabilities", {})
         
         # Resolve dynamic options for settings controls
@@ -1488,6 +1494,8 @@ def _get_plugins_config():
             "theme": manifest.get("theme"),
             "log_path": pcfg.get("log_path", ""),
             "is_hardware": plugin_manager.is_hardware_plugin(name, manifest),
+            "provenance": provenance,
+            "approved": plugin_manager.is_plugin_approved(name),
         }
 
     # Core Matrix Display Hardware Plugin
