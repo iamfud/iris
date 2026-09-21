@@ -10,6 +10,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
+from telemetry.read_projection import project_pc_telemetry
+
 log = logging.getLogger("iris.panel_entities")
 
 
@@ -702,31 +704,57 @@ def get_live_entity_states(plugin_button_states=None) -> Dict[str, Dict[str, Any
                     "label": "MUTED" if is_mic_muted else "UNMUTED",
                     "value": bool(is_mic_muted),
                 }
-
-            # PC Stats live telemetry
             stats_prov = getattr(_app, "_stats_provider", None)
             if stats_prov is not None:
                 st = getattr(stats_prov, "last_stats", {}) or {}
-                if "cpu_temp" in st and st["cpu_temp"] is not None:
-                    states["pc_stats.cpu_temp"] = {"value": st["cpu_temp"], "label": f"{st['cpu_temp']}°C"}
-                if "gpu_temp" in st and st["gpu_temp"] is not None:
-                    states["pc_stats.gpu_temp"] = {"value": st["gpu_temp"], "label": f"{st['gpu_temp']}°C"}
-                if "fps" in st and st["fps"] is not None:
-                    states["pc_stats.fps"] = {"value": st["fps"], "label": f"{st['fps']} FPS"}
-                if "cpu_usage" in st and st["cpu_usage"] is not None:
-                    states["pc_stats.cpu_usage"] = {"value": st["cpu_usage"], "label": f"{st['cpu_usage']}%"}
                 if "ram_usage" in st and st["ram_usage"] is not None:
-                    states["pc_stats.ram_usage"] = {"value": st["ram_usage"], "label": f"{st['ram_usage']}%"}
+                    states["pc_stats.ram_usage"] = {
+                        "value": st["ram_usage"],
+                        "label": f"{st['ram_usage']}%",
+                    }
 
     except Exception:
         pass
 
     # Telemetry Engine live hardware states
+    engine_states = {}
+    pc_stats_snapshot = None
     try:
         from telemetry import get_telemetry_engine
-        t_states = get_telemetry_engine().get_entity_states()
-        for k, v in t_states.items():
+        engine = get_telemetry_engine()
+        engine_states = engine.get_entity_states()
+    except Exception:
+        pass
+    try:
+        from ws_bridge import _app as stats_app
+        stats_provider = getattr(stats_app, "_stats_provider", None)
+        if stats_provider is not None:
+            pc_stats_snapshot = dict(getattr(stats_provider, "last_stats", {}) or {})
+            if (
+                pc_stats_snapshot.get("cpu_pct") is None
+                and pc_stats_snapshot.get("cpu_usage") is not None
+            ):
+                pc_stats_snapshot["cpu_pct"] = pc_stats_snapshot["cpu_usage"]
+            pc_stats_snapshot["available"] = True
+    except Exception:
+        pass
+    try:
+        engine_snapshot = {
+            "cpu_usage": (engine_states.get("pc_stats.cpu_usage") or {}).get("value"),
+            "cpu_temp": (engine_states.get("pc_stats.cpu_temp") or {}).get("value"),
+            "gpu_temp": (engine_states.get("pc_stats.gpu_temp") or {}).get("value"),
+            "fps": (engine_states.get("pc_stats.fps") or {}).get("value"),
+        }
+        projection = project_pc_telemetry(
+            engine_snapshot,
+            pc_stats_snapshot=pc_stats_snapshot,
+        )
+        for k, v in projection["entities"].items():
             if k not in states or states[k].get("value") is None:
+                states[k] = v
+        projected_ids = set(projection["entities"])
+        for k, v in engine_states.items():
+            if k not in projected_ids and (k not in states or states[k].get("value") is None):
                 states[k] = v
     except Exception:
         pass

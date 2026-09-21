@@ -12,6 +12,7 @@ from telemetry.cpu import CpuFreqTracker
 from telemetry.fps import FpsTracker
 from telemetry.gpu import NvmlManager
 from telemetry.lhm import LhmManager
+from telemetry.read_projection import project_pc_telemetry
 
 log = logging.getLogger("iris.telemetry.collector")
 
@@ -257,15 +258,7 @@ class TelemetryEngine:
     def get_entity_states(self) -> Dict[str, Dict[str, Any]]:
         """Return formatted dictionary of entity states ready for panel_entities."""
         st = self.get_snapshot()
-        states = {}
-        if st.get("cpu_temp") is not None:
-            states["pc_stats.cpu_temp"] = {"value": st["cpu_temp"], "label": f"{st['cpu_temp']}°C"}
-        if st.get("gpu_temp") is not None:
-            states["pc_stats.gpu_temp"] = {"value": st["gpu_temp"], "label": f"{st['gpu_temp']}°C"}
-        if st.get("fps") is not None:
-            states["pc_stats.fps"] = {"value": st["fps"], "label": f"{st['fps']} FPS"}
-        if st.get("cpu_usage") is not None:
-            states["pc_stats.cpu_usage"] = {"value": st["cpu_usage"], "label": f"{st['cpu_usage']}%"}
+        states = project_pc_telemetry(st)["entities"]
         if st.get("ram_usage") is not None:
             states["pc_stats.ram_usage"] = {"value": st["ram_usage"], "label": f"{st['ram_usage']}%"}
         if st.get("cpu_boost_peak"):

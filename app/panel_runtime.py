@@ -19,6 +19,8 @@ import time
 
 log = logging.getLogger("iris.panel_runtime")
 
+from telemetry.read_projection import project_pc_telemetry
+
 try:
     import psutil
     psutil.cpu_percent(interval=None)
@@ -81,66 +83,63 @@ def _gauges():
         "gpu_temp_max": 100,
     }
 
+    engine_snapshot = {}
+
     # 1. Primary hardware telemetry from central TelemetryEngine
     try:
         from telemetry import get_telemetry_engine
         te = get_telemetry_engine()
         if te:
-            snap = te.get_snapshot()
-            if snap:
+            engine_snapshot = te.get_snapshot() or {}
+            if engine_snapshot:
                 stats["available"] = True
-                snap_cpu = snap.get("cpu_pct") if snap.get("cpu_pct") is not None else (snap.get("cpu_usage") if snap.get("cpu_usage") is not None else snap.get("cpu"))
-                if snap_cpu is not None:
-                    stats["cpu_pct"] = snap_cpu
-
-                if snap.get("ram_pct") is not None:
-                    stats["ram_pct"] = snap.get("ram_pct")
-
-                if snap.get("gpu_temp") is not None:
-                    stats["gpu_temp"] = snap.get("gpu_temp")
-                if snap.get("cpu_temp") is not None:
-                    stats["cpu_temp"] = snap.get("cpu_temp")
-                if snap.get("fps") is not None:
-                    stats["fps"] = snap.get("fps")
+                if engine_snapshot.get("ram_pct") is not None:
+                    stats["ram_pct"] = engine_snapshot.get("ram_pct")
     except Exception:
         pass
 
-    if stats["cpu_pct"] is None:
+    projection = project_pc_telemetry(engine_snapshot)
+    cpu_usage_fallback = None
+    if projection["gauges"]["cpu_pct"] is None:
         try:
             import psutil
-            stats["cpu_pct"] = round(psutil.cpu_percent(interval=None), 1)
+            cpu_usage_fallback = round(psutil.cpu_percent(interval=None), 1)
         except Exception:
             pass
 
     # 2. Plugin override if pc_stats is active (MSI Afterburner / RTSS)
+    pc_stats_snapshot = None
     try:
         import plugin_manager
         inst = plugin_manager.get("pc_stats")
         if inst is not None and hasattr(inst, "poll"):
             p = inst.poll()
+            pc_stats_snapshot = p
             if p.get("available"):
-                if p.get("cpu_pct") is not None:
-                    stats["cpu_pct"] = p.get("cpu_pct")
-                if p.get("cpu_temp") is not None:
-                    stats["cpu_temp"] = p.get("cpu_temp")
-                if p.get("gpu_temp") is not None:
-                    stats["gpu_temp"] = p.get("gpu_temp")
-                if p.get("fps") is not None:
-                    stats["fps"] = p.get("fps")
                 if p.get("fps_max"):
                     stats["fps_max"] = p.get("fps_max")
                 if p.get("refresh_rate"):
                     stats["refresh_rate"] = p.get("refresh_rate")
-                if p.get("cpu_temp_unit"):
-                    stats["cpu_temp_unit"] = p.get("cpu_temp_unit")
-                if p.get("cpu_temp_max"):
-                    stats["cpu_temp_max"] = p.get("cpu_temp_max")
-                if p.get("gpu_temp_unit"):
-                    stats["gpu_temp_unit"] = p.get("gpu_temp_unit")
-                if p.get("gpu_temp_max"):
-                    stats["gpu_temp_max"] = p.get("gpu_temp_max")
     except Exception:
         pass
+
+    projection = project_pc_telemetry(
+        engine_snapshot,
+        pc_stats_snapshot=pc_stats_snapshot,
+        cpu_usage_fallback=cpu_usage_fallback,
+    )
+    stats.update(
+        {
+            "cpu_pct": projection["gauges"]["cpu_pct"],
+            "cpu_temp": projection["gauges"]["cpu_temp"],
+            "gpu_temp": projection["gauges"]["gpu_temp"],
+            "fps": projection["gauges"]["fps"],
+            "cpu_temp_unit": projection["gauges"]["cpu_temp_unit"],
+            "gpu_temp_unit": projection["gauges"]["gpu_temp_unit"],
+            "cpu_temp_max": projection["gauges"]["cpu_temp_max"],
+            "gpu_temp_max": projection["gauges"]["gpu_temp_max"],
+        }
+    )
 
     return stats
 
