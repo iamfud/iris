@@ -939,6 +939,7 @@ def action_catalog():
 
 def panel_payload(cfg):
     """Snapshot for GET /api/panel."""
+    from server.auth import annotate_action_slots
     ensure_panel_defaults(cfg)
     hw = False
     try:
@@ -955,10 +956,10 @@ def panel_payload(cfg):
         except Exception:
             pass
     return {
-        "panel_board": cfg.get("panel_board") or [],
-        "panel_profiles": cfg.get("panel_profiles") or [],
-        "panel_utility": cfg.get("panel_utility") or default_utility(),
-        "panel_core": cfg.get("panel_core") or default_core(),
+        "panel_board": annotate_action_slots(cfg.get("panel_board") or []),
+        "panel_profiles": annotate_action_slots(cfg.get("panel_profiles") or []),
+        "panel_utility": annotate_action_slots(cfg.get("panel_utility") or default_utility()),
+        "panel_core": annotate_action_slots(cfg.get("panel_core") or default_core()),
         "panel_sliders": cfg.get("panel_sliders") or default_sliders(),
         "panel_layout": cfg.get("panel_layout") or default_layout(),
         "panel_gauges": cfg.get("panel_gauges") or default_gauges(),
@@ -967,6 +968,24 @@ def panel_payload(cfg):
         "actions": action_catalog(),
         "default_profile_name": cfg.get("default_profile_name") or "",
         "panel_default_automations": sanitize_automations(cfg.get("panel_default_automations") or []),
+    }
+
+
+def mobile_panel_payload(cfg):
+    """Return only the active deck and controls required by a LAN client."""
+    from server.auth import annotate_action_slots
+    ensure_panel_defaults(cfg)
+    board, active_ids, _ = resolve_panel_board(cfg)
+    return {
+        "panel_board": annotate_action_slots(board),
+        "panel_utility": annotate_action_slots(cfg.get("panel_utility") or default_utility()),
+        "panel_core": annotate_action_slots(cfg.get("panel_core") or default_core()),
+        "panel_sliders": cfg.get("panel_sliders") or default_sliders(),
+        "panel_layout": cfg.get("panel_layout") or default_layout(),
+        "panel_gauges": cfg.get("panel_gauges") or default_gauges(),
+        "hardware_connected": False,
+        "active_profiles": active_ids,
+        "theme": cfg.get("theme") or {"mode": "iris", "accent": "#B23AF6", "neon": "#48B2E9"},
     }
 
 

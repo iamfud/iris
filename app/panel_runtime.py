@@ -142,11 +142,6 @@ def _gauges():
     except Exception:
         pass
 
-    # 3. Fallback: if cpu_temp is unavailable (e.g. non-admin LHM), provide cpu_pct so phone gauge doesn't show 0
-    if stats["cpu_temp"] is None and stats["cpu_pct"] is not None:
-        stats["cpu_temp"] = stats["cpu_pct"]
-        stats["cpu_temp_unit"] = "%"
-
     return stats
 
 
@@ -240,21 +235,23 @@ def _default_audio_output():
         return None
 
 
-def live_payload(cfg, client_cv=None):
+def live_payload(cfg, client_cv=None, remote=False):
     """Snapshot for GET /api/panel/live (cheap; called every ~500ms)."""
     # NOTE: theme latching/reverting is intentionally NOT run here — it is driven
     # by the theme watcher thread (plugin_manager._theme_watcher_loop) to avoid
     # racing app launches with a half-second poll cadence.
     from panel_actions import ensure_panel_defaults, resolve_panel_board
+    from server.auth import annotate_action_slots
     ensure_panel_defaults(cfg)
     board, active_ids, fg = resolve_panel_board(cfg)
     p_states = _plugin_button_states()
     e_states = _entity_states(p_states)
 
-    cfg_data = {
-        "panel_board": board,
-        "panel_utility": cfg.get("panel_utility") or [],
-        "panel_core": cfg.get("panel_core") or [],
+    from panel_actions import mobile_panel_payload
+    cfg_data = (mobile_panel_payload(cfg) if remote else {
+        "panel_board": annotate_action_slots(board),
+        "panel_utility": annotate_action_slots(cfg.get("panel_utility") or []),
+        "panel_core": annotate_action_slots(cfg.get("panel_core") or []),
         "panel_sliders": cfg.get("panel_sliders") or [],
         "panel_layout": cfg.get("panel_layout") or [
             {"id": "gauges", "enabled": True, "local": True, "remote": True},
@@ -263,12 +260,12 @@ def live_payload(cfg, client_cv=None):
             {"id": "utility", "enabled": True, "local": True, "remote": True},
         ],
         "panel_gauges": cfg.get("panel_gauges") or {},
-        "panel_profiles": cfg.get("panel_profiles") or [],
+        "panel_profiles": annotate_action_slots(cfg.get("panel_profiles") or []),
         "media_player_path": cfg.get("media_player_path") or "",
         "screensaver_timeout": int(cfg.get("screensaver_timeout", 2) if cfg.get("screensaver_timeout") is not None else 2),
         "keep_alive": bool(cfg.get("keep_alive", True)),
         "theme": cfg.get("theme") or {"mode": "iris", "accent": "#B23AF6", "neon": "#48B2E9"},
-    }
+    })
     import hashlib
     cv = hashlib.md5(json.dumps(cfg_data, sort_keys=True).encode()).hexdigest()[:12]
 
@@ -623,20 +620,26 @@ def execute_slot(slot):
                     webbrowser.open("http://127.0.0.1:9090")
                 return {"ok": True}
             elif bid == "colour_picker" or ent == "system.colour_picker":
-                if app is not None and getattr(app, "_main_win", None):
-                    app._root.after(0, app._main_win.start_colour_picker)
+                if app is not None:
+                    mw = app._ensure_main_win() if hasattr(app, "_ensure_main_win") else getattr(app, "_main_win", None)
+                    if mw:
+                        app._root.after(0, mw.start_colour_picker)
                 return {"ok": True}
             elif bid in ("screenshot", "screenshot_full") or ent in ("system.screenshot", "system.screenshot_full"):
-                if app is not None and getattr(app, "_main_win", None):
-                    slot_copy = dict(slot)
-                    app._root.after(
-                        0, lambda: app._main_win.start_screenshot(slot_copy, mode="fullscreen"))
+                if app is not None:
+                    mw = app._ensure_main_win() if hasattr(app, "_ensure_main_win") else getattr(app, "_main_win", None)
+                    if mw:
+                        slot_copy = dict(slot)
+                        app._root.after(
+                            0, lambda: mw.start_screenshot(slot_copy, mode="fullscreen"))
                 return {"ok": True}
             elif bid == "screenshot_zone" or ent == "system.screenshot_zone":
-                if app is not None and getattr(app, "_main_win", None):
-                    slot_copy = dict(slot)
-                    app._root.after(
-                        0, lambda: app._main_win.start_screenshot(slot_copy, mode="zone"))
+                if app is not None:
+                    mw = app._ensure_main_win() if hasattr(app, "_ensure_main_win") else getattr(app, "_main_win", None)
+                    if mw:
+                        slot_copy = dict(slot)
+                        app._root.after(
+                            0, lambda: mw.start_screenshot(slot_copy, mode="zone"))
                 return {"ok": True}
             elif bid in ("note", "note_native", "note_webview") or ent in ("system.note", "system.note_native", "system.note_webview"):
                 if app is not None and getattr(app, "_main_win", None):

@@ -16,6 +16,11 @@ app/notifications.json
 # HTTPS panel self-signed cert/key (regenerated locally, never committed)
 app/panel_https_cert.pem
 app/panel_https_key.pem
+app/lan-cert.pem
+app/lan-key.pem
+
+# Node.js tooling (used only by tools/rebuild_deck.js and tools/smoke_test_deck.js)
+node_modules/
 
 # Logs
 *.log

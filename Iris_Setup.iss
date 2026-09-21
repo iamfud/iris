@@ -43,9 +43,9 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 Name: "startup"; Description: "Run Iris when you sign in to Windows"; GroupDescription: "Additional shortcuts:"; Flags: checkedonce
 
 [Registry]
-; Run-at-startup is written conditionally in [Code] CurStepChanged (HKLM to survive
-; admin elevation, applying to the signed-in user). Removed here to avoid an
-; unconditional empty write that conflicts with the checkbox logic.
+; Run-at-startup is written conditionally in [Code] CurStepChanged to HKCU.
+; Removed here to avoid an unconditional empty write that conflicts with the
+; checkbox logic.
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{userappdata}\Iris"
@@ -297,15 +297,15 @@ begin
     if ResultCode = 3010 then
       NeedsReboot := True;
 
-    { Run Iris at startup if the task was selected. Written to HKLM (CurrentVersion\Run)
-      instead of HKCU: the installer runs elevated (PrivilegesRequired=admin), so an HKCU
-      write lands in the ELEVATED admin account's hive, not the signed-in user's hive that
-      Windows reads for per-user autostart. HKLM is machine-wide and applies to the real user. }
+    { Run Iris at startup for the current Windows user only. Normal runtime is
+      standard-user, so startup must not be machine-wide or elevate Iris. Remove
+      any legacy HKLM value left by older installers during upgrade. }
     if WizardIsTaskSelected('startup') then
-      RegWriteStringValue(HKLM, 'Software\Microsoft\Windows\CurrentVersion\Run', 'Iris',
-        '"' + ExpandConstant('{app}\Iris.exe') + '"')
-    else
-      RegDeleteValue(HKLM, 'Software\Microsoft\Windows\CurrentVersion\Run', 'Iris');
+      RegWriteStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'Iris',
+        '"' + ExpandConstant('{app}\Iris.exe') + '"');
+    RegDeleteValue(HKLM, 'Software\Microsoft\Windows\CurrentVersion\Run', 'Iris');
+    if not WizardIsTaskSelected('startup') then
+      RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'Iris');
   end;
 end;
 

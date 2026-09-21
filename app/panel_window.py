@@ -26,15 +26,19 @@ _NAV_QUEUE = None
 class _JSApi:
     """Exposed to JavaScript as window.pywebview.api."""
 
-    def __init__(self, state):
+    def __init__(self, state, local_token=""):
         self._window = None
         self._state = state
         self._pending_nav = None
+        self._local_token = local_token
 
     def get_pending_nav(self):
         nav = self._pending_nav
         self._pending_nav = None
         return nav
+
+    def get_local_auth_token(self):
+        return self._local_token
 
     def move_window(self, dx, dy):
         if not self._window:
@@ -55,7 +59,7 @@ class _JSApi:
     def close_panel(self):
         if self._window:
             try:
-                self._window.hide()
+                self._window.destroy()
             except Exception:
                 pass
 
@@ -90,9 +94,10 @@ class _JSApi:
         try:
             import webview
             import urllib.parse
+            import ws_bridge
             q = urllib.parse.urlencode({"view": "viewer", "file": filename})
             url = f"http://127.0.0.1:15502/index.html?{q}"
-            vapi = _ViewerJSApi(None)
+            vapi = _ViewerJSApi(None, ws_bridge._LOCAL_TOKEN)
             vw = webview.create_window(
                 "Iris Screenshot",
                 url,
@@ -112,8 +117,9 @@ class _JSApi:
 class _ViewerJSApi:
     """Exposed to JavaScript in the standalone fullscreen viewer window."""
 
-    def __init__(self, window):
+    def __init__(self, window, local_token=""):
         self._window = window
+        self._local_token = local_token
 
     def close_panel(self):
         if self._window:
@@ -128,6 +134,9 @@ class _ViewerJSApi:
                 self._window.destroy()
             except Exception:
                 pass
+
+    def get_local_auth_token(self):
+        return self._local_token
 
 
 def _find_windows_for_pid(pid: int) -> list:
@@ -308,8 +317,9 @@ def open_panel(width=_DEFAULT_WIDTH, height=_DEFAULT_HEIGHT, query_params=None, 
         except (TypeError, ValueError):
             x = y = None
 
+    import ws_bridge
     _proc = multiprocessing.Process(
-        target=_run, args=(w, h, x, y, query_params, _NAV_QUEUE), daemon=True, name="panel"
+        target=_run, args=(w, h, x, y, query_params, _NAV_QUEUE, ws_bridge._LOCAL_TOKEN), daemon=True, name="panel"
     )
     _proc.start()
     try:
@@ -548,7 +558,7 @@ def _clean_stale_caches(wv_dir: str):
         pass
 
 
-def _run(width, height, x=None, y=None, query_params=None, nav_queue=None):
+def _run(width, height, x=None, y=None, query_params=None, nav_queue=None, local_token=""):
     _ensure_child_logger()
 
     try:
@@ -582,7 +592,7 @@ def _run(width, height, x=None, y=None, query_params=None, nav_queue=None):
         "ready": False,
     }
 
-    api = _JSApi(state)
+    api = _JSApi(state, local_token)
     import urllib.parse
     import urllib.request
     ts = int(time.time())

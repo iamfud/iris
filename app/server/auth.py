@@ -1,5 +1,7 @@
 """Authentication, rate-limiting, and session validation helpers for Iris server."""
 
+import hashlib
+import json
 import time
 from server.devices import _DEVICES, token_hash, touch_device, save_devices
 
@@ -62,47 +64,97 @@ def record_auth_success(ip):
     _LOGIN_FAILURES.pop(ip, None)
 
 
+def action_id_for_slot(slot):
+    """Return a stable opaque identifier for a configured action slot."""
+    if not isinstance(slot, dict):
+        return ""
+    def strip_ids(value):
+        if isinstance(value, list):
+            return [strip_ids(item) for item in value]
+        if isinstance(value, dict):
+            return {key: strip_ids(item) for key, item in value.items() if key != "action_id"}
+        return value
+    clean = strip_ids(slot)
+    raw = json.dumps(clean, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return "a_" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+
+
+def _configured_slots(cfg):
+    if not isinstance(cfg, dict):
+        return
+    for key in ("panel_board", "panel_utility", "panel_core"):
+        for slot in cfg.get(key) or []:
+            if isinstance(slot, dict):
+                yield slot
+    for profile in cfg.get("panel_profiles") or []:
+        if not isinstance(profile, dict):
+            continue
+        for slot in profile.get("board") or []:
+            if isinstance(slot, dict):
+                yield slot
+
+
+def resolve_action_slot(action_id, cfg):
+    """Resolve an opaque action ID to the current server-side slot definition."""
+    if not isinstance(action_id, str) or not action_id or not isinstance(cfg, dict):
+        return None
+    for builtin in (
+        {"type": "SCREENSHOT", "entity": "system.screenshot"},
+        {"type": "MEDIA_PREV"},
+        {"type": "MEDIA_PLAY"},
+        {"type": "MEDIA_NEXT"},
+    ):
+        if action_id_for_slot(builtin) == action_id:
+            return builtin
+    for slot in _configured_slots(cfg):
+        if action_id_for_slot(slot) == action_id:
+            return dict(slot)
+    return None
+
+
+def annotate_action_slots(value):
+    """Copy a panel structure and attach server-derived action IDs to slots."""
+    if isinstance(value, list):
+        return [annotate_action_slots(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    result = {key: annotate_action_slots(item) for key, item in value.items()}
+    if result.get("type"):
+        result["action_id"] = action_id_for_slot(result)
+    return result
+
+
 def is_authorized_slot(slot, cfg):
-    """Verify that an action slot requested by a remote peer matches a pre-configured button."""
-    if not isinstance(slot, dict) or not isinstance(cfg, dict):
+    """Compatibility wrapper for callers that still pass an annotated slot."""
+    if not isinstance(slot, dict):
         return False
-    stype = str(slot.get("type") or "").strip()
-    if not stype:
-        return False
+    return resolve_action_slot(slot.get("action_id"), cfg) is not None
 
-    # Safe built-in controls that only affect media transport or audio toggling
-    if stype in ("MEDIA_PLAY", "MEDIA_NEXT", "MEDIA_PREV", "MEDIA_EJECT", "AUDIO OUTPUT", "EMPTY"):
-        return True
 
-    candidates = []
-    candidates.extend(cfg.get("panel_board") or [])
-    candidates.extend(cfg.get("panel_utility") or [])
-    candidates.extend(cfg.get("panel_core") or [])
-    for prof in cfg.get("panel_profiles") or []:
-        if isinstance(prof, dict):
-            candidates.extend(prof.get("board") or [])
+_LAN_SAFE_CORE_ACTIONS = frozenset({"display", "overlay", "mic", "mic_mute", "lighting", "lighting_sync"})
+_LAN_SAFE_TYPES = frozenset({"MEDIA_PREV", "MEDIA_PLAY", "MEDIA_NEXT", "AUDIO OUTPUT", "CORE"})
 
-    spath = str(slot.get("shortcut_path") or "").strip()
-    sargs = str(slot.get("shortcut_args") or "").strip()
-    saction = str(slot.get("core_action") or "").strip()
-    sname = str(slot.get("name") or "").strip()
 
-    for c in candidates:
-        if not isinstance(c, dict):
+def resolve_mobile_action(action_id, cfg):
+    """Resolve an action only from the active mobile deck and safe slot types."""
+    if not isinstance(action_id, str) or not action_id or not isinstance(cfg, dict):
+        return None
+    from panel_actions import resolve_panel_board
+    board, _, _ = resolve_panel_board(cfg)
+    candidates = list(board) + list(cfg.get("panel_utility") or []) + list(cfg.get("panel_core") or [])
+    for builtin in (
+        {"type": "MEDIA_PREV"},
+        {"type": "MEDIA_PLAY"},
+        {"type": "MEDIA_NEXT"},
+    ):
+        candidates.append(builtin)
+    for slot in candidates:
+        if not isinstance(slot, dict) or action_id_for_slot(slot) != action_id:
             continue
-        if str(c.get("type") or "").strip() != stype:
-            continue
-        if stype in ("SHORTCUT", "GROUP"):
-            cpath = str(c.get("shortcut_path") or "").strip()
-            cargs = str(c.get("shortcut_args") or "").strip()
-            if cpath == spath and cargs == sargs:
-                return True
-        elif stype == "CORE":
-            if str(c.get("core_action") or "").strip() == saction:
-                return True
-        elif stype == "MACRO":
-            if sname and str(c.get("name") or "").strip() == sname:
-                return True
-        elif stype in ("TOGGLE", "HOTKEY", "ACTION", "SENSOR"):
-            return True
-    return False
+        slot_type = str(slot.get("type") or "").upper()
+        if slot_type not in _LAN_SAFE_TYPES:
+            return None
+        if slot_type == "CORE" and str(slot.get("core_action") or "").lower() not in _LAN_SAFE_CORE_ACTIONS:
+            return None
+        return dict(slot)
+    return None

@@ -1,0 +1,58 @@
+  // ── LAN-safe core action dispatch ────────────────────────────
+  // The extracted panel code (runSlotAction) calls `coreAction(core, tile, slot)`.
+  // Overriding it here (rather than including the original desktop
+  // implementation) ensures LAN core tiles only ever submit an opaque,
+  // server-resolved action_id (see resolve_mobile_action() in
+  // app/server/auth.py) — never a raw core/tile name.
+  coreAction = function (core, tile, slot) {
+    if (!slot || !slot.action_id) return;
+    apiFetch(API_BASE + "/api/panel/action", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action_id: slot.action_id }),
+    }).then(function () { fetchPanelLive(); }).catch(function () {});
+  };
+
+  // ── WebSocket telemetry (read-only refresh trigger; no C2 channel) ──
+  function connectWs() {
+    const scheme = location.protocol === "https:" ? "wss:" : "ws:";
+    const ws = new WebSocket(scheme + "//" + location.host);
+    ws.onopen = function () {
+      let s = "";
+      try { s = localStorage.getItem("iris_session") || ""; } catch (_) {}
+      ws.send(JSON.stringify({ session: s }));
+    };
+    ws.onmessage = function (e) {
+      try {
+        const m = JSON.parse(e.data);
+        if (["sysinfo", "sensor", "media", "panel_update", "theme", "notification"].indexOf(m.type) >= 0) fetchPanelLive();
+      } catch (_) {}
+    };
+    ws.onclose = function () { setTimeout(connectWs, 2500); };
+  }
+
+  function loadPanel() {
+    return apiFetch(API_BASE + "/api/panel")
+      .then(function (r) { return r.json(); })
+      .then(function (cfg) {
+        panelDraft = cfg;
+        panelDraftReady = true;
+        return fetchPanelLive();
+      });
+  }
+
+  window.addEventListener("resize", () => { updateViewportMode(); });
+  window.addEventListener("orientationchange", () => {
+    updateViewportMode();
+    setTimeout(updateViewportMode, 100);
+    setTimeout(updateViewportMode, 300);
+  });
+
+  ensurePanelOverlay();
+  updateViewportMode();
+  loadPanel().catch(function () {});
+  setInterval(function () { fetchPanelLive(); }, 1000);
+  resetScreensaverTimer();
+  connectWs();
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js?v=34").catch(function () {});
+})();

@@ -45,9 +45,10 @@ function getMediaPlayerBrandIcon(nameOrPath) {
 window.MEDIA_PLAYER_BRAND_ICONS = MEDIA_PLAYER_BRAND_ICONS;
 window.getMediaPlayerBrandIcon = getMediaPlayerBrandIcon;
 
-// Auth is carried by the loopback peer or the login session cookie; the
-// access token is never embedded in the page any more.
+// Desktop WebView2 receives a per-launch capability through the native bridge.
 var _IRIS_TOKEN = "";
+var _localAuthToken = "";
+var _localAuthPromise = null;
 
 // True only inside the desktop app's panel window (pywebview). App-only
 // settings sections (e.g. Network security) are hidden from phone/browser.
@@ -57,15 +58,35 @@ function _isApp() {
 
 function apiFetch(url, opts) {
   opts = opts || {};
+  if (_localAuthToken) return _apiFetchWithToken(url, opts, _localAuthToken);
+  if (!_localAuthPromise && window.pywebview && window.pywebview.api &&
+      typeof window.pywebview.api.get_local_auth_token === "function") {
+    _localAuthPromise = window.pywebview.api.get_local_auth_token()
+      .then(function (token) {
+        _localAuthToken = (typeof token === "string") ? token : "";
+        if (_localAuthToken) {
+          document.cookie = "iris_local_token=" + encodeURIComponent(_localAuthToken) +
+            "; Path=/; SameSite=Strict";
+        }
+        return _localAuthToken;
+      })
+      .catch(function () { return ""; });
+  }
+  return (_localAuthPromise || Promise.resolve("")).then(function (token) {
+    return _apiFetchWithToken(url, opts, token);
+  });
+}
+
+function _apiFetchWithToken(url, opts, localToken) {
   opts.headers = Object.assign({}, opts.headers || {});
   var savedTok = "";
   try { savedTok = localStorage.getItem("iris_session") || ""; } catch (_) {}
   if (savedTok) opts.headers["X-Iris-Session"] = savedTok;
+  if (localToken) opts.headers["X-Iris-Local-Token"] = localToken;
   if (_IRIS_TOKEN) opts.headers["X-Iris-Token"] = _IRIS_TOKEN;
   return fetch(url, opts).then(function (res) {
     if (res.status === 401) {
       if (typeof IS_MOBILE !== 'undefined' && IS_MOBILE && !_isApp()) {
-        // Session expired or unauthenticated remote access -> back to login.
         window.location.href = "/login";
       }
       throw new Error("unauthorized");
@@ -90,14 +111,17 @@ class SettingsRenderer {
     if (this._pages) return this._pages;
     try {
       const res = await apiFetch(this._apiBase + "/api/settings/pages");
-      if (res.ok) {
-        const data = await res.json();
-        this._pages = data.pages || [];
-        return this._pages;
+      if (!res.ok) throw new Error("settings pages request failed: " + res.status);
+      const data = await res.json();
+      if (!data || !Array.isArray(data.pages)) {
+        throw new Error("settings pages response invalid");
       }
-    } catch (_) {}
-    this._pages = [];
-    return this._pages;
+      this._pages = data.pages;
+      return this._pages;
+    } catch (err) {
+      this._pages = null;
+      throw err;
+    }
   }
 
   getPage(id) {

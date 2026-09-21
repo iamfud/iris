@@ -25,10 +25,11 @@ _proc = None
 class _DesktopPanelJSApi:
     """Exposed to JavaScript as window.pywebview.api."""
 
-    def __init__(self, state):
+    def __init__(self, state, local_token=""):
         self._window = None
         self._hwnd = None
         self._state = state
+        self._local_token = local_token
 
     def move_window(self, dx, dy):
         if not self._window:
@@ -45,6 +46,9 @@ class _DesktopPanelJSApi:
             self._state["y"] = ny
         except Exception:
             pass
+
+    def get_local_auth_token(self):
+        return self._local_token
 
     def close_panel(self):
         if self._window:
@@ -285,8 +289,9 @@ def open_desktop_panel():
     except Exception:
         w, h, x, y, pinned = _DEFAULT_WIDTH, _DEFAULT_HEIGHT, None, None, False
 
+    import ws_bridge
     _proc = multiprocessing.Process(
-        target=_run, args=(w, h, x, y, pinned), daemon=True, name="desktop_panel"
+        target=_run, args=(w, h, x, y, pinned, ws_bridge._LOCAL_TOKEN), daemon=True, name="desktop_panel"
     )
     _proc.start()
     try:
@@ -354,7 +359,7 @@ def _save_geometry(state):
         log.warning("[desktop_panel] failed to save geometry: %s", e)
 
 
-def _run(width, height, x=None, y=None, pinned=False):
+def _run(width, height, x=None, y=None, pinned=False, local_token=""):
     """Entry point for the pywebview desktop companion process."""
     try:
         from win_platform import init_dpi_awareness, setup_webview_environment, wait_for_http_server, start_parent_watchdog
@@ -379,7 +384,7 @@ def _run(width, height, x=None, y=None, pinned=False):
         "pinned": bool(pinned),
         "ready": False,
     }
-    api = _DesktopPanelJSApi(state)
+    api = _DesktopPanelJSApi(state, local_token)
     panel_url = f"http://127.0.0.1:15502/index.html?view=panel&mode=desktop&_t={int(time.time())}"
 
     if x is None or y is None:

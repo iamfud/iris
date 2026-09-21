@@ -1,0 +1,86 @@
+(function () {
+  "use strict";
+  // Restricted LAN/mobile deck client. Serves ONLY the live panel + screensaver.
+  // No desktop administration surface (settings, library, automations, plugin
+  // config, dialogs) is present here — those remain loopback-only in script.js.
+  const API_BASE = window.location.origin;
+  const IS_APP = false;
+  const IS_MOBILE = true;
+  const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent || "");
+  const isAndroid = /Android/i.test(navigator.userAgent || "");
+
+  let panelDraft = null, panelLive = null, panelViewMode = true, panelNav = [], panelProfileSel = "__default__";
+  let panelViewSig = "", panelEntities = [], panelSliderTimer = null, _panelButtonRows = 4, _panelSliderRows = 2;
+  let _panelLiveConfigVersion = null, _panelLiveCachedConfig = null, _fetchPanelLiveBusy = false, _lastSeenScreenshotSeq = null;
+  let _lastBtnStatesSig = "", _lastForegroundApp = null, panelDraftReady = false;
+  let activeBoxPage = 1, pendingPanelPage = null;
+  let _isBrowsingFile = false;
+  let _lastAutoFitH = 0;
+  let coreAction; // assigned below, once, to the LAN-safe implementation
+
+  // Admin-only builder/dashboard state the original renderer reads defensively
+  // (e.g. `if (panelEdit) {...}`). The deck never enters edit/design mode or
+  // shows the command centre, so these stay permanently inert.
+  let panelEdit = null;
+  let currentPage = "panel";
+  let featureConfig = {};
+
+  function sessionTokenQuery() {
+    let tok = "";
+    try { tok = localStorage.getItem("iris_session") || ""; } catch (_) {}
+    return tok ? "&session=" + encodeURIComponent(tok) : "";
+  }
+
+  function esc(s) {
+    if (s === null || s === undefined) return "";
+    return String(s).replace(/[&<>"']/g, function (m) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m];
+    });
+  }
+
+  function apiFetch(url, opts) {
+    opts = opts || {};
+    opts.headers = Object.assign({}, opts.headers || {});
+    let tok = "";
+    try { tok = localStorage.getItem("iris_session") || ""; } catch (_) {}
+    if (tok) opts.headers["X-Iris-Session"] = tok;
+    return fetch(url, opts).then(function (r) {
+      if (r.status === 401) { location.href = "/login"; throw new Error("unauthorized"); }
+      return r;
+    });
+  }
+
+  function getMediaPlayerAppName(path) {
+    const p = String(path || "").split(/[\/\\]/).pop();
+    return p ? p.replace(/\.exe$/i, "") : "Media Player";
+  }
+  function getMediaPlayerBrandIcon() { return null; }
+  function applyKeepAlive() {}
+  function isDesktopEnvironment() { return false; }
+  function triggerImmersiveMode() {}
+  function panelActionPayload(slot) { return { action_id: slot && slot.action_id ? slot.action_id : "" }; }
+
+  // Desktop-only / server-blocked affordances the original renderer references.
+  // The deck is untrusted-by-design (see app/server/auth.py resolve_mobile_action
+  // and the LAN API allowlist in app/ws_bridge.py), so these are intentionally
+  // inert no-ops rather than restored functionality: opening arbitrary URLs or
+  // Explorer folders on the host, screenshot capture/viewing (SCREENSHOT is not
+  // in the LAN-safe slot type set), the desktop command-centre dashboard, the
+  // in-panel notes/library viewers, and pywebview-only window-fit/pin/hide
+  // bridge calls.
+  function openUrlOnPc(e) { if (e) { try { e.preventDefault(); } catch (_) {} try { e.stopPropagation(); } catch (_) {} } }
+  function doScreenshotRequest() {}
+  function openScreenshotViewer() {}
+  function updateCommandCentreTelemetry() {}
+  function openNotepad() {}
+  function openLibraryViewer() { return Promise.resolve(); }
+  function autoFitCompanionWindow() {}
+  window.pywebview = window.pywebview || undefined;
+
+  function requestWakeLock() {}
+  function enableMediaWakeLock() {}
+  function disableMediaWakeLock() {}
+  function releaseWakeLock() {}
+
+  function exitPanelView() {}
+  function renderPanel() {}

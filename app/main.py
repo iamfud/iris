@@ -59,6 +59,7 @@ if __name__ == "__main__":
         """Ask an already-running Iris instance to open the note, or fail loudly."""
         import json
         import urllib.request
+        import ws_bridge
         url = "http://127.0.0.1:15502/api/notepad/open"
         body = json.dumps({"file": path, "app": "general"}).encode("utf-8")
         deadline = _time.time() + 45.0
@@ -67,7 +68,10 @@ if __name__ == "__main__":
             try:
                 req = urllib.request.Request(
                     url, data=body, method="POST",
-                    headers={"Content-Type": "application/json"},
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-Iris-Local-Token": ws_bridge._LOCAL_TOKEN,
+                    },
                 )
                 with urllib.request.urlopen(req, timeout=3) as resp:
                     if resp.status == 200:

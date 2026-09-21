@@ -269,7 +269,7 @@
       var loc = window.location;
       var wsProto = loc.protocol === "https:" ? "wss:" : "ws:";
       var wsHost = loc.hostname || "127.0.0.1";
-      var wsPort = 15501;
+      var wsPort = loc.protocol === "https:" ? 15505 : 15501;
 
       var tok = "";
       try { tok = localStorage.getItem("iris_session") || ""; } catch (_) {}
@@ -285,7 +285,18 @@
       var qs = params.length ? "?" + params.join("&") : "";
 
       wsConn = new WebSocket(wsProto + "//" + wsHost + ":" + wsPort + qs);
-      wsConn.onopen = function () { loadTheme(); };
+      wsConn.onopen = function () {
+        var localToken = "";
+        var session = "";
+        try {
+          var lm = document.cookie.match(/(?:^|;\s*)iris_local_token=([^;]+)/);
+          if (lm) localToken = decodeURIComponent(lm[1]);
+          var sm = document.cookie.match(/(?:^|;\s*)iris_session=([^;]+)/);
+          if (sm) session = decodeURIComponent(sm[1]);
+        } catch (_) {}
+        try { wsConn.send(JSON.stringify({ local_token: localToken, session: session })); } catch (_) {}
+        loadTheme();
+      };
       wsConn.onmessage = function (e) {
         try {
           var msg = JSON.parse(e.data);

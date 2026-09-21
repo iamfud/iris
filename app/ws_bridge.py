@@ -17,6 +17,8 @@ import ssl
 import sys
 import threading
 import time
+import ipaddress
+import datetime
 from pathlib import Path
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from functools import partial
@@ -45,6 +47,9 @@ _APP_ICON_LOCK = threading.Lock()
 # device. It is only ever embedded in the loopback-served QR image, never in
 # API JSON responses or the static pages.
 _HTTP_TOKEN = secrets.token_urlsafe(32)
+_LOCAL_TOKEN = secrets.token_urlsafe(32)
+_LAN_HTTP_PORT = 15504
+_LAN_WS_PORT = 15505
 
 # Long-lived device sessions created by scanning the QR.  Persisted to disk so a
 # panel restart does not log mobile devices back out.  Tokens are stored
@@ -101,6 +106,76 @@ from server.network import (
 )
 
 
+def _tls_paths():
+    from config import config_path
+    base = os.path.dirname(config_path())
+    return os.path.join(base, "lan-cert.pem"), os.path.join(base, "lan-key.pem")
+
+
+def _ensure_lan_certificate():
+    """Create a per-user LAN certificate covering the current LAN address."""
+    cert_path, key_path = _tls_paths()
+    lan_address = _lan_ip()
+    try:
+        from cryptography import x509
+        from cryptography.hazmat.primitives import serialization
+        with open(cert_path, "rb") as cert_file:
+            cert = x509.load_pem_x509_certificate(cert_file.read())
+        names = cert.extensions.get_extension_for_class(
+            x509.SubjectAlternativeName
+        ).value
+        if ipaddress.ip_address(lan_address) in names.get_values_for_type(x509.IPAddress):
+            return cert_path, key_path
+    except Exception:
+        pass
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    subject = issuer = x509.Name([
+        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Iris"),
+        x509.NameAttribute(NameOID.COMMON_NAME, lan_address),
+    ])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    san = [
+        x509.IPAddress(ipaddress.ip_address(lan_address)),
+        x509.DNSName("localhost"),
+        x509.IPAddress(ipaddress.ip_address("127.0.0.1")),
+    ]
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(minutes=1))
+        .not_valid_after(now + datetime.timedelta(days=825))
+        .add_extension(x509.SubjectAlternativeName(san), critical=False)
+        .sign(key, hashes.SHA256())
+    )
+    os.makedirs(os.path.dirname(cert_path), exist_ok=True)
+    with open(key_path, "wb") as key_file:
+        key_file.write(key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.TraditionalOpenSSL,
+            serialization.NoEncryption(),
+        ))
+    with open(cert_path, "wb") as cert_file:
+        cert_file.write(cert.public_bytes(serialization.Encoding.PEM))
+    return cert_path, key_path
+
+
+def _lan_ssl_context():
+    cert_path, key_path = _ensure_lan_certificate()
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.load_cert_chain(certfile=cert_path, keyfile=key_path)
+    return context
+
+
 def _sync_next_alarm(serial_sender, alarms):
     """Push the next due alarm to the device."""
     import datetime
@@ -142,8 +217,27 @@ def _sync_next_alarm(serial_sender, alarms):
 # ── WebSocket ──────────────────────────────────────────────────
 
 async def handler(websocket):
-    CLIENTS.add(websocket)
     peer = getattr(websocket, "remote_address", None)
+    authenticated = False
+    try:
+        raw = await asyncio.wait_for(websocket.recv(), timeout=5.0)
+        msg = json.loads(raw) if isinstance(raw, str) else {}
+        local_token = msg.get("local_token", "") if isinstance(msg, dict) else ""
+        session = msg.get("session", "") if isinstance(msg, dict) else ""
+        authenticated = (
+            isinstance(local_token, str)
+            and hmac.compare_digest(local_token, _LOCAL_TOKEN)
+        ) or (isinstance(session, str) and _valid_session(session))
+    except Exception:
+        authenticated = False
+    if not authenticated:
+        try:
+            await websocket.close(code=1008, reason="Unauthorized")
+        except Exception:
+            pass
+        log.warning("WS client rejected from %s (missing or invalid auth)", peer)
+        return
+    CLIENTS.add(websocket)
     log.info("WS client connected from %s (%d active)", peer, len(CLIENTS))
     try:
         await websocket.wait_closed()
@@ -153,69 +247,16 @@ async def handler(websocket):
 
 
 def _ws_process_request(connection, request):
-    """Reject WS connections from non-local peers without auth token or valid session."""
-    try:
-        path = getattr(request, "path", "") or ""
-    except Exception:
-        path = ""
-    query = path.split("?", 1)[1] if "?" in path else ""
-    token = ""
-    session = ""
-    for part in query.split("&"):
-        if part.startswith("token="):
-            token = part[len("token="):]
-        elif part.startswith("session="):
-            session = part[len("session="):]
-
-    if token and hmac.compare_digest(token, _HTTP_TOKEN):
-        return None
-    if session and _valid_session(session):
-        return None
-
-    try:
-        headers = getattr(request, "headers", None)
-        if headers:
-            cookie_hdr = headers.get("Cookie", "") or headers.get("cookie", "")
-            if cookie_hdr:
-                for chunk in cookie_hdr.split(";"):
-                    chunk = chunk.strip()
-                    if chunk.startswith("iris_session="):
-                        c_sess = chunk[len("iris_session="):].strip()
-                        if _valid_session(c_sess):
-                            return None
-            hdr_sess = headers.get("X-Iris-Session", "") or headers.get("X-Iris-Token", "")
-            if hdr_sess and _valid_session(hdr_sess):
-                return None
-            if hdr_sess and hmac.compare_digest(hdr_sess, _HTTP_TOKEN):
-                return None
-    except Exception:
-        pass
-
-    try:
-        peer = getattr(connection, "remote_address", None)
-        peer = peer[0] if peer else ""
-    except Exception:
-        peer = ""
-    if _is_loopback_address(peer):
-        return None
-
-    try:
-        if _app is not None and _app.cfg.get("lan_access", True):
-            return None
-    except Exception:
-        pass
-
-    from websockets.datastructures import Headers
-    from websockets.http11 import Response
-    log.warning("WS connection rejected from %s (missing or invalid auth)", peer)
-    return Response(401, "Unauthorized", Headers(), b"unauthorized")
+    """Allow the handshake; handler authenticates before registering the client."""
+    return None
 
 
-async def _serve_ws(port):
-    host = _bind_host()
+async def _serve_ws(port, host=None, ssl_context=None):
+    host = host or _bind_host()
     try:
         async with websockets.serve(
-                handler, host, port, process_request=_ws_process_request):
+                handler, host, port, process_request=_ws_process_request,
+                ssl=ssl_context):
             log.info("WS bridge listening on %s:%d", host, port)
             await asyncio.Future()
     except OSError as e:
@@ -248,12 +289,18 @@ def _is_loopback_mode():
 
 def _lan_url():
     """Panel URL a LAN device can open (token is injected server-side)."""
-    return _srv_lan_url(is_loopback=_is_loopback_mode())
+    if _is_loopback_mode():
+        return _srv_lan_url(is_loopback=True)
+    return _srv_lan_url(port=_LAN_HTTP_PORT, scheme="http")
 
 
 def _lan_pair_url():
     """Pairing URL encoded in the on-screen QR code."""
-    return _srv_lan_pair_url(_HTTP_TOKEN, is_loopback=_is_loopback_mode())
+    if _is_loopback_mode():
+        return _srv_lan_pair_url(_HTTP_TOKEN, is_loopback=True)
+    return _srv_lan_pair_url(
+        _HTTP_TOKEN, port=_LAN_HTTP_PORT, scheme="http"
+    )
 
 
 def _qr_bytes():
@@ -319,6 +366,9 @@ class _RequestHandler(
                 pass
         return ""
 
+    def _cookie_security(self):
+        return "; Secure" if getattr(self.server, "_is_tls", False) else ""
+
     def _is_loopback_peer(self):
         """True when the TCP peer is on this machine (desktop panel window)."""
         try:
@@ -329,30 +379,20 @@ class _RequestHandler(
     def _authorized(self):
         """True when the request is allowed to reach the panel and API.
 
-        Validates session cookie, X-Iris-Token header, or loopback requests
-        (ensuring Origin header is not an external web domain).
+        Validates the desktop capability header or a paired-device session.
         """
-        provided = self.headers.get("X-Iris-Token", "")
-        if provided and hmac.compare_digest(provided, _HTTP_TOKEN):
+        provided = self.headers.get("X-Iris-Local-Token", "")
+        if provided and hmac.compare_digest(provided, _LOCAL_TOKEN):
             return True
+        raw_cookie = self.headers.get("Cookie", "")
+        for part in raw_cookie.split(";"):
+            part = part.strip()
+            if part.startswith("iris_local_token="):
+                cookie_token = part[len("iris_local_token="):]
+                if hmac.compare_digest(cookie_token, _LOCAL_TOKEN):
+                    return True
         if _valid_session(self._session_cookie()):
             return True
-
-        try:
-            if _is_loopback_address(self.client_address[0]):
-                origin = self.headers.get("Origin", "")
-                if origin and origin != "null":
-                    from urllib.parse import urlparse
-                    try:
-                        op = urlparse(origin)
-                        if op.hostname and op.hostname not in ("127.0.0.1", "localhost", "::1", "0.0.0.0"):
-                            return False
-                    except Exception:
-                        return False
-                return True
-        except Exception:
-            pass
-
         return False
 
     def _host_ok(self):
@@ -369,6 +409,40 @@ class _RequestHandler(
         self.send_header("Content-Length", str(len(b'{"ok":false}')))
         self.end_headers()
         self.wfile.write(b'{"ok":false}')
+
+    def _lan_api_allowed(self, method, path):
+        """Explicit LAN API allowlist; loopback retains the admin surface."""
+        if self._is_loopback_peer():
+            return True
+        clean = path.split("?", 1)[0]
+        if method == "GET":
+            return clean in {
+                "/api/panel", "/api/panel/live", "/api/status", "/api/volume",
+                "/api/volume/master", "/api/audio/devices",
+            }
+        if method == "POST":
+            if clean in {"/api/panel/action", "/api/volume", "/api/volume/master",
+                         "/api/volume/session"}:
+                return True
+        return False
+
+    def _reject_lan_forbidden(self):
+        body = b'{"ok":false,"error":"LAN endpoint not permitted"}'
+        self.send_response(403)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _lan_asset_allowed(self, rel_path):
+        """Keep the desktop administration bundle loopback-only."""
+        if self._is_loopback_peer():
+            return True
+        return rel_path.lstrip("/") not in {
+            "index.html",
+            "script.js",
+            "settings_renderer.js",
+        }
 
     _CSP = (
         "default-src 'none'; "
@@ -404,20 +478,36 @@ class _RequestHandler(
         super().end_headers()
 
     def do_GET(self):
-        # Library images, media art, and CSS webfonts cannot carry custom Authorization headers,
-        # so serve these with host-only validation.
-        if self.path.startswith("/api/library/image/") or self.path.startswith("/api/mdi/font"):
-            if not self._host_ok():
+        if self.path == "/api/cert/download":
+            # A paired LAN phone must be able to download the certificate it
+            # needs to trust this HTTPS endpoint. Authentication still gates
+            # the certificate bytes; loopback-only access would make the
+            # advertised phone trust flow impossible.
+            if not self._is_loopback_peer() or not self._authorized():
                 self._reject_unauthorized()
                 return
-            if self.path.startswith("/api/mdi/font"):
-                self._serve_mdi_font()
+            self._serve_lan_certificate()
+            return
+        if self.path.startswith("/api/mdi/font"):
+            if (not self._host_ok() or not self._authorized()
+                    or not self._is_loopback_peer()):
+                self._reject_unauthorized()
+                return
+            self._serve_mdi_font()
+            return
+        if self.path.startswith("/api/library/image/"):
+            if (not self._host_ok() or not self._authorized()
+                    or not self._is_loopback_peer()):
+                self._reject_unauthorized()
                 return
             self._handle_library_image(self.path[len("/api/library/image/"):])
             return
         if self.path.startswith("/api/"):
             if not self._host_ok() or not self._authorized():
                 self._reject_unauthorized()
+                return
+            if not self._lan_api_allowed("GET", self.path):
+                self._reject_lan_forbidden()
                 return
         if self.path == "/api/plugins/state":
             self._send_json(_get_plugin_state())
@@ -478,12 +568,12 @@ class _RequestHandler(
         elif self.path == "/api/volume":
             self._send_json(_get_volume())
         elif self.path == "/api/panel":
-            self._send_json(_get_panel())
+            self._send_json(_get_panel(self._is_loopback_peer()))
         elif self.path.startswith("/api/panel/live"):
             from urllib.parse import urlparse, parse_qs
             qs = parse_qs(urlparse(self.path).query)
             client_cv = (qs.get("cv") or [""])[0] or None
-            self._send_json(_get_panel_live(client_cv))
+            self._send_json(_get_panel_live(client_cv, remote=not self._is_loopback_peer()))
         elif self.path == "/api/kraken/detect":
             self._handle_kraken_detect()
         elif self.path in ("/api/ajz/detect", "/api/akp02/detect"):
@@ -521,7 +611,15 @@ class _RequestHandler(
         elif self.path.startswith("/pair"):
             self._handle_pair()
         elif self.path.split("?")[0] in ("/", "/index.html", "/login"):
+            if self.path.split("?", 1)[0] == "/index.html" and not self._is_loopback_peer():
+                self._reject_lan_forbidden()
+                return
             self._serve_index()
+        elif self.path.split("?", 1)[0] == "/deck.html":
+            if not self._lan_asset_allowed("deck.html"):
+                self._reject_lan_forbidden()
+                return
+            self._serve_static_asset()
         elif self.path.split("?")[0] == "/kraken.html":
             self.send_response(301)
             self.send_header("Location", "/dial.html")
@@ -536,6 +634,11 @@ class _RequestHandler(
         rel_path = self.path.split("?", 1)[0].lstrip("/")
         if not rel_path:
             rel_path = "index.html"
+        if not self._lan_asset_allowed(rel_path):
+            self._reject_lan_forbidden()
+            return
+        if rel_path == "apple-touch-icon-precomposed.png":
+            rel_path = "apple-touch-icon.png"
 
         # 1. If in dev mode and file exists on disk, let SimpleHTTPRequestHandler handle it
         if _USE_DEV_ASSETS and os.path.isfile(os.path.join(self.directory, rel_path)):
@@ -567,7 +670,9 @@ class _RequestHandler(
             self.send_header("ETag", etag)
 
             # Long-term caching for static assets (service worker handles cache busting)
-            if rel_path.endswith((".woff2", ".ttf", ".png", ".jpg", ".ico")):
+            if rel_path.endswith((".png", ".jpg", ".ico")) or rel_path == "manifest.json":
+                self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+            elif rel_path.endswith((".woff2", ".ttf")):
                 self.send_header("Cache-Control", "public, max-age=31536000, immutable")
             elif rel_path in ("script.js", "style.css", "settings_renderer.js", "sw.js"):
                 self.send_header("Cache-Control", "no-cache")
@@ -590,11 +695,17 @@ class _RequestHandler(
             self._handle_login()
             return
         if self.path == "/api/devices/revoke":
+            if not self._is_loopback_peer():
+                self._reject_lan_forbidden()
+                return
             self._handle_device_revoke()
             return
         if self.path.startswith("/api/"):
             if not self._host_ok() or not self._authorized():
                 self._reject_unauthorized()
+                return
+            if not self._lan_api_allowed("POST", self.path):
+                self._reject_lan_forbidden()
                 return
         if self.path == "/api/config":
             self._handle_save_config()
@@ -727,6 +838,21 @@ class _RequestHandler(
         self.end_headers()
         self.wfile.write(data)
 
+    def _serve_lan_certificate(self):
+        cert_path, _ = _ensure_lan_certificate()
+        try:
+            with open(cert_path, "rb") as cert_file:
+                data = cert_file.read()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/x-x509-ca-cert")
+            self.send_header("Content-Disposition", 'attachment; filename="iris-lan-cert.cer"')
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+        except OSError:
+            self.send_error(500)
+
     def _handle_pair(self):
         """Authorize a phone via the QR-carried access token.
 
@@ -786,8 +912,11 @@ class _RequestHandler(
         _save_devices()
         self.send_response(302)
         self.send_header("Location", "/")
-        self.send_header("Set-Cookie",
-                         f"iris_session={tok}; SameSite=Lax; Path=/; Max-Age={_DEVICE_TTL}")
+        self.send_header(
+            "Set-Cookie",
+            f"iris_session={tok}; SameSite=Strict; HttpOnly{self._cookie_security()}; "
+            f"Path=/; Max-Age={_DEVICE_TTL}",
+        )
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
 
@@ -866,7 +995,11 @@ class _RequestHandler(
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(res_bytes)))
-        self.send_header("Set-Cookie", f"iris_session={tok}; SameSite=Lax; Path=/; Max-Age={_DEVICE_TTL}")
+        self.send_header(
+            "Set-Cookie",
+            f"iris_session={tok}; SameSite=Strict; HttpOnly{self._cookie_security()}; "
+            f"Path=/; Max-Age={_DEVICE_TTL}",
+        )
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(res_bytes)
@@ -950,7 +1083,25 @@ class _RequestHandler(
 
     def _serve_index(self):
         """Serve the settings panel, or the pairing info page if unauthorized."""
-        if not self._authorized():
+        if not self._is_loopback_peer():
+            if not self._authorized():
+                self._serve_login()
+            else:
+                self.path = "/deck.html"
+                self._serve_static_asset()
+            return
+        # The desktop WebView must load the static shell before JavaScript can
+        # obtain its per-launch capability through the native bridge.  The
+        # shell contains no protected data; every API request remains gated.
+        # The same applies to LAN/PWA launches: iOS standalone web apps may
+        # isolate or discard the HttpOnly cookie while retaining the paired
+        # session token in localStorage.  Serving the static shell here lets
+        # apiFetch() restore the authenticated session without prompting for
+        # the panel password again.  Unauthorized API calls still receive 401
+        # and redirect to /login.
+        if (not self._authorized()
+                and not self._is_loopback_peer()
+                and _is_loopback_mode()):
             self._serve_login()
             return
 
@@ -1569,10 +1720,14 @@ def _get_settings_pages():
 def _get_config(loopback=False):
     if _app is None:
         return {}
+    from server.auth import annotate_action_slots
     cfg = {k: v for k, v in _app.cfg.items()
            if not k.startswith("_") and k not in (
                "ha_token", "panel_password",
                "panel_password_salt", "panel_password_hash")}
+    for key in ("panel_board", "panel_utility", "panel_core", "panel_profiles"):
+        if key in cfg:
+            cfg[key] = annotate_action_slots(cfg[key])
     cfg["lan_url"] = _lan_url()
     return cfg
 
@@ -1669,18 +1824,18 @@ def _merge_vision_config(envelope):
     return merged
 
 
-def _get_panel():
+def _get_panel(loopback=True):
     if _app is None:
         return {"panel_board": [], "actions": []}
-    from panel_actions import panel_payload
-    return panel_payload(_app.cfg)
+    from panel_actions import mobile_panel_payload, panel_payload
+    return panel_payload(_app.cfg) if loopback else mobile_panel_payload(_app.cfg)
 
 
-def _get_panel_live(client_cv=None):
+def _get_panel_live(client_cv=None, remote=False):
     from panel_runtime import live_payload
     if _app is None:
-        return live_payload({}, client_cv=client_cv)
-    return live_payload(_app.cfg, client_cv=client_cv)
+        return live_payload({}, client_cv=client_cv, remote=remote)
+    return live_payload(_app.cfg, client_cv=client_cv, remote=remote)
 
 
 
@@ -1710,12 +1865,14 @@ class _QuietThreadingHTTPServer(ThreadingHTTPServer):
         super().handle_error(request, client_address)
 
 
-def start_http(port=15502):
+def start_http(port=15502, host="127.0.0.1", ssl_context=None):
     os.makedirs(_HTML_DIR, exist_ok=True)
-    host = _bind_host()
     handler = partial(_RequestHandler, directory=_HTML_DIR)
     try:
         server = _QuietThreadingHTTPServer((host, port), handler)
+        server._is_tls = ssl_context is not None
+        if ssl_context is not None:
+            server.socket = ssl_context.wrap_socket(server.socket, server_side=True)
         log.info("HTTP server listening on %s:%d (serving %s)", host, port, _HTML_DIR)
         server.serve_forever()
     except OSError as e:
@@ -1732,14 +1889,31 @@ def start(ws_port=15501, http_port=15502):
     _loop = asyncio.new_event_loop()
     asyncio.set_event_loop(_loop)
 
-    # start HTTP server in a background thread
-    threading.Thread(target=start_http, args=(http_port,), daemon=True, name="http-server").start()
+    # Keep the loopback transport for WebView2. LAN access uses separate HTTP ports.
+    threading.Thread(
+        target=start_http, args=(http_port, "127.0.0.1"),
+        daemon=True, name="http-server",
+    ).start()
+    lan_enabled = _bind_host() == "0.0.0.0"
+    if lan_enabled:
+        threading.Thread(
+            target=start_http, args=(_LAN_HTTP_PORT, "0.0.0.0"),
+            daemon=True, name="lan-http-server",
+        ).start()
 
     # start UDP discovery service in a background thread
-    threading.Thread(target=start_udp_discovery, args=(15503, http_port), daemon=True, name="udp-discovery").start()
+    threading.Thread(
+        target=start_udp_discovery,
+        args=(15503, _LAN_HTTP_PORT if lan_enabled else http_port, "http"),
+        daemon=True,
+        name="udp-discovery",
+    ).start()
 
-    # run WS server on main asyncio loop
-    _loop.run_until_complete(_serve_ws(ws_port))
+    # Run loopback WS always; add an unencrypted LAN WS when LAN access is enabled.
+    ws_servers = [_serve_ws(ws_port, "127.0.0.1")]
+    if lan_enabled:
+        ws_servers.append(_serve_ws(_LAN_WS_PORT, "0.0.0.0"))
+    _loop.run_until_complete(asyncio.gather(*ws_servers))
 
 
 def broadcast(data):

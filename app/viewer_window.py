@@ -16,8 +16,9 @@ _proc = None
 class _ViewerApi:
     """Exposed to JavaScript as window.pywebview.api."""
 
-    def __init__(self):
+    def __init__(self, local_token=""):
         self._window = None
+        self._local_token = local_token
 
     def close_viewer(self):
         if self._window:
@@ -32,6 +33,9 @@ class _ViewerApi:
                 self._window.destroy()
             except Exception:
                 pass
+
+    def get_local_auth_token(self):
+        return self._local_token
 
 
 def _clean_stale_caches(wv_dir: str):
@@ -59,7 +63,7 @@ def _clean_stale_caches(wv_dir: str):
         pass
 
 
-def _run_viewer(filename):
+def _run_viewer(filename, local_token=""):
     try:
         from win_platform import init_dpi_awareness, setup_webview_environment, wait_for_http_server, start_parent_watchdog
         start_parent_watchdog()
@@ -76,7 +80,7 @@ def _run_viewer(filename):
         return
 
     import time
-    api = _ViewerApi()
+    api = _ViewerApi(local_token)
     q = urllib.parse.urlencode({"view": "viewer", "file": filename, "_t": int(time.time())})
     url = f"http://127.0.0.1:15502/index.html?{q}"
 
@@ -120,8 +124,9 @@ def open_viewer(filename):
         except Exception:
             pass
 
+    import ws_bridge
     _proc = multiprocessing.Process(
-        target=_run_viewer, args=(filename,), daemon=True, name="viewer_window"
+        target=_run_viewer, args=(filename, ws_bridge._LOCAL_TOKEN), daemon=True, name="viewer_window"
     )
     _proc.start()
     try:

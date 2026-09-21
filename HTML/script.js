@@ -4,7 +4,7 @@
   "use strict";
 
   if ("serviceWorker" in navigator && !window.pywebview && !window.location.search.includes("_t=")) {
-    navigator.serviceWorker.register("sw.js?v=24").catch(() => {});
+    navigator.serviceWorker.register("sw.js?v=31").catch(() => {});
   }
 
   const _searchParams = new URLSearchParams(window.location.search);
@@ -417,27 +417,79 @@
     }
   }
 
-  // Auth is carried by the loopback session or the login session cookie; the
-  // access token is never embedded in the page any more.
+  // Desktop WebView2 receives a per-launch capability through the native bridge.
+  // Mobile/browser clients use their paired-device session cookie.
   const IRIS_TOKEN = "";
+  let localAuthToken = "";
+  let localAuthPromise = null;
+
+  function getLocalAuthToken() {
+    if (localAuthToken) return Promise.resolve(localAuthToken);
+    if (!localAuthPromise) {
+      localAuthPromise = new Promise(function (resolve) {
+        var started = Date.now();
+        function poll() {
+          var api = window.pywebview && window.pywebview.api;
+          if (api && typeof api.get_local_auth_token === "function") {
+            try {
+              var result = api.get_local_auth_token();
+              Promise.resolve(result).then(function (token) {
+                localAuthToken = (typeof token === "string") ? token : "";
+                if (localAuthToken) {
+                  document.cookie = "iris_local_token=" + encodeURIComponent(localAuthToken) +
+                    "; Path=/; SameSite=Strict";
+                }
+                resolve(localAuthToken);
+              }).catch(function () { resolve(""); });
+              return;
+            } catch (_) {
+              resolve("");
+              return;
+            }
+          }
+          if (Date.now() - started >= 3000) {
+            resolve("");
+            return;
+          }
+          setTimeout(poll, 50);
+        }
+        poll();
+      });
+    }
+    return localAuthPromise;
+  }
 
   function apiFetch(url, opts) {
     opts = opts || {};
-    opts.headers = Object.assign({}, opts.headers || {});
-    let savedTok = "";
-    try { savedTok = localStorage.getItem("iris_session") || ""; } catch (_) {}
-    if (savedTok) opts.headers["X-Iris-Session"] = savedTok;
-    if (IRIS_TOKEN) opts.headers["X-Iris-Token"] = IRIS_TOKEN;
-    return fetch(url, opts).then(function (res) {
-      if (res.status === 401) {
-        if (IS_MOBILE && !IS_APP && !(window.pywebview && window.pywebview.api)) {
-          // Session expired or unauthenticated remote phone access -> back to login.
-          window.location.href = "/login";
+    return getLocalAuthToken().then(function (localToken) {
+      opts.headers = Object.assign({}, opts.headers || {});
+      let savedTok = "";
+      try { savedTok = localStorage.getItem("iris_session") || ""; } catch (_) {}
+      if (savedTok) opts.headers["X-Iris-Session"] = savedTok;
+      if (localToken) opts.headers["X-Iris-Local-Token"] = localToken;
+      if (IRIS_TOKEN) opts.headers["X-Iris-Token"] = IRIS_TOKEN;
+      return fetch(url, opts).then(function (res) {
+        if (res.status === 401) {
+          if (IS_MOBILE && !IS_APP && !(window.pywebview && window.pywebview.api)) {
+            // Session expired or unauthenticated remote phone access -> back to login.
+            window.location.href = "/login";
+          }
+          throw new Error("unauthorized");
         }
-        throw new Error("unauthorized");
-      }
-      return res;
+        return res;
+      });
     });
+  }
+
+  function panelActionPayload(slot) {
+    if (slot && slot.action_id) return { action_id: slot.action_id };
+    if (slot && slot.type === "SCREENSHOT" && slot.entity === "system.screenshot") {
+      return { action_id: "a_1b380fe1f0792c4ea3eef8e0" };
+    }
+    if (slot && slot.type === "MEDIA_PREV") return { action_id: "a_8afc7fe38fd156cb93195fbd" };
+    if (slot && slot.type === "MEDIA_PLAY") return { action_id: "a_aab786ba40ca6a2928a8b723" };
+    if (slot && slot.type === "MEDIA_NEXT") return { action_id: "a_622b87056d875d7f7b35e720" };
+    return { action_id: "" };
   }
 
   function copyTextNative(text) {
@@ -798,6 +850,14 @@
 
   function renderInitialView() {
     const params = new URLSearchParams(window.location.search);
+    if (IS_MOBILE && !IS_APP &&
+        params.get("view") !== "panel" && params.get("panel") !== "1") {
+      currentPage = "panel";
+      portalAutoPanel = true;
+      openPanelView();
+      fetchPanel();
+      return;
+    }
     const isViewerParam = params.get("view") === "viewer";
     const viewerFile = params.get("file");
     if (isViewerParam && viewerFile) {
@@ -904,11 +964,23 @@
     fetchEntities();
     fetchAudioDevices();
 
-    settingsRenderer.loadPages().then(function (pages) {
-      if (pages && pages.length && currentPage === "settings") {
-        renderPage();
-      }
-    }).catch(function () {});
+    function loadSettingsPages(attempt) {
+      settingsRenderer.loadPages().then(function (pages) {
+        if (!pages || !pages.length) return;
+        if (currentPage === "settings" || currentPage === "system" ||
+            currentPage === "appearance" || currentPage === "network" ||
+            currentPage === "hardware" || currentPage === "displays" ||
+            currentPage === "integrations" || currentPage === "plugins" ||
+            currentPage === "connections") {
+          renderPage();
+        }
+      }).catch(function () {
+        if (attempt < 3) {
+          setTimeout(function () { loadSettingsPages(attempt + 1); }, 500 * (attempt + 1));
+        }
+      });
+    }
+    loadSettingsPages(0);
 
     fetchState();
     fetchPluginsConfig();
@@ -922,7 +994,7 @@
 
   function renderPage() {
     try {
-      if ((IS_MOBILE && !IS_APP) && (currentPage === "vision" || (currentPage === "panel" && !panelViewMode))) {
+      if ((IS_MOBILE && !IS_APP) && (currentPage !== "panel" || !panelViewMode)) {
         portalAutoPanel = true;
         fetchPanel();
         openPanelView();
@@ -3309,6 +3381,8 @@
       container.innerHTML = `<div class="lib-grid">${filtered.map(item => libScreenshotCardHtml(item)).join('')}</div>`;
       container.querySelectorAll(".lib-card-screenshot").forEach(card => {
         const filename = card.dataset.filename;
+        const img = card.querySelector(".lib-card-img");
+        if (img) loadProtectedImage(img, `${API_BASE}/api/library/image/${encodeURIComponent(filename)}`);
         card.querySelector(".lib-card-img-wrap").addEventListener("click", () => openLibraryViewer(filename));
         const titleEl = card.querySelector(".lib-card-title");
         if (titleEl) {
@@ -3334,12 +3408,31 @@
     }
   }
 
+  function loadProtectedImage(img, url) {
+    if (!img || !url) return;
+    apiFetch(url)
+      .then((res) => {
+        if (!res.ok) throw new Error("image request failed");
+        return res.blob();
+      })
+      .then((blob) => {
+        const oldUrl = img.dataset.objectUrl;
+        if (oldUrl) URL.revokeObjectURL(oldUrl);
+        const objectUrl = URL.createObjectURL(blob);
+        img.dataset.objectUrl = objectUrl;
+        img.src = objectUrl;
+      })
+      .catch(() => {
+        img.removeAttribute("src");
+      });
+  }
+
   function libScreenshotCardHtml(item) {
     const ts = new Date(item.ts * 1000).toLocaleString([], {dateStyle:"short", timeStyle:"short"});
     const title = item.title || "";
     return `<div class="lib-card-screenshot" data-filename="${item.filename}">
       <div class="lib-card-img-wrap">
-        <img class="lib-card-img" src="${API_BASE}/api/library/image/${encodeURIComponent(item.filename)}" alt="${item.filename}" loading="lazy">
+        <img class="lib-card-img" alt="${item.filename}" loading="lazy">
       </div>
       <div class="lib-card-meta">
         <span class="lib-card-app">${item.app}</span>
@@ -3461,7 +3554,7 @@
       </div>
       <div class="ssv-canvas-stage" id="ssv-stage">
         <div class="ssv-world" id="ssv-world">
-          <img id="ssv-img" class="ssv-img" src="${API_BASE}/api/library/image/${encodeURIComponent(filename)}" alt="Screenshot" draggable="false">
+          <img id="ssv-img" class="ssv-img" alt="Screenshot" draggable="false">
         </div>
         <canvas id="ssv-ink" class="ssv-ink-canvas"></canvas>
         <canvas id="ssv-canvas" class="ssv-annotation-canvas"></canvas>
@@ -3505,12 +3598,14 @@
     let rafPending = false;
     let retryCount = 0;
 
+    loadProtectedImage(img, `${API_BASE}/api/library/image/${encodeURIComponent(filename)}`);
+
     function handleImageError() {
       if (retryCount < 3) {
         retryCount++;
         setTimeout(function () {
           if (img) {
-            img.src = `${API_BASE}/api/library/image/${encodeURIComponent(filename)}?retry=${retryCount}&t=${Date.now()}`;
+            loadProtectedImage(img, `${API_BASE}/api/library/image/${encodeURIComponent(filename)}?retry=${retryCount}&t=${Date.now()}`);
           }
         }, 400 * retryCount);
       } else {
@@ -6389,7 +6484,8 @@
   };
 
   let _fetchPanelBusy = false;
-  function fetchPanel() {
+  function fetchPanel(retryCount) {
+    retryCount = Number.isFinite(retryCount) ? retryCount : 0;
     if (_fetchPanelBusy) {
       if (portalAutoPanel || panelViewMode) {
         portalAutoPanel = false;
@@ -6438,7 +6534,11 @@
           renderPanel();
         }
       })
-      .catch(() => {
+      .catch((err) => {
+        if (retryCount < 3) {
+          setTimeout(() => fetchPanel(retryCount + 1), 500 * (retryCount + 1));
+          return;
+        }
         panelDraft = panelDraft || {
           panel_board: [], panel_utility: [], panel_core: defaultCoreSlots(), panel_sliders: [],
           panel_layout: [], panel_gauges: { enabled: true }, media_player_path: "",
@@ -6458,15 +6558,37 @@
       .finally(() => { _fetchPanelBusy = false; });
   }
 
-  function savePanelLive() {
+  function savePanelNow() {
     clearTimeout(panelSaveTimer);
-    panelSaveTimer = setTimeout(() => {
-      if (!panelDraft) return;
-      apiFetch(`${API_BASE}/api/panel`, {
+    panelSaveTimer = null;
+    if (!panelDraft) return Promise.resolve(false);
+    return apiFetch(`${API_BASE}/api/panel`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(panelDraft),
-      }).catch(() => {});
+      }).then((r) => {
+        if (!r.ok) throw new Error("panel save failed: " + r.status);
+        return r.json();
+      }).then((data) => {
+        if (!data || !data.ok) return;
+        if (data.panel_board) panelDraft.panel_board = data.panel_board;
+        if (data.panel_utility) panelDraft.panel_utility = data.panel_utility;
+        if (data.panel_core) panelDraft.panel_core = data.panel_core;
+        if (data.panel_profiles) panelDraft.panel_profiles = data.panel_profiles;
+        panelDirty = false;
+        if (currentPage === "command" || currentPage === "dashboard") renderCommandCentre();
+        return true;
+      }).catch((err) => {
+        console.error("[panel] save failed", err);
+        return false;
+      });
+  }
+
+  function savePanelLive() {
+    clearTimeout(panelSaveTimer);
+    panelSaveTimer = setTimeout(() => {
+      panelSaveTimer = null;
+      savePanelNow();
     }, 250);
   }
 
@@ -6570,6 +6692,10 @@
       if (!profile) panelProfileSel = "__default__";
     }
     let board = (panelDraft && panelDraft.panel_board) || (cfg && cfg.panel_board) || [];
+    if (!profile && panelDraft && !Array.isArray(panelDraft.panel_board)) {
+      panelDraft.panel_board = Array.isArray(board) ? board : [];
+      board = panelDraft.panel_board;
+    }
     if (profile) {
       if (!Array.isArray(profile.board)) profile.board = [];
       board = profile.board;
@@ -9249,7 +9375,21 @@
   }
 
   function panelViewConfig() {
-    return (panelLive && panelLive.config) || panelDraft || {};
+    const merged = {};
+    const sources = [
+      panelDraft,
+      (typeof _panelLiveCachedConfig !== "undefined") ? _panelLiveCachedConfig : null,
+      panelLive && panelLive.config,
+    ];
+    sources.forEach((source) => {
+      if (!source || typeof source !== "object") return;
+      Object.keys(source).forEach((key) => {
+        if (Object.prototype.hasOwnProperty.call(source, key)) {
+          merged[key] = source[key];
+        }
+      });
+    });
+    return merged;
   }
 
   function slotSig(s) {
@@ -9598,7 +9738,7 @@
       const loc = window.location;
       const wsProto = loc.protocol === "https:" ? "wss:" : "ws:";
       const wsHost = loc.hostname || "127.0.0.1";
-      const wsPort = 15501;
+      const wsPort = loc.protocol === "https:" ? 15505 : 15501;
 
       let tok = "";
       try { tok = localStorage.getItem("iris_session") || ""; } catch (_) {}
@@ -9615,7 +9755,14 @@
 
       wsConn = new WebSocket(`${wsProto}//${wsHost}:${wsPort}${qs}`);
       wsConn.onopen = () => {
-        console.log("[Iris WS] connected");
+        let session = "";
+        try { session = localStorage.getItem("iris_session") || ""; } catch (_) {}
+        getLocalAuthToken().then((localToken) => {
+          if (wsConn && wsConn.readyState === WebSocket.OPEN) {
+            wsConn.send(JSON.stringify({ local_token: localToken, session: session }));
+          }
+        });
+        console.log("[Iris WS] authenticating");
       };
       wsConn.onmessage = (e) => {
         try {
@@ -10637,7 +10784,8 @@
   function coreTilesHtml(data, isPreview) {
     const cfg = panelViewConfig();
     const prof = panelProfileCurrent();
-    const coreList = (panelDraft && panelDraft.panel_core) || (prof && prof.core) || (cfg && cfg.panel_core) || defaultCoreSlots();
+    const coreList = (cfg && cfg.panel_core) || (prof && prof.core) ||
+      (panelDraft && panelDraft.panel_core) || defaultCoreSlots();
     preloadBoardIcons(coreList);
 
     const dispOn = !!(data && data.pc_stats_manual);
@@ -10730,7 +10878,7 @@
         return apiFetch(`${API_BASE}/api/panel/action`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ slot: slot }),
+          body: JSON.stringify(panelActionPayload(slot)),
         }).then(() => pollScreenshotReady(baseSeq, 0));
       })
       .catch(() => {});
@@ -10911,12 +11059,12 @@
       apiFetch(`${API_BASE}/api/panel/action`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ slot: slot }),
+        body: JSON.stringify(panelActionPayload(slot)),
       }).catch(() => {});
       return;
     }
     if (slot.type === "CORE") {
-      coreAction(slot.core_action || "settings");
+      coreAction(slot.core_action || "settings", null, slot);
       return;
     }
     // SCREENSHOT — POST action to trigger Tk capture, then poll for the image
@@ -10928,7 +11076,7 @@
       apiFetch(`${API_BASE}/api/panel/action`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ slot: slot }),
+        body: JSON.stringify(panelActionPayload(slot)),
       }).then(() => {
         setTimeout(fetchPanelLive, 50);
         setTimeout(fetchPanelLive, 250);
@@ -10938,11 +11086,11 @@
     apiFetch(`${API_BASE}/api/panel/action`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ slot: slot }),
+      body: JSON.stringify(panelActionPayload(slot)),
     }).catch(() => {});
   }
 
-  function coreAction(core, tile) {
+  function coreAction(core, tile, slot) {
     if (core === "settings") {
       // In live panel view on a paired phone, always send to the desktop.
       // Only fall through to local nav when in the PC editor (not panelViewMode).
@@ -10960,7 +11108,7 @@
       return;
     }
     if (core === "screenshot" || core === "screenshot_full" || core === "screenshot_zone") {
-      doScreenshotRequest({ type: "CORE", core_action: core, mode: core === "screenshot_zone" ? "zone" : "fullscreen" });
+      doScreenshotRequest(slot || { type: "CORE", core_action: core, mode: core === "screenshot_zone" ? "zone" : "fullscreen" });
       return;
     }
     apiFetch(`${API_BASE}/api/panel/core`, {
@@ -11067,7 +11215,19 @@
       }
       const core = tile.getAttribute("data-core");
       if (core) {
-        tile.addEventListener("click", () => coreAction(core, tile));
+        tile.addEventListener("click", () => {
+          const list = tile.getAttribute("data-list");
+          const idx = parseInt(tile.getAttribute("data-idx"), 10);
+          let s = null;
+          if (list === "util") {
+            s = (panelViewConfig().panel_utility || [])[idx];
+          } else if (list === "core") {
+            s = (panelViewConfig().panel_core || defaultCoreSlots())[idx];
+          } else if (Number.isFinite(idx)) {
+            s = currentBoard()[idx];
+          }
+          coreAction(core, tile, s);
+        });
         return;
       }
       if (tile.getAttribute("data-action") === "slot") {
@@ -11083,7 +11243,7 @@
             s = currentBoard()[idx];
           }
           if (s && s.type === "CORE" && s.core_action) {
-            coreAction(s.core_action, tile);
+            coreAction(s.core_action, tile, s);
           } else {
             runSlotAction(s);
           }
@@ -11893,11 +12053,11 @@
     let activeIconCategory = "all";
     let iconSearchTimer = null;
 
-    const modalSlot = (panelEdit && panelEdit.scope === "core")
+    const modalSlot = ((panelEdit && panelEdit.scope === "core")
       ? (((panelDraft && panelDraft.panel_core) || defaultCoreSlots())[panelEdit.index] || {})
       : ((panelEdit && (panelEdit.scope === "utility" || panelEdit.scope === "util"))
         ? ((panelDraft.panel_utility || [])[panelEdit.index] || {})
-        : ((boardAtPath(panelEdit.path || [])[panelEdit.index]) || {}));
+        : ((boardAtPath(panelEdit.path || [])[panelEdit.index]) || {}))) || {};
     let customSelectedIconPath = (modalSlot && modalSlot.app_icon_path) || "";
     let curEntity = (modalSlot && (modalSlot.entity || (modalSlot.plugin && modalSlot.button_id ? (modalSlot.plugin + "." + modalSlot.button_id) : ""))) || "";
     if (!curEntity && modalSlot && modalSlot.openrgb_profile) {
@@ -13894,8 +14054,25 @@
           modeBtn.title = "Customize buttons and layout";
         }
         modeBtn.onclick = function () {
+          const enteringDesign = workspaceMode === "use";
+          const currentBoard = panelProfileCurrent().board || [];
+          if (enteringDesign && !currentBoard.length && panelDraft) {
+            for (let i = 0; i < 8; i++) {
+              currentBoard.push({
+                type: "EMPTY",
+                name: "",
+                icon: "border-none-variant",
+                color: "",
+              });
+            }
+            setPanelDirty(true);
+          }
           workspaceMode = (workspaceMode === "use" ? "design" : "use");
-          renderCommandCentre();
+          if (!enteringDesign && panelDirty) {
+            savePanelNow().then(() => renderCommandCentre());
+          } else {
+            renderCommandCentre();
+          }
         };
       }
     } else {
@@ -14348,6 +14525,17 @@
     const starterBtn = document.getElementById("cc-starter-edit-btn");
     if (starterBtn) {
       starterBtn.addEventListener("click", () => {
+        if (!boardSlots.length && panelDraft) {
+          for (let i = 0; i < 8; i++) {
+            boardSlots.push({
+              type: "EMPTY",
+              name: "",
+              icon: "border-none-variant",
+              color: "",
+            });
+          }
+          setPanelDirty(true);
+        }
         workspaceMode = "design";
         renderCommandCentre();
       });
@@ -14655,7 +14843,8 @@
     }
     const d = document.getElementById("done-btn");
     if (d) {
-      d.addEventListener("click", () => {
+      d.addEventListener("click", async () => {
+        if (panelDirty) await savePanelNow();
         if (window.pywebview && window.pywebview.api) {
           if (typeof window.pywebview.api.close_panel === "function") {
             window.pywebview.api.close_panel();

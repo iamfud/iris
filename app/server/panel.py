@@ -71,16 +71,17 @@ class PanelHandlerMixin:
             import ws_bridge
             clients_count = len(getattr(ws_bridge, "CLIENTS", {}))
             log.info("[panel_save] broadcasting config to %d WS client(s)", clients_count)
+            from server.auth import annotate_action_slots
             ws_bridge.broadcast({
                 "type": "config",
                 "config": {
-                    "panel_board": app.cfg.get("panel_board", []),
-                    "panel_utility": app.cfg.get("panel_utility", []),
-                    "panel_core": app.cfg.get("panel_core", []),
+                    "panel_board": annotate_action_slots(app.cfg.get("panel_board", [])),
+                    "panel_utility": annotate_action_slots(app.cfg.get("panel_utility", [])),
+                    "panel_core": annotate_action_slots(app.cfg.get("panel_core", [])),
                     "panel_sliders": app.cfg.get("panel_sliders", []),
                     "panel_layout": app.cfg.get("panel_layout", []),
                     "panel_gauges": app.cfg.get("panel_gauges", {}),
-                    "panel_profiles": app.cfg.get("panel_profiles", []),
+                    "panel_profiles": annotate_action_slots(app.cfg.get("panel_profiles", [])),
                     "media_player_path": app.cfg.get("media_player_path", ""),
                     "default_profile_name": app.cfg.get("default_profile_name", ""),
                 }
@@ -92,7 +93,8 @@ class PanelHandlerMixin:
                 pass
             if app.cfg.get("theme"):
                 ws_bridge.broadcast({"type": "theme", "theme": app.cfg["theme"]})
-            self._send_json({"ok": True})
+            from panel_actions import panel_payload
+            self._send_json({"ok": True, **panel_payload(app.cfg)})
         except Exception as e:
             log.warning("[http] save panel failed: %s", e)
             self.send_error(500, str(e))
@@ -333,15 +335,16 @@ class PanelHandlerMixin:
         except Exception as e:
             self.send_error(400, str(e))
             return
-        slot = body.get("slot")
         app = self._get_app_ref()
-        if not self._is_loopback_peer():
-            from server.auth import is_authorized_slot
-            cfg = app.cfg if app is not None else {}
-            if not is_authorized_slot(slot, cfg):
-                log.warning("[http] rejected unauthorized slot execution from remote peer: %s", slot)
-                self.send_error(403, "Slot not authorized for remote execution")
-                return
+        from server.auth import resolve_action_slot, resolve_mobile_action
+        cfg = app.cfg if app is not None else {}
+        is_remote = not self._is_loopback_peer()
+        slot = (resolve_mobile_action(body.get("action_id"), cfg)
+                if is_remote else resolve_action_slot(body.get("action_id"), cfg))
+        if slot is None:
+            log.warning("[http] rejected unauthorized action execution from peer: %s", self.client_address[0])
+            self.send_error(403, "Action not authorized")
+            return
         try:
             from panel_runtime import execute_slot
             self._send_json(execute_slot(slot))

@@ -263,6 +263,11 @@
               "description": "View or revoke connected phones and tablets."
             },
             {
+              "type": "cert_download",
+              "label": "LAN certificate",
+              "description": "Download the Iris certificate and install it on a phone to trust the secure LAN connection."
+            },
+            {
               "type": "apk_download",
               "label": "Native Companion App",
               "description": "Download and install the native Android Iris.apk directly on your phone."

@@ -23,16 +23,16 @@ def lan_ip():
         return "127.0.0.1"
 
 
-def lan_url(is_loopback=False, port=15502):
+def lan_url(is_loopback=False, port=15502, scheme="http"):
     """Panel URL a LAN device can open."""
     host = "127.0.0.1" if is_loopback else lan_ip()
-    return f"http://{host}:{port}"
+    return f"{scheme}://{host}:{port}"
 
 
-def lan_pair_url(token, is_loopback=False, port=15502):
+def lan_pair_url(token, is_loopback=False, port=15502, scheme="http"):
     """Pairing URL encoded in the on-screen QR code."""
     host = "127.0.0.1" if is_loopback else lan_ip()
-    return f"http://{host}:{port}/pair?token={token}"
+    return f"{scheme}://{host}:{port}/pair?token={token}"
 
 
 def qr_bytes(pair_url):

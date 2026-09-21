@@ -133,7 +133,7 @@ function connectWs() {
     const loc = window.location;
     const wsProto = loc.protocol === "https:" ? "wss:" : "ws:";
     const wsHost = loc.hostname || "127.0.0.1";
-    const wsPort = 15501;
+    const wsPort = loc.protocol === "https:" ? 15505 : 15501;
 
     let tok = "";
     try { tok = localStorage.getItem("iris_session") || ""; } catch (_) {}
@@ -150,6 +150,15 @@ function connectWs() {
 
     wsConn = new WebSocket(wsProto + "//" + wsHost + ":" + wsPort + qs);
     wsConn.onopen = function () {
+      var localToken = "";
+      var session = "";
+      try {
+        var lm = document.cookie.match(/(?:^|;\s*)iris_local_token=([^;]+)/);
+        if (lm) localToken = decodeURIComponent(lm[1]);
+        var sm = document.cookie.match(/(?:^|;\s*)iris_session=([^;]+)/);
+        if (sm) session = decodeURIComponent(sm[1]);
+      } catch (_) {}
+      try { wsConn.send(JSON.stringify({ local_token: localToken, session: session })); } catch (_) {}
       markHealthy();
       loadTheme();
     };
